@@ -115,7 +115,8 @@ describe("MCP contracts", () => {
       let text = "";
       let cursor = 0;
       const deadline = Date.now() + 5000;
-      while (!/\nKAIROMES_MCP_FLOW/.test(text) && Date.now() < deadline) {
+      const outputSeen = () => /\nKAIROMES_MCP_FLOW/.test(text.replaceAll("\r", ""));
+      while (!outputSeen() && Date.now() < deadline) {
         const result = await client.callTool({
           name: "terminal_poll",
           arguments: { session_id: session.id, cursor },
@@ -123,9 +124,9 @@ describe("MCP contracts", () => {
         const page = TerminalResultSchema.parse(result.structuredContent);
         text += page.text;
         cursor = page.cursor;
-        if (!/\nKAIROMES_MCP_FLOW/.test(text)) await Bun.sleep(25);
+        if (!outputSeen()) await Bun.sleep(25);
       }
-      expect(text).toMatch(/\nKAIROMES_MCP_FLOW/);
+      expect(outputSeen()).toBe(true);
       const stopped = await client.callTool({
         name: "terminal_stop",
         arguments: { session_id: session.id },
