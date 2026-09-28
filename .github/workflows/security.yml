@@ -1,0 +1,49 @@
+name: Dependency audit
+
+on:
+  push:
+    paths:
+      - bun.lock
+      - package.json
+      - '**/package.json'
+      - apps/desktop/src-tauri/Cargo.lock
+      - apps/desktop/src-tauri/Cargo.toml
+      - .github/workflows/security.yml
+  pull_request:
+    paths:
+      - bun.lock
+      - package.json
+      - '**/package.json'
+      - apps/desktop/src-tauri/Cargo.lock
+      - apps/desktop/src-tauri/Cargo.toml
+      - .github/workflows/security.yml
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bun-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun audit
+
+  rust-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo install cargo-audit --locked --version 0.22.2
+      - run: cargo audit --file apps/desktop/src-tauri/Cargo.lock
