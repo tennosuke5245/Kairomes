@@ -2,6 +2,7 @@ name: Dependency audit
 
 on:
   push:
+    branches: [main]
     paths:
       - bun.lock
       - package.json

@@ -27,6 +27,7 @@
     "check:release-metadata": "bun run scripts/check-release-metadata.ts",
     "build": "bun run scripts/build-widget.ts && bun run build:extension",
     "build:extension": "bun run scripts/build-extension.ts",
+    "package:extension": "bun run scripts/package-extension.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",

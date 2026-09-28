@@ -31,7 +31,7 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": ["nsis"],
     "externalBin": ["binaries/kairomes-runtime"],
     "resources": {

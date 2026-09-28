@@ -6,11 +6,13 @@
 
 Kairomes 透過 Secure MCP Tunnel 連接真正的 ChatGPT 網頁聊天。Desktop 管理本機工作台與連線；Chrome／Edge 側欄顯示動作、結果與核准。Kairomes 不讀取 ChatGPT 的 Cookie 或聊天 DOM，也不替你送出訊息。
 
-> **目前狀態**：`0.1.0` · Windows 11 原始碼預覽。尚無簽章安裝程式；macOS／Linux 的 Desktop 與真實 Tunnel 流程尚未完成實機驗證。
+> **目前狀態**：`0.1.0` · Windows 11 預覽版。Windows 安裝程式尚未簽章；macOS／Linux 的 Desktop 與真實 Tunnel 流程尚未完成實機驗證。
 
 ## 快速啟動
 
-準備 [Bun](https://bun.sh/docs/installation) 1.4.2 以上、Rust 1.89 以上、[Tauri v2 Windows 前置套件](https://v2.tauri.app/start/prerequisites/)（C++ Build Tools、WebView2、Rust MSVC toolchain），以及官方 `tunnel-client`。在 Kairomes 專案根目錄開啟 Windows CMD：
+從 [GitHub Releases](https://github.com/tennosuke5245/Kairomes/releases) 下載 Windows 安裝程式與 `Kairomes-extension-v0.1.0.zip`。安裝 Desktop 後，將擴充功能 ZIP 解壓到固定資料夾；在 Chrome／Edge 擴充功能頁開啟開發人員模式，選「載入未封裝項目」，指向含有 `manifest.json` 的解壓資料夾。擴充功能 ZIP 不是商店安裝包，解壓資料夾需保留。
+
+也可以從原始碼執行：準備 [Bun](https://bun.sh/docs/installation) 1.4.2 以上、Rust 1.89 以上、[Tauri v2 Windows 前置套件](https://v2.tauri.app/start/prerequisites/)（C++ Build Tools、WebView2、Rust MSVC toolchain），以及官方 `tunnel-client`。在 Kairomes 專案根目錄開啟 Windows CMD：
 
 ```cmd
 bun.cmd install --frozen-lockfile
@@ -21,7 +23,7 @@ bun.cmd run desktop
 接著在 Desktop 完成三件事：
 
 1. 到「專案」新增要讓 ChatGPT 協作的資料夾。Kairomes 不會自動掛載目前目錄；解除掛載也不會刪除原始檔案。
-2. 在 Chrome／Edge 擴充功能頁，將 `apps/extension/dist` **載入未封裝項目**，開啟 Kairomes 側欄並複製 Extension ID。
+2. 若從原始碼執行，在 Chrome／Edge 擴充功能頁將 `apps/extension/dist` **載入未封裝項目**。開啟 Kairomes 側欄並複製 Extension ID。
 3. 到 Desktop「連線設定」貼上 Extension ID；將產生的短效配對連結貼回側欄。連結過期可直接重建。Runtime API Key 也在此頁儲存於 Windows Credential Manager。
 
 關閉 Desktop 視窗會縮到系統匣；從系統匣選「結束 Kairomes」才會停止它啟動的服務。聊天仍在 chatgpt.com，側欄只負責呈現本機工作與核准。
@@ -83,8 +85,8 @@ bun.cmd run kairomes --help
 
 Desktop 是日常入口。Headless／伺服器模式可先執行 `bun.cmd run app --port 0`，再於同一作業系統、同一使用者與相同 `--data-dir` 的另一個 CMD 視窗執行 `tunnel-client run --profile kairomes`；profile 會自行啟動 `serve --attach --stdio` relay。`bun.cmd run companion` 與 `bun.cmd run preview` 保留給開發及復原情境。選用的 `kairomes handoff` 唯讀交接指令才需要 Codex CLI。
 
-`bun.cmd run build:desktop` 可建立未簽章的 Windows 預覽執行檔。若移動或分享產物，須連同 `kairomes-runtime.exe` 與 `resources` 資料夾保留。一般使用仍需使用者自行具備 ChatGPT、Tunnel 與 developer mode 的存取條件；本機 `doctor` 成功不代表雲端連線已通過。
+`bun.cmd run build:desktop` 可建立未簽章的 Windows NSIS 安裝程式；`bun.cmd run package:extension` 可建立擴充功能 ZIP。一般使用仍需使用者自行具備 ChatGPT、Tunnel 與 developer mode 的存取條件；本機 `doctor` 成功不代表雲端連線已通過。
 
-參與開發請讀 [貢獻指南](CONTRIBUTING.md)與[社群行為準則](CODE_OF_CONDUCT.md)。Kairomes 程式碼採 [MIT 授權](LICENSE)；安全問題請依 [SECURITY.md](SECURITY.md) 私密回報。K 標誌與平台圖示的權利來源仍待確認，對外發佈前需完成資產與第三方授權盤點。
+參與開發請讀 [貢獻指南](CONTRIBUTING.md)與[社群行為準則](CODE_OF_CONDUCT.md)。Kairomes 程式碼採 [MIT 授權](LICENSE)；安全問題請依 [SECURITY.md](SECURITY.md) 私密回報。專案維護者已確認 K 標誌與平台圖示可隨專案公開散布。
 
 Kairomes 是獨立開源專案，未獲 OpenAI 關聯或背書。

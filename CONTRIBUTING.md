@@ -19,6 +19,10 @@ bun run check
 
 修改依賴時，同時執行 `bun audit`；Rust 鎖檔可用 `cargo audit --file apps/desktop/src-tauri/Cargo.lock` 檢查 RustSec 公告。CI 會在鎖檔／manifest 變更及每週排程時重跑依賴稽核；警告與影響平台需在 PR 說明。
 
+## 發佈預覽版
+
+將根目錄 `package.json`、各 workspace、擴充功能 manifest、Tauri 與 Rust 版本維持一致，先執行 `bun run check` 和 `bun run desktop:check`。從已推送的發佈 commit 建立同版號的 tag，例如 `v0.1.0`，再推送該 tag。Release 工作流程只接受與 `package.json` 版本相符的 tag；檢查通過後會建立 Windows NSIS 安裝程式、可解壓載入的 Chrome／Edge 擴充功能 ZIP 與 SHA-256 清單，並附在 GitHub Release。`0.x` 版本標記為預覽版。安裝程式目前未簽章，擴充功能也未經商店發佈。
+
 ## 提交變更
 
 1. 在 issue 或 PR 說明要解決的使用者問題、實際行為與設計取捨。較大的功能先討論範圍，避免同時改動安全邊界與 UI 流程。

@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Verify tag and run project checks
+        shell: bash
+        run: |
+          version="$(bun -p 'require("./package.json").version')"
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+          bun run check
+
+  package:
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Install minimum supported Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.89.0
+      - run: bun install --frozen-lockfile
+      - run: bun run desktop:check
+      - name: Build Windows installer
+        run: bun run build:desktop
+      - name: Package Chrome and Edge extension
+        run: bun run package:extension
+      - name: Verify release assets and write checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $installers = @(Get-ChildItem -LiteralPath 'apps/desktop/src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) { throw "Expected one NSIS installer; found $($installers.Count)" }
+          $extension = "dist/releases/Kairomes-extension-v$version.zip"
+          if (-not (Test-Path -LiteralPath $extension)) { throw "Missing extension archive: $extension" }
+          $assets = @($installers[0].FullName, (Resolve-Path -LiteralPath $extension).Path)
+          $checksums = 'dist/releases/SHA256SUMS.txt'
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path -Leaf $asset)"
+          }
+          $lines | Set-Content -LiteralPath $checksums -Encoding ascii
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:GITHUB_REF_NAME
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $installer = @(Get-ChildItem -LiteralPath 'apps/desktop/src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)[0]
+          $extension = (Resolve-Path -LiteralPath "dist/releases/Kairomes-extension-v$version.zip").Path
+          $checksums = (Resolve-Path -LiteralPath 'dist/releases/SHA256SUMS.txt').Path
+          $assets = @($installer.FullName, $extension, $checksums)
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+          } else {
+            $releaseArgs = @('release', 'create', $tag) + $assets + @('--verify-tag', '--title', "Kairomes $version", '--generate-notes')
+            $notes = 'Windows 11 預覽版。Windows 安裝程式尚未簽章。Chrome／Edge 擴充功能 ZIP 請先解壓，再從擴充功能頁載入未封裝項目；安裝與 Tunnel 設定請見 README。'
+            $releaseArgs += @('--notes', $notes)
+            if ($version -match '^0\.|-') { $releaseArgs += '--prerelease' }
+            gh @releaseArgs
+          }
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release failed for $tag" }
