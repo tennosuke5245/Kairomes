@@ -85,6 +85,10 @@ async function main() {
     },
   });
   const command = positionals[0];
+  // The official tunnel-client passes its environment to the stdio MCP child.
+  // Only Companion needs the key; clear it before any command starts processes.
+  const tunnelApiKey = command === "companion" ? process.env.CONTROL_PLANE_API_KEY : undefined;
+  delete process.env.CONTROL_PLANE_API_KEY;
   const directory = path.resolve(values["data-dir"] ?? defaultDataDirectory());
   const extensionId =
     typeof values["extension-id"] === "string" ? values["extension-id"] : undefined;
@@ -274,6 +278,7 @@ async function main() {
       port: controlPort,
       openBrowser: !values["no-open"],
       autoStartTunnel: !values["no-tunnel"],
+      tunnelApiKey,
     });
     return;
   }

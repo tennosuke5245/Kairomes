@@ -6,6 +6,8 @@ import { defaultDataDirectory } from "@kairomes/workspace-core";
 import { runCompanion } from "./companion.ts";
 
 async function main() {
+  const tunnelApiKey = process.env.CONTROL_PLANE_API_KEY;
+  delete process.env.CONTROL_PLANE_API_KEY;
   const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
@@ -24,6 +26,7 @@ async function main() {
     port,
     openBrowser: !values["no-open"],
     autoStartTunnel: !values["no-tunnel"],
+    tunnelApiKey,
   });
 }
 

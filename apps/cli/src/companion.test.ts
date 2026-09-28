@@ -200,3 +200,50 @@ test("Tunnel keeps the initiating failure visible even when shutdown exits zero"
     await f.dispose();
   }
 }, 20_000);
+
+test("Companion keeps the Tunnel credential out of its workbench environment", async () => {
+  const f = await fixture();
+  const previous = process.env.CONTROL_PLANE_API_KEY;
+  process.env.CONTROL_PLANE_API_KEY = "test-only-tunnel-credential";
+  let app: Awaited<ReturnType<typeof startCompanionApplication>> | undefined;
+  try {
+    app = await startCompanionApplication({
+      dataDirectory: f.state,
+      openBrowser: false,
+      autoStartTunnel: false,
+      tunnelCommand: [
+        process.execPath,
+        "-e",
+        'console.error(process.env.CONTROL_PLANE_API_KEY === "test-only-tunnel-credential" ? "TUNNEL_KEY_OK" : "TUNNEL_KEY_MISSING"); console.error(process.env.CONTROL_PLANE_API_KEY); setInterval(() => {}, 1000)',
+      ],
+    });
+    expect(process.env.CONTROL_PLANE_API_KEY).toBeUndefined();
+    const connection = await readCompanionConnection(f.state);
+    const request = (route: string, body: object) =>
+      fetch(`${connection.origin}${route}`, {
+        method: "POST",
+        headers: {
+          Origin: connection.origin,
+          Authorization: `Bearer ${connection.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    expect((await request("/api/action", { action: "start_tunnel" })).status).toBe(200);
+    let status: Awaited<ReturnType<Response["json"]>> | undefined;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      status = await (await request("/api/status", {})).json();
+      if (status.tunnel.logs.includes("TUNNEL_KEY_OK") && status.tunnel.logs.includes("[redacted]"))
+        break;
+      await Bun.sleep(20);
+    }
+    expect(status?.tunnel.logs).toContain("TUNNEL_KEY_OK");
+    expect(status?.tunnel.logs).toContain("[redacted]");
+    expect(JSON.stringify(status)).not.toContain("test-only-tunnel-credential");
+  } finally {
+    await app?.close();
+    if (previous === undefined) delete process.env.CONTROL_PLANE_API_KEY;
+    else process.env.CONTROL_PLANE_API_KEY = previous;
+    await f.dispose();
+  }
+}, 20_000);

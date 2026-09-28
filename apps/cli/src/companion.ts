@@ -273,7 +273,10 @@ class TunnelSupervisor {
   private importantLogs: string[] = [];
   private failureReason?: string;
 
-  constructor(private readonly commandOverride?: readonly string[]) {}
+  constructor(
+    private readonly commandOverride?: readonly string[],
+    private readonly tunnelApiKey?: string,
+  ) {}
 
   snapshot() {
     const label = {
@@ -329,7 +332,9 @@ class TunnelSupervisor {
 
   private addLog(value: string) {
     for (const line of value.split(/\r?\n/)) {
-      const clean = stripTerminalControls(line).slice(0, 500);
+      let clean = stripTerminalControls(line);
+      if (this.tunnelApiKey) clean = clean.replaceAll(this.tunnelApiKey, "[redacted]");
+      clean = clean.slice(0, 500);
       if (clean) {
         this.logs.push(clean);
         this.rememberImportantLog(clean);
@@ -394,6 +399,7 @@ class TunnelSupervisor {
         stderr: "pipe",
         env: {
           ...process.env,
+          ...(this.tunnelApiKey ? { CONTROL_PLANE_API_KEY: this.tunnelApiKey } : {}),
           // Companion owns the user-facing tunnel lifecycle. Keep the tunnel's
           // diagnostic web UI and console in the background unless the user
           // explicitly opens diagnostics from Kairomes.
@@ -476,8 +482,9 @@ class CompanionRuntime {
     private readonly opener: BrowserOpener,
     private readonly autoStartTunnel: boolean,
     tunnelCommand?: readonly string[],
+    tunnelApiKey?: string,
   ) {
-    this.tunnel = new TunnelSupervisor(tunnelCommand);
+    this.tunnel = new TunnelSupervisor(tunnelCommand, tunnelApiKey);
   }
 
   async initialize() {
@@ -818,7 +825,12 @@ export async function startCompanionApplication(options: {
   autoStartTunnel?: boolean;
   opener?: BrowserOpener;
   tunnelCommand?: readonly string[];
+  tunnelApiKey?: string;
 }): Promise<CompanionApplication> {
+  // Desktop hands the credential to this process. Keep it only in memory until
+  // launching the official tunnel-client; the workbench must not inherit it.
+  const tunnelApiKey = options.tunnelApiKey ?? process.env.CONTROL_PLANE_API_KEY;
+  delete process.env.CONTROL_PLANE_API_KEY;
   const opener = options.opener ?? openExternal;
   try {
     const existing = await readCompanionConnection(options.dataDirectory);
@@ -835,6 +847,7 @@ export async function startCompanionApplication(options: {
     opener,
     options.autoStartTunnel !== false,
     options.tunnelCommand,
+    tunnelApiKey,
   );
   const instanceId = crypto.randomUUID();
   const token = randomBytes(32).toString("hex");
@@ -954,6 +967,7 @@ export async function runCompanion(options: {
   autoStartTunnel?: boolean;
   opener?: BrowserOpener;
   tunnelCommand?: readonly string[];
+  tunnelApiKey?: string;
 }) {
   const application = await startCompanionApplication(options);
   if (application.reused) return;
