@@ -1,0 +1,28 @@
+{
+  "name": "@kairomes/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "prepare:runtime": "bun run ../../scripts/build-desktop-sidecar.ts",
+    "tauri": "tauri",
+    "tauri:before-dev": "bun run prepare:runtime && vite --host 127.0.0.1 --port 1420 --strictPort",
+    "tauri:before-build": "bun run prepare:runtime && vite build"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "esbuild": "0.28.2",
+    "vite": "8.3.1"
+  }
+}

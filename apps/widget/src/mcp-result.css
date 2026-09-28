@@ -1,0 +1,214 @@
+:root {
+  color-scheme: light dark;
+  --paper: #fffdf8;
+  --ink: #242123;
+  --muted: #756f69;
+  --line: #ddd5ca;
+  --red: #bd3842;
+  --red-dark: #8f242c;
+  --red-soft: #f7e8e7;
+  --green: #54735e;
+  font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  color: var(--ink);
+  background: transparent;
+}
+button,
+summary {
+  font: inherit;
+}
+.result-card,
+.result-empty {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: 0 16px 44px rgb(67 54 44 / 8%);
+}
+.result-empty {
+  padding: 24px;
+  color: var(--muted);
+}
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 12px;
+}
+.result-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 11px;
+}
+.result-mark {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  background: var(--kairomes-logo) center / cover no-repeat;
+}
+.result-brand > div {
+  min-width: 0;
+}
+.result-brand small {
+  display: block;
+  color: var(--red);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+}
+.result-brand h1 {
+  margin: 4px 0 0;
+  overflow: hidden;
+  font-size: 18px;
+  letter-spacing: -0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.result-status {
+  padding: 6px 9px;
+  flex: 0 0 auto;
+  color: var(--green);
+  border-radius: 999px;
+  background: #e9efe8;
+  font-size: 9px;
+  font-weight: 750;
+}
+.result-status.error {
+  color: #fff;
+  background: var(--red);
+}
+.result-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 14px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.result-meta strong {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.result-meta span::before {
+  margin-right: 8px;
+  content: "·";
+}
+.result-gallery {
+  display: grid;
+  gap: 10px;
+  padding: 0 18px 16px;
+}
+.result-gallery figure {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #201f1e;
+}
+.result-gallery img {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  object-fit: contain;
+}
+.result-gallery figcaption {
+  padding: 8px 10px;
+  color: var(--muted);
+  background: var(--paper);
+  font-size: 9px;
+}
+.result-output,
+.result-details {
+  margin: 0 18px 15px;
+  border-top: 1px solid var(--line);
+}
+.result-output h2 {
+  margin: 14px 0 8px;
+  font-size: 11px;
+}
+.result-output pre,
+.result-details pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 10px 11px;
+  overflow: auto;
+  color: #49433f;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f3efe8;
+  font:
+    10px / 1.55 "Cascadia Mono",
+    Consolas,
+    monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.result-output.error pre {
+  color: var(--red-dark);
+  border-color: color-mix(in srgb, var(--red) 38%, var(--line));
+  background: var(--red-soft);
+}
+.result-details summary {
+  padding: 13px 0;
+  color: var(--red-dark);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+.result-details[open] pre {
+  margin-bottom: 2px;
+}
+.result-notice {
+  margin: 0;
+  padding: 10px 18px;
+  color: #765052;
+  background: var(--red-soft);
+  font-size: 9px;
+}
+@media (max-width: 460px) {
+  .result-header {
+    align-items: flex-start;
+  }
+  .result-status {
+    padding: 5px 7px;
+  }
+  .result-mark {
+    width: 36px;
+    height: 36px;
+  }
+  .result-brand h1 {
+    font-size: 16px;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #171819;
+    --ink: #f4f0e9;
+    --muted: #aaa29a;
+    --line: #353638;
+    --red-soft: #382326;
+  }
+  .result-card,
+  .result-empty {
+    box-shadow: none;
+  }
+  .result-output pre,
+  .result-details pre {
+    color: #e7e0d8;
+    background: #202123;
+  }
+  .result-status {
+    background: #253229;
+  }
+}

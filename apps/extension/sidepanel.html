@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Kairomes 工作台</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <header class="native-bar">
+      <div class="native-brand">
+        <img src="assets/kairomes-k-128.png" alt="">
+        <span><strong>Kairomes</strong></span>
+      </div>
+      <div class="native-actions">
+        <span id="connection-status" role="status"><i></i>未配對</span>
+        <section id="access" aria-label="操作權限設定" hidden></section>
+        <button type="button" id="approval-count" hidden>1 件需要你</button>
+        <button type="button" id="disconnect" hidden>解除配對</button>
+      </div>
+    </header>
+    <p id="panel-error" role="alert"></p>
+    <section id="approvals" aria-label="本機核准" hidden></section>
+    <main id="setup">
+      <div class="setup-shell">
+        <header class="setup-intro">
+          <h1>連接本機工作台</h1>
+          <p>在 Kairomes Desktop 的「連線設定」貼上此 Extension ID，再把產生的配對連結貼到下方。</p>
+        </header>
+        <section class="setup-identity" aria-label="此擴充功能的 ID">
+          <span>Extension ID</span>
+          <div class="command-row compact">
+            <code id="extension-id" class="extension-id"></code>
+            <button type="button" class="copy-button" data-copy-target="extension-id" data-copy-label="Extension ID" aria-label="複製 Extension ID">複製 ID</button>
+          </div>
+        </section>
+        <form id="pair" class="setup-step">
+          <label for="address">配對連結</label>
+          <input id="address" type="password" autocomplete="off" spellcheck="false" required placeholder="貼上 Desktop 產生的連結">
+          <button id="connect-button" type="submit">連接工作台</button>
+          <p>配對只在這台電腦使用，連結不會交給 ChatGPT。</p>
+        </form>
+        <p id="error" role="alert"></p>
+        <details id="setup-advanced" class="setup-advanced">
+          <summary>命令列與疑難排解</summary>
+          <div class="setup-advanced-content">
+            <h2>命令列啟動</h2>
+            <p>未使用 Desktop 時，在專案目錄執行：</p>
+            <div class="command-row compact">
+              <code id="start-command"></code>
+              <button type="button" class="copy-button" data-copy-target="start-command" aria-label="複製啟動指令">複製</button>
+            </div>
+            <p>再啟動 ChatGPT Tunnel：</p>
+            <div class="command-row compact">
+              <code id="tunnel-command"></code>
+              <button type="button" class="copy-button" data-copy-target="tunnel-command" aria-label="複製 Tunnel 指令">複製</button>
+            </div>
+            <h2>重新配對</h2>
+            <p>若連結無法自動換新，保持 app 執行並產生新連結：</p>
+            <div class="command-row compact">
+              <code id="pair-command"></code>
+              <button type="button" class="copy-button" data-copy-target="pair-command" aria-label="複製重新配對指令">複製</button>
+            </div>
+            <p>重啟 app、瀏覽器或更新 Extension 後需重新配對。請勿分享配對連結。</p>
+          </div>
+        </details>
+        <p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+        <a class="setup-chat-link" href="https://chatgpt.com/" target="_blank" rel="noreferrer">開啟 ChatGPT 網頁 ↗</a>
+      </div>
+    </main>
+    <section id="settings" class="settings-shell" aria-label="Kairomes 設定" hidden>
+      <aside class="settings-sidebar">
+        <button type="button" id="settings-back" class="settings-back">← 返回工作台</button>
+        <div class="settings-sidebar-heading">
+          <strong>設定</strong>
+        </div>
+        <nav aria-label="設定分類">
+          <button type="button" data-settings-page="general">一般</button>
+          <button type="button" data-settings-page="mcp" class="active">MCP 整合</button>
+        </nav>
+      </aside>
+      <main class="settings-content">
+        <section data-settings-panel="general" hidden>
+          <header class="settings-page-heading">
+            <div>
+              <h1 tabindex="-1">一般</h1>
+            </div>
+          </header>
+          <article class="settings-info-card">
+            <div>
+              <strong>操作權限</strong>
+              <p>從右上角切換模式，授權可隨時收回。</p>
+            </div>
+          </article>
+          <article class="settings-info-card settings-tunnel-card">
+            <div>
+              <strong>ChatGPT Tunnel</strong>
+              <p>Desktop 會自動管理連線；命令列模式才需手動啟動。</p>
+              <details class="settings-tunnel-details">
+                <summary>顯示手動指令</summary>
+                <div class="command-row compact">
+                  <code id="tunnel-command-settings"></code>
+                  <button type="button" class="copy-button" data-copy-target="tunnel-command-settings" aria-label="複製 Tunnel 指令">複製</button>
+                </div>
+              </details>
+            </div>
+          </article>
+        </section>
+        <section data-settings-panel="mcp">
+          <section id="integrations" aria-label="MCP 工具整合" hidden></section>
+        </section>
+      </main>
+    </section>
+    <iframe id="workbench" title="Kairomes 本機工作台" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin" allow="fullscreen" hidden></iframe>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

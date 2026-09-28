@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Kairomes Local Workbench",
+  "version": "0.1.0",
+  "description": "在 ChatGPT 網頁旁開啟本機工作台；不讀取聊天、Cookie 或帳號憑證。",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "storage"],
+  "optional_host_permissions": ["http://127.0.0.1/*"],
+  "action": { "default_title": "開啟 Kairomes 工作台" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "content_security_policy": {
+    "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src http://127.0.0.1:*; frame-src http://127.0.0.1:*; base-uri 'none'; form-action 'none'; object-src 'none'"
+  }
+}
