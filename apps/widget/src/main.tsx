@@ -113,6 +113,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const selectedIdRef = useRef(selectedId);
+  const liveWorkspacesRef = useRef<Workspace[] | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [file, setFile] = useState<FileResult | null>(null);
   const [search, setSearch] = useState<SearchResult | null>(null);
@@ -201,6 +202,29 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    if (bridge.mode !== "workbench" || !activity.snapshot?.workspaces) return;
+    const liveWorkspaces = activity.snapshot.workspaces;
+    liveWorkspacesRef.current = liveWorkspaces;
+    setWorkspaces((prior) =>
+      prior.length === liveWorkspaces.length &&
+      prior.every(
+        (item, index) =>
+          item.id === liveWorkspaces[index]?.id && item.name === liveWorkspaces[index]?.name,
+      )
+        ? prior
+        : liveWorkspaces,
+    );
+    const current = selectedIdRef.current;
+    if (liveWorkspaces.some((item) => item.id === current)) return;
+    const next = liveWorkspaces[0]?.id ?? "";
+    if (next === current) return;
+    automaticWorkspace.current = null;
+    setSelectedEntry(undefined);
+    setView("overview");
+    setSelectedId(next);
+  }, [activity.snapshot]);
 
   useEffect(() => {
     if (bridge.mode !== "host" || !hostResult) return;
@@ -408,8 +432,11 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         const data = await bridge.call("workspace_list");
         if (!active) return;
         if (data.kind === "workspaces") {
-          setWorkspaces(data.workspaces);
-          setSelectedId((prior) => prior || data.workspaces[0]?.id || "");
+          // A newer activity snapshot is authoritative for the local workbench.
+          if (bridge.mode !== "workbench" || !liveWorkspacesRef.current) {
+            setWorkspaces(data.workspaces);
+            setSelectedId((prior) => prior || data.workspaces[0]?.id || "");
+          }
         }
         setConnected(true);
         const status = await bridge.call("kairomes_status");
@@ -664,14 +691,31 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
       >
         <nav className="signal-project-rail" aria-label="專案">
+          <div className="signal-project-heading">
+            <strong>專案</strong>
+            <span>{workspaces.length} 個</span>
+          </div>
           <div className="signal-projects">
+            {workspaces.length === 0 && (
+              <p className="signal-project-empty">
+                {activity.error
+                  ? "連線中，專案狀態待同步。"
+                  : connected
+                    ? "尚未掛載專案，請在 Desktop 新增。"
+                    : "正在讀取專案…"}
+              </p>
+            )}
+            {workspaces.length > 0 && !selectedId && (
+              <p className="signal-project-empty">選擇專案以查看檔案。</p>
+            )}
             {workspaces.map((item) => (
               <button
                 type="button"
                 key={item.id}
                 className={item.id === selectedId ? "active" : ""}
-                title={`瀏覽 ${item.name}`}
-                aria-label={`瀏覽 ${item.name}`}
+                title={`${item.name} · ${activity.error ? "連線待恢復" : "已掛載"}`}
+                aria-label={`${item.name}，${activity.error ? "狀態待同步" : "已掛載"}${item.id === selectedId ? "，已選取" : ""}`}
+                aria-current={item.id === selectedId ? "page" : undefined}
                 onClick={() => {
                   if (!detailOpen) rememberDetailTrigger();
                   pauseFollow();
@@ -681,7 +725,15 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                   setView("files");
                 }}
               >
-                <span>{item.name.slice(0, 1).toUpperCase()}</span>
+                <span className="signal-project-initial" aria-hidden="true">
+                  {item.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="signal-project-copy">
+                  <strong>{item.name}</strong>
+                  <small className={activity.error ? "syncing" : ""}>
+                    {activity.error ? "待同步" : "已掛載"}
+                  </small>
+                </span>
                 {item.id === selectedId && <i />}
               </button>
             ))}

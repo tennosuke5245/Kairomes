@@ -1,7 +1,7 @@
 import type { ArtifactImport, ArtifactImportApproval } from "./artifact-import.ts";
 import type { Command, CommandApproval } from "./command.ts";
 import type { FileChange, FileChangeApproval } from "./file-change.ts";
-import type { TerminalSession, ToolData, ToolName } from "./index.ts";
+import type { TerminalSession, ToolData, ToolName, Workspace } from "./index.ts";
 
 export type ActivitySource = "mcp" | "local-ui" | "system";
 export interface ActivityEntry {
@@ -35,6 +35,7 @@ export interface ActivitySnapshot {
   instanceId: string;
   seq: number;
   entries: ActivityEntry[];
+  workspaces?: Workspace[];
   sessions: TerminalSession[];
   commands?: Command[];
   changes?: FileChange[];

@@ -524,6 +524,7 @@ function startLocalServer(
               instanceId: workbench.instanceId,
               seq: service.activity.seq,
               entries: service.activity.list(),
+              workspaces: workbench.registry.list(),
               sessions: service.terminals.list(),
               commands: service.commands.list(),
               changes: service.changes.list(),
@@ -625,11 +626,30 @@ function startLocalServer(
       return new Response("Request failed", { status: 500, headers });
     },
   });
+  // Companion may update the same SQLite registry from another process. A small,
+  // read-only check keeps existing widget and extension streams in sync without
+  // routing workspace administration through either browser surface.
+  let workspaceVersion = workbench ? JSON.stringify(workbench.registry.list()) : "";
+  const workspaceRefresh = workbench
+    ? setInterval(() => {
+        if (streams.size === 0) return;
+        try {
+          const next = JSON.stringify(workbench.registry.list());
+          if (next === workspaceVersion) return;
+          workspaceVersion = next;
+          service.activity.changed();
+        } catch {
+          // A transient registry read failure is retried on the next tick.
+        }
+      }, 1000)
+    : undefined;
+  workspaceRefresh?.unref();
   return {
     server,
     url: `http://127.0.0.1:${server.port}/#session=${tokenHex}`,
     approvalsUrl: `http://127.0.0.1:${server.port}/approvals#session=${adminToken}`,
     async close() {
+      clearInterval(workspaceRefresh);
       for (const close of streams) close();
       pairing.close();
       server.stop(true);

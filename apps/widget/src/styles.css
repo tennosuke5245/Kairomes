@@ -716,9 +716,9 @@ h1 > span {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 68px minmax(360px, 1fr) 8px min(
+  grid-template-columns: 128px minmax(360px, 1fr) 8px min(
       var(--inspector-width, 410px),
-      calc(100% - 436px)
+      calc(100% - 496px)
     );
   grid-template-rows: minmax(0, 1fr) 28px;
   overflow: hidden;
@@ -766,7 +766,7 @@ h1 > span {
   flex-direction: column;
   align-items: center;
   min-height: 0;
-  padding: 18px 9px 12px;
+  padding: 18px 8px 12px;
   border-right: 1px solid var(--signal-line);
   background: rgb(255 253 248 / 82%);
   backdrop-filter: blur(20px);
@@ -785,7 +785,50 @@ h1 > span {
   overflow-y: auto;
   overflow-x: hidden;
 }
-.signal-projects button,
+.signal-project-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  padding: 0 5px 11px;
+  color: var(--signal-muted);
+  white-space: nowrap;
+}
+.signal-project-heading strong {
+  color: var(--signal-ink);
+  font-size: 11px;
+}
+.signal-project-heading span {
+  font-size: 9px;
+}
+.signal-project-empty {
+  width: 100%;
+  margin: 0;
+  padding: 12px 5px;
+  color: var(--signal-muted);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.signal-projects button {
+  position: relative;
+  display: grid;
+  grid-template-columns: 27px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 52px;
+  flex: 0 0 auto;
+  padding: 6px;
+  border-radius: 11px;
+  color: #68605c;
+  background: transparent;
+  text-align: left;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+}
 .signal-rail-bottom button {
   position: relative;
   display: grid;
@@ -806,14 +849,42 @@ h1 > span {
 .signal-rail-bottom button.active {
   color: var(--signal-red-dark);
   background: var(--signal-red-soft);
-  transform: translateY(-1px);
 }
-.signal-projects button > span {
-  font-size: 15px;
+.signal-project-initial {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 8px;
+  background: #eee9e1;
+  font-size: 12px;
   font-weight: 750;
 }
-.signal-projects button {
-  flex: 0 0 46px;
+.signal-projects button.active .signal-project-initial,
+.signal-projects button:hover .signal-project-initial {
+  background: #f1dada;
+}
+.signal-project-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.signal-project-copy strong {
+  overflow: hidden;
+  color: var(--signal-ink);
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.signal-project-copy small {
+  color: var(--signal-green);
+  font-size: 8px;
+  font-weight: 650;
+}
+.signal-project-copy small.syncing {
+  color: var(--signal-muted);
 }
 .signal-projects button > i {
   position: absolute;
@@ -2078,9 +2149,9 @@ body.resizing-inspector * {
 }
 @media (max-width: 1050px) {
   .signal-workbench {
-    grid-template-columns: 68px minmax(320px, 1fr) 8px min(
+    grid-template-columns: 128px minmax(320px, 1fr) 8px min(
         var(--inspector-width, 410px),
-        calc(100% - 396px)
+        calc(100% - 456px)
       );
   }
   .signal-project-rail {
@@ -2094,16 +2165,11 @@ body.resizing-inspector * {
 }
 @media (max-width: 760px) {
   .signal-workbench {
-    grid-template-columns: 58px minmax(0, 1fr);
+    grid-template-columns: clamp(96px, 24vw, 128px) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 24px;
   }
   .signal-project-rail {
     padding: 10px 6px 8px;
-  }
-  .signal-projects button {
-    width: 40px;
-    height: 40px;
-    flex-basis: 40px;
   }
   .signal-projects {
     margin-top: 0;
