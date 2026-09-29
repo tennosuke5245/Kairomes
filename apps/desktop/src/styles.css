@@ -775,13 +775,21 @@ summary:focus-visible {
   margin-top: 18px;
 }
 .inline-form > div,
-.pairing-result {
+.pairing-result,
+.mcp-command-result {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 9px;
 }
-.pairing-result {
+.pairing-result,
+.mcp-command-result {
   margin-top: 13px;
+}
+.mcp-command-hint {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  font-size: 10px;
+  line-height: 1.5;
 }
 .pairing-hint {
   margin: 8px 0 0;
@@ -1133,7 +1141,8 @@ summary:focus-visible {
     justify-self: start;
   }
   .inline-form > div,
-  .pairing-result {
+  .pairing-result,
+  .mcp-command-result {
     grid-template-columns: 1fr;
   }
   .dialog {

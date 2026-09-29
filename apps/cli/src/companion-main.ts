@@ -4,8 +4,23 @@ import { parseArgs } from "node:util";
 import { KairomesError, publicError } from "@kairomes/protocol";
 import { defaultDataDirectory } from "@kairomes/workspace-core";
 import { runCompanion } from "./companion.ts";
+import { startAttachedRelay } from "./relay.ts";
 
 async function main() {
+  if (process.argv[2] === "relay") {
+    // Relay uses only the local workbench descriptor, never the tunnel credential.
+    delete process.env.CONTROL_PLANE_API_KEY;
+    const { values } = parseArgs({
+      args: process.argv.slice(3),
+      options: {
+        "data-dir": { type: "string" },
+        stdio: { type: "boolean" },
+      },
+    });
+    if (!values.stdio) throw new KairomesError("USAGE", "Relay 模式需要 --stdio。");
+    await startAttachedRelay(path.resolve(values["data-dir"] ?? defaultDataDirectory()));
+    return;
+  }
   const tunnelApiKey = process.env.CONTROL_PLANE_API_KEY;
   delete process.env.CONTROL_PLANE_API_KEY;
   const { values } = parseArgs({
@@ -32,6 +47,11 @@ async function main() {
 
 main().catch(async (error: unknown) => {
   const safe = publicError(error);
+  if (process.argv[2] === "relay") {
+    console.error(`${safe.code}: ${safe.message}`);
+    process.exitCode = 1;
+    return;
+  }
   const directory = defaultDataDirectory();
   const log = path.join(directory, "companion-startup-error.txt");
   try {

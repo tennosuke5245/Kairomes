@@ -27,7 +27,7 @@ function mockSnapshot(): DesktopSnapshot {
       message: demo === "runtime-error" ? "本機服務意外停止。" : "本機服務正在背景執行。",
     },
     companion: {
-      version: "0.1.0",
+      version: "0.1.1",
       overall: { tone: demo === "ready" ? "good" : "busy", label: "Kairomes" },
       workspaces: mockWorkspaces,
       workbench: {
@@ -69,6 +69,12 @@ function inTauri() {
 
 export async function getDesktopStatus(): Promise<DesktopSnapshot> {
   return inTauri() ? invoke<DesktopSnapshot>("get_desktop_status") : mockSnapshot();
+}
+
+export async function getLocalMcpCommand(): Promise<string> {
+  return inTauri()
+    ? invoke<string>("get_local_mcp_command")
+    : '"C:/Program Files/Kairomes/kairomes-runtime.exe" relay --stdio';
 }
 
 export async function saveRuntimeApiKey(apiKey: string): Promise<void> {

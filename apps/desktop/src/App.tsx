@@ -36,6 +36,7 @@ import {
   configureExtension,
   forgetRuntimeApiKey,
   getDesktopStatus,
+  getLocalMcpCommand,
   openExternal,
   performAction,
   removeWorkspace,
@@ -330,6 +331,8 @@ export function App() {
   const [notice, setNotice] = useState("");
   const [extensionId, setExtensionId] = useState("");
   const [pairingUrl, setPairingUrl] = useState("");
+  const [localMcpCommand, setLocalMcpCommand] = useState("");
+  const [localMcpCommandError, setLocalMcpCommandError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<WorkspaceSummary | null>(null);
 
   const view = useMemo(() => deriveDesktopView(snapshot), [snapshot]);
@@ -347,6 +350,27 @@ export function App() {
     const timer = window.setInterval(() => void refresh(), 1800);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    if (route !== "connection") return;
+    let active = true;
+    void getLocalMcpCommand()
+      .then((command) => {
+        if (!active) return;
+        setLocalMcpCommand(command);
+        setLocalMcpCommandError("");
+      })
+      .catch((caught) => {
+        if (!active) return;
+        setLocalMcpCommand("");
+        setLocalMcpCommandError(
+          caught instanceof Error ? caught.message : "無法取得本機 MCP 指令。",
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [route]);
 
   const run = async (action: string, successMessage = "") => {
     if (busyAction) return;
@@ -375,7 +399,7 @@ export function App() {
       const workspace = await addWorkspace(selected);
       await refresh();
       setRoute("projects");
-      setNotice(`已加入「${workspace.name}」；ChatGPT 下次列出專案時就會看見。`);
+      setNotice(`已掛載「${workspace.name}」；側欄專案列會自動更新。`);
     } catch (caught) {
       setNotice(caught instanceof Error ? caught.message : "無法加入這個專案資料夾。");
     } finally {
@@ -442,6 +466,16 @@ export function App() {
       setNotice("配對連結已複製。");
     } catch {
       setNotice("無法自動複製，請手動選取連結。");
+    }
+  };
+
+  const copyLocalMcpCommand = async () => {
+    if (!localMcpCommand) return;
+    try {
+      await navigator.clipboard.writeText(localMcpCommand);
+      setNotice("本機 MCP 指令已複製，可用於官方 Tunnel profile 的一次性設定。");
+    } catch {
+      setNotice("無法自動複製，請手動選取本機 MCP 指令。");
     }
   };
 
@@ -748,6 +782,49 @@ export function App() {
                     </button>
                   ) : null}
                 </div>
+              </div>
+            </section>
+
+            <section className="settings-block">
+              <div className="settings-icon">
+                <TerminalWindow weight="duotone" />
+              </div>
+              <div className="settings-content">
+                <div className="settings-heading">
+                  <div>
+                    <h3>本機 MCP 指令</h3>
+                    <p>
+                      首次建立官方 tunnel-client 的 <code>kairomes</code> profile 時，將這行填入{" "}
+                      <code>--mcp-command</code>。
+                    </p>
+                  </div>
+                </div>
+                <div className="mcp-command-result">
+                  <input
+                    className="text-field"
+                    value={localMcpCommand}
+                    readOnly
+                    aria-label="本機 MCP 指令"
+                    aria-describedby="mcp-command-hint"
+                    placeholder="正在取得安裝位置…"
+                  />
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void copyLocalMcpCommand()}
+                    disabled={!localMcpCommand}
+                  >
+                    <Copy weight="bold" /> 複製指令
+                  </button>
+                </div>
+                {localMcpCommandError ? (
+                  <p className="field-error" role="alert">
+                    {localMcpCommandError}
+                  </p>
+                ) : null}
+                <p className="mcp-command-hint" id="mcp-command-hint">
+                  只需設定一次。指令不含金鑰或配對資訊；日常由 Desktop 管理 Tunnel。
+                </p>
               </div>
             </section>
 

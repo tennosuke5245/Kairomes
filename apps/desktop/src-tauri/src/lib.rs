@@ -228,6 +228,66 @@ fn tunnel_client_installed() -> bool {
     which::which("tunnel-client").is_ok()
 }
 
+fn format_local_mcp_command(path: &str, windows_path: bool) -> Result<String, String> {
+    if path.contains('"') {
+        return Err("Kairomes 安裝路徑含有不支援的引號。".to_string());
+    }
+    // tunnel-client init parses --mcp-command with shell-style escaping.
+    // Forward slashes keep Windows paths intact when the profile is initialized.
+    let command_path = if windows_path {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    };
+    Ok(format!("\"{command_path}\" relay --stdio"))
+}
+
+#[tauri::command]
+fn get_local_mcp_command() -> Result<String, String> {
+    let executable =
+        std::env::current_exe().map_err(|error| format!("無法取得 Kairomes 安裝位置：{error}"))?;
+    let exe_dir = executable
+        .parent()
+        .ok_or_else(|| "無法取得 Kairomes 安裝資料夾。".to_string())?;
+    // Match tauri-plugin-shell's sidecar path resolution, including Rust tests.
+    let base_dir = if exe_dir.ends_with("deps") {
+        exe_dir.parent().unwrap_or(exe_dir)
+    } else {
+        exe_dir
+    };
+    let sidecar = base_dir.join(format!("kairomes-runtime{}", std::env::consts::EXE_SUFFIX));
+    if !sidecar.is_file() {
+        return Err("找不到 Kairomes 本機服務；請重新安裝或重新建置 Desktop。".to_string());
+    }
+    let path = sidecar
+        .to_str()
+        .ok_or_else(|| "Kairomes 安裝路徑無法用於 Tunnel 指令。".to_string())?;
+    format_local_mcp_command(path, cfg!(windows))
+}
+
+#[cfg(test)]
+mod local_mcp_command_tests {
+    use super::format_local_mcp_command;
+
+    #[test]
+    fn windows_path_with_spaces_uses_forward_slashes_for_tunnel_client() {
+        let command =
+            format_local_mcp_command(r"C:\Program Files\Kairomes\kairomes-runtime.exe", true)
+                .unwrap();
+        assert_eq!(
+            command,
+            r#""C:/Program Files/Kairomes/kairomes-runtime.exe" relay --stdio"#
+        );
+    }
+
+    #[test]
+    fn rejects_quotes_that_would_break_the_command() {
+        assert!(
+            format_local_mcp_command(r#"C:\Kairomes"test\kairomes-runtime.exe"#, true).is_err()
+        );
+    }
+}
+
 async fn spawn_runtime(app: &AppHandle) -> Result<(), String> {
     if process_is_owned(app)? || companion_status().await.is_some() {
         return Ok(());
@@ -580,6 +640,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_desktop_status,
+            get_local_mcp_command,
             save_runtime_api_key,
             forget_runtime_api_key,
             perform_action,
