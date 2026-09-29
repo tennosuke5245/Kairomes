@@ -1,8 +1,8 @@
 # 安全回報
 
-目前為 `0.1.0` 開發版，尚無正式支援的穩定發佈版本。主線包含 ChatGPT 網頁 MCP 工具、瀏覽器側欄、工作區檔案讀取與結構化變更、一次性命令、需本機批准的終端機及使用者掛載的下游 MCP。不要把本工具當作能隔離本機惡意程序的 sandbox。
+目前為 `0.1.1` 預覽版，尚無正式支援的穩定發佈版本。主線包含 ChatGPT 網頁 MCP 工具、瀏覽器側欄、工作區檔案讀取與結構化變更、一次性命令、需本機批准的終端機及使用者掛載的下游 MCP。不要把本工具當作能隔離本機惡意程序的 sandbox。
 
-若發現能讀取未掛載路徑、繞過核准或預覽權限、洩漏憑證等問題，請使用 GitHub 儲存庫 **Security → Report a vulnerability** 私密回報。公開倉庫前，維護者必須先啟用 [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) 並驗證入口可用。目前尚未設定公開遠端，因此這一步仍是發佈門檻；若入口尚未啟用，只能先開一則不含漏洞細節的 issue 請求私人聯絡方式。絕對不要在公開 issue／PR 張貼密鑰、私人檔案或利用步驟。
+目前公開倉庫尚未啟用 GitHub 的 [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository)。若發現能讀取未掛載路徑、繞過核准或預覽權限、洩漏憑證等問題，請先開一則不含漏洞細節的 issue，請求私人聯絡方式。啟用並驗證 **Security → Report a vulnerability** 入口後，可從該處私密回報。絕對不要在公開 issue／PR 張貼密鑰、私人檔案或利用步驟。
 
 回報請包含版本、Bun／OS 版本、最小重現方式與不含秘密的測試資料。維護者會先在私密管道確認影響及修補方式，再協調公開揭露；目前尚未承諾固定回應時限。
 
