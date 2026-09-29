@@ -7,7 +7,7 @@ function snapshot(overrides: Partial<DesktopSnapshot> = {}): DesktopSnapshot {
     tunnelClientInstalled: true,
     runtime: { state: "running", owned: true, message: "本機服務正在執行。" },
     companion: {
-      version: "0.1.0",
+      version: "0.1.1",
       overall: { tone: "good", label: "已連線" },
       workspaces: [
         {

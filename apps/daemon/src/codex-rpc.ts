@@ -111,7 +111,7 @@ export class CodexRpc implements CodexConnection {
     child.stdin.on("error", disconnect);
     try {
       await this.request("initialize", {
-        clientInfo: { name: "kairomes", title: "Kairomes", version: "0.1.0" },
+        clientInfo: { name: "kairomes", title: "Kairomes", version: "0.1.1" },
         capabilities: this.capabilities,
       });
       this.write({ method: "initialized", params: {} });

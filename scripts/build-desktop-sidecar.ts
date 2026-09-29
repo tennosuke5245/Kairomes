@@ -29,7 +29,7 @@ const args = [
     ? [
         "--windows-hide-console",
         "--windows-title=Kairomes Runtime",
-        "--windows-version=0.1.0.0",
+        "--windows-version=0.1.1.0",
         "--windows-description=Kairomes local MCP runtime",
       ]
     : []),

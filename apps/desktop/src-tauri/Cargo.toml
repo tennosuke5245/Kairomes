@@ -1,6 +1,6 @@
 [package]
 name = "kairomes-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Kairomes local companion desktop shell"
 authors = ["TeNNoSuKe"]
 license = "MIT"
