@@ -19,6 +19,14 @@ bun run check
 
 修改依賴時，同時執行 `bun audit`；Rust 鎖檔可用 `cargo audit --file apps/desktop/src-tauri/Cargo.lock` 檢查 RustSec 公告。CI 會在鎖檔／manifest 變更及每週排程時重跑依賴稽核；警告與影響平台需在 PR 說明。
 
+## 從原始碼執行
+
+在專案根目錄執行 `bun run build`、`bun run desktop`。`bun run package:extension` 會建立側欄 ZIP；`bun run build:desktop` 會建立未簽章的 Windows NSIS 安裝程式。
+
+Headless 模式需先結束 Desktop 或既有 Host，再以 `bun run app --port 0 --extension-id YOUR_EXTENSION_ID` 啟動工作台。另建立指向 `bun run kairomes serve --attach --stdio` 的 Tunnel profile；若使用自訂 `--data-dir`，工作台與 relay 必須一致。手動執行 `tunnel-client run` 時，需自行安全地提供 `CONTROL_PLANE_API_KEY` 環境變數。Desktop 的憑證保管庫不會替手動終端機注入金鑰；若未安裝 Desktop sidecar，也不能沿用 Desktop 複製的 profile 指令。此模式的程序由你自行管理。
+
+`bun run companion` 與 `bun run preview` 主要供開發及復原使用。選用的 `kairomes handoff` 唯讀交接預覽才需要 Codex CLI。
+
 ## 發佈預覽版
 
 將根目錄 `package.json`、各 workspace、擴充功能 manifest、Tauri 與 Rust 版本維持一致，先執行 `bun run check` 和 `bun run desktop:check`。從已推送的發佈 commit 建立同版號的 tag，例如 `v0.1.1`，再推送該 tag。Release 工作流程只接受與 `package.json` 版本相符的 tag；檢查通過後會建立 Windows NSIS 安裝程式、可解壓載入的 Chrome／Edge 擴充功能 ZIP 與 SHA-256 清單，並附在 GitHub Release。`0.x` 版本標記為預覽版。安裝程式目前未簽章，擴充功能也未經商店發佈。
