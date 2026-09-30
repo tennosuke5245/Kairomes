@@ -27,7 +27,7 @@ function mockSnapshot(): DesktopSnapshot {
       message: demo === "runtime-error" ? "本機服務意外停止。" : "本機服務正在背景執行。",
     },
     companion: {
-      version: "0.1.1",
+      version: "0.1.2",
       overall: { tone: demo === "ready" ? "good" : "busy", label: "Kairomes" },
       workspaces: mockWorkspaces,
       workbench: {

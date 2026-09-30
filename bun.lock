@@ -14,7 +14,7 @@
     },
     "apps/cli": {
       "name": "@kairomes/cli",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@kairomes/daemon": "workspace:*",
         "@kairomes/protocol": "workspace:*",
@@ -24,7 +24,7 @@
     },
     "apps/daemon": {
       "name": "@kairomes/daemon",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@kairomes/protocol": "workspace:*",
         "@kairomes/workspace-core": "workspace:*",
@@ -34,7 +34,7 @@
     },
     "apps/desktop": {
       "name": "@kairomes/desktop",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@phosphor-icons/react": "2.1.10",
         "@tauri-apps/api": "2.11.1",
@@ -51,14 +51,14 @@
     },
     "apps/extension": {
       "name": "@kairomes/extension",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@kairomes/protocol": "workspace:*",
       },
     },
     "apps/widget": {
       "name": "@kairomes/widget",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@kairomes/protocol": "workspace:*",
         "@modelcontextprotocol/ext-apps": "1.7.5",
@@ -71,14 +71,14 @@
     },
     "packages/protocol": {
       "name": "@kairomes/protocol",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "zod": "4.6.2",
       },
     },
     "packages/workspace-core": {
       "name": "@kairomes/workspace-core",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@kairomes/protocol": "workspace:*",
       },

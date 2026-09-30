@@ -14,7 +14,7 @@
 
 Kairomes 在 Windows 背景執行，透過 OpenAI Secure MCP Tunnel 接收 ChatGPT 的工具請求。它不讀取 ChatGPT Cookie 或聊天頁面，也不代你送出訊息。
 
-> **0.1.1 預覽版**：目前提供 Windows 11 安裝程式，尚未簽章；側欄需手動載入。macOS／Linux Desktop 與真實 Tunnel 流程尚未完成實機驗證。
+> **0.1.2 預覽版**：目前提供 Windows 11 安裝程式，尚未簽章；側欄需手動載入。macOS／Linux Desktop 與真實 Tunnel 流程尚未完成實機驗證。
 
 ## 功能
 
@@ -26,7 +26,7 @@ Kairomes 在 Windows 背景執行，透過 OpenAI Secure MCP Tunnel 接收 ChatG
 
 ### 事前準備
 
-- Windows 11、Chrome 或 Edge，以及 [Kairomes 安裝程式與側欄 ZIP](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.1)。
+- Windows 11、Chrome 或 Edge，以及 [Kairomes 安裝程式與側欄 ZIP](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.2)。
 - [官方 `tunnel-client`](https://github.com/openai/tunnel-client/releases/latest)：另行安裝完整 Windows client，將 `tunnel-client.exe` 加入 PATH；可用 `tunnel-client help quickstart` 確認。
 - OpenAI 權限：ChatGPT developer mode 需另外開啟；Platform 建立 Tunnel 需 **Tunnels Read + Manage**，使用時需 **Tunnels Read + Use**。詳見[官方指南](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)。
 
