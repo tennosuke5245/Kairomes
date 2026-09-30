@@ -38,6 +38,19 @@ import { TerminalPanel } from "./terminal-panel.tsx";
 
 const bridge = createBridge();
 const hasReplacementCharacter = (value: string) => value.includes("\uFFFD");
+function projectMonogram(name: string) {
+  const words = name
+    .trim()
+    .split(/[\s_-]+/)
+    .filter(Boolean);
+  return (
+    words.length > 1
+      ? words.slice(0, 2).map((word) => Array.from(word)[0])
+      : Array.from(words[0] ?? "?").slice(0, 2)
+  )
+    .join("")
+    .toUpperCase();
+}
 
 function mcpModelContext(catalog: McpCatalog) {
   const enabled = catalog.tools.filter((tool) => tool.enabled && tool.availability === "ready");
@@ -112,6 +125,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   const [connected, setConnected] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [projectHint, setProjectHint] = useState<{ id: string; label: string; top: number }>();
   const selectedIdRef = useRef(selectedId);
   const liveWorkspacesRef = useRef<Workspace[] | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -679,6 +693,24 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                 : "即時摘要";
     const workspaceName = (id?: string) =>
       workspaces.find((item) => item.id === id)?.name ?? "此工作台";
+    const projectEmptyMessage = activity.error
+      ? "連線中，專案狀態待同步。"
+      : connected
+        ? "尚未掛載專案，請在 Desktop 新增。"
+        : "正在讀取專案…";
+    const showProjectHint = (id: string, label: string, element: HTMLElement) => {
+      const bounds = element.getBoundingClientRect();
+      const root = element.closest<HTMLElement>(".signal-workbench");
+      const rootTop = root?.getBoundingClientRect().top ?? 0;
+      const top = Math.max(
+        36,
+        Math.min(
+          (root?.clientHeight ?? window.innerHeight) - 36,
+          bounds.top - rootTop + bounds.height / 2,
+        ),
+      );
+      setProjectHint({ id, label, top });
+    };
     const selectOverview = () => {
       setView("overview");
       setSelectedEntry(undefined);
@@ -690,23 +722,21 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         className={`signal-workbench signal-view-${view} ${view !== "overview" || selectedEntry ? "signal-detail-open" : ""}`}
         style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
       >
-        <nav className="signal-project-rail" aria-label="專案">
-          <div className="signal-project-heading">
-            <strong>專案</strong>
-            <span>{workspaces.length} 個</span>
-          </div>
+        <nav className="signal-project-rail" aria-label={`專案，${workspaces.length} 個`}>
           <div className="signal-projects">
             {workspaces.length === 0 && (
-              <p className="signal-project-empty">
-                {activity.error
-                  ? "連線中，專案狀態待同步。"
-                  : connected
-                    ? "尚未掛載專案，請在 Desktop 新增。"
-                    : "正在讀取專案…"}
-              </p>
-            )}
-            {workspaces.length > 0 && !selectedId && (
-              <p className="signal-project-empty">選擇專案以查看檔案。</p>
+              <span
+                className="signal-project-empty"
+                role="status"
+                title={projectEmptyMessage}
+                aria-label={projectEmptyMessage}
+                onMouseEnter={(event) =>
+                  showProjectHint("empty", projectEmptyMessage, event.currentTarget)
+                }
+                onMouseLeave={() => setProjectHint(undefined)}
+              >
+                <FolderIcon aria-hidden="true" />
+              </span>
             )}
             {workspaces.map((item) => (
               <button
@@ -715,7 +745,14 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                 className={item.id === selectedId ? "active" : ""}
                 title={`${item.name} · ${activity.error ? "連線待恢復" : "已掛載"}`}
                 aria-label={`${item.name}，${activity.error ? "狀態待同步" : "已掛載"}${item.id === selectedId ? "，已選取" : ""}`}
+                aria-describedby={projectHint?.id === item.id ? "signal-project-hint" : undefined}
                 aria-current={item.id === selectedId ? "page" : undefined}
+                onMouseEnter={(event) => showProjectHint(item.id, item.name, event.currentTarget)}
+                onMouseLeave={(event) => {
+                  if (document.activeElement !== event.currentTarget) setProjectHint(undefined);
+                }}
+                onFocus={(event) => showProjectHint(item.id, item.name, event.currentTarget)}
+                onBlur={() => setProjectHint(undefined)}
                 onClick={() => {
                   if (!detailOpen) rememberDetailTrigger();
                   pauseFollow();
@@ -726,13 +763,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                 }}
               >
                 <span className="signal-project-initial" aria-hidden="true">
-                  {item.name.slice(0, 1).toUpperCase()}
-                </span>
-                <span className="signal-project-copy">
-                  <strong>{item.name}</strong>
-                  <small className={activity.error ? "syncing" : ""}>
-                    {activity.error ? "待同步" : "已掛載"}
-                  </small>
+                  {projectMonogram(item.name)}
                 </span>
                 {item.id === selectedId && <i />}
               </button>
@@ -753,10 +784,21 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
             </div>
           )}
         </nav>
+        {projectHint && (
+          <span
+            id="signal-project-hint"
+            className="signal-project-hint"
+            role="tooltip"
+            style={{ top: `${projectHint.top}px` }}
+          >
+            {projectHint.label}
+          </span>
+        )}
         <main className="signal-canvas">
           <ActivityPanel
             snapshot={activity.snapshot}
             error={activity.error || (view === "overview" ? error : "")}
+            emptyWorkspace={connected && workspaces.length === 0}
             following={following}
             workspaceName={workspaceName}
             onFollow={() => {
@@ -1049,6 +1091,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         <ActivityPanel
           snapshot={activity.snapshot}
           error={activity.error}
+          emptyWorkspace={connected && workspaces.length === 0}
           following={following}
           workspaceName={(id) => workspaces.find((item) => item.id === id)?.name ?? "此工作台"}
           onFollow={() => {

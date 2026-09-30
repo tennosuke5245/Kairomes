@@ -5,7 +5,9 @@ import {
   readSnapshots,
 } from "@kairomes/protocol";
 import { AccessPanel } from "./access-panel.ts";
+import { ActiveWorkPanel } from "./active-work-panel.ts";
 import { ApprovalPanel } from "./approval-panel.ts";
+import { type ApprovalItem, splitApprovalItems } from "./approval-state.ts";
 import { browser } from "./browser.ts";
 import { McpPanel } from "./mcp-panel.ts";
 import { parsePairingUrl, parseWorkbenchUrl } from "./pairing.ts";
@@ -30,7 +32,13 @@ const disconnect = required<HTMLButtonElement>("#disconnect");
 const connectButton = required<HTMLButtonElement>("#connect-button");
 const accessContainer = required<HTMLElement>("#access");
 const integrationsContainer = required<HTMLElement>("#integrations");
+const approvalContainer = required<HTMLElement>("#approvals");
 const approvalCount = required<HTMLButtonElement>("#approval-count");
+const activeCount = required<HTMLButtonElement>("#active-count");
+const activeNumber = required<HTMLElement>("#active-number");
+const activeWork = required<HTMLElement>("#active-work");
+const activeWorkList = required<HTMLElement>("#active-work-list");
+const activeClose = required<HTMLButtonElement>("#active-close");
 const copyStatus = required<HTMLElement>("#copy-status");
 const setupAdvanced = required<HTMLDetailsElement>("#setup-advanced");
 const permission = { origins: ["http://127.0.0.1/*"] };
@@ -42,6 +50,45 @@ let stream: AbortController | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let mcpTimer: ReturnType<typeof setInterval> | undefined;
 let generation = 0;
+let previousPending = 0;
+
+function showActiveWork(open: boolean, restoreFocus = false) {
+  const visible = open && !activeCount.hidden;
+  activeWork.hidden = !visible;
+  activeCount.setAttribute("aria-expanded", String(visible));
+  document.body.classList.toggle("active-work-open", visible);
+  if (visible) activeWork.querySelector<HTMLElement>("h2")?.focus();
+  else if (restoreFocus) activeCount.focus();
+}
+
+activeCount.addEventListener("click", () => showActiveWork(activeWork.hidden));
+activeClose.addEventListener("click", () => showActiveWork(false, true));
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || activeWork.hidden) return;
+  event.preventDefault();
+  showActiveWork(false, true);
+});
+document.addEventListener("pointerdown", (event) => {
+  if (
+    activeWork.hidden ||
+    !(event.target instanceof Node) ||
+    activeWork.contains(event.target) ||
+    activeCount.contains(event.target)
+  )
+    return;
+  const focusable =
+    event.target instanceof Element &&
+    event.target.closest(
+      "button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, iframe, label[for], [contenteditable], [tabindex]:not([tabindex='-1'])",
+    );
+  const restoreFocus = !focusable && activeWork.contains(document.activeElement);
+  showActiveWork(false);
+  if (restoreFocus)
+    setTimeout(() => {
+      if (!activeCount.hidden) activeCount.focus();
+    }, 0);
+});
+frame.addEventListener("focus", () => showActiveWork(false));
 
 function setConnectionStatus(label: string, connected = false) {
   const dot = document.createElement("i");
@@ -184,52 +231,55 @@ async function api(
     throw new Error(`本機核准連線失敗（${response.status}）；請確認 app 仍在執行及配對尚未到期。`);
   return response.json();
 }
-const approvals = new ApprovalPanel(
-  required("#approvals"),
-  async (session, action) => {
-    const target = connection;
-    if (!target || !available) throw new Error("等待核准連線恢復後再試。");
+async function decideApproval(session: ApprovalItem, action: "approve" | "deny" | "stop") {
+  const target = connection;
+  if (!target || !available) throw new Error("等待核准連線恢復後再試。");
+  try {
+    await api(target, "approvals", {
+      action,
+      ...("source_file_id" in session
+        ? { import_id: session.id }
+        : "files" in session
+          ? { change_id: session.id }
+          : "argv" in session
+            ? { command_id: session.id }
+            : { session_id: session.id }),
+      fingerprint: session.fingerprint,
+    });
+    const data = await api(target, "approvals", { action: "list" });
+    if (connection === target) {
+      latest = data;
+      panelError.textContent = "";
+    }
+  } catch (cause) {
+    // An uncertain decision must never be replayed automatically. Refresh state only.
+    if (connection !== target) return;
+    available = false;
     try {
-      await api(target, "approvals", {
-        action,
-        ...("source_file_id" in session
-          ? { import_id: session.id }
-          : "files" in session
-            ? { change_id: session.id }
-            : "argv" in session
-              ? { command_id: session.id }
-              : { session_id: session.id }),
-        fingerprint: session.fingerprint,
-      });
       const data = await api(target, "approvals", { action: "list" });
       if (connection === target) {
         latest = data;
-        panelError.textContent = "";
+        available = true;
       }
-    } catch (cause) {
-      // An uncertain decision must never be replayed automatically. Refresh state only.
-      if (connection !== target) return;
-      available = false;
-      try {
-        const data = await api(target, "approvals", { action: "list" });
-        if (connection === target) {
-          latest = data;
-          available = true;
-        }
-      } catch {
-        // A healthy but idle stream may have no changes; reconnect for a full snapshot.
-        if (connection === target) startStream(target);
-      }
-      throw cause;
-    } finally {
-      setTimeout(() => {
-        if (connection === target) renderApprovals();
-      }, 0);
+    } catch {
+      // A healthy but idle stream may have no changes; reconnect for a full snapshot.
+      if (connection === target) startStream(target);
     }
-  },
-  (message) => {
-    panelError.textContent = message;
-  },
+    throw cause;
+  } finally {
+    setTimeout(() => {
+      if (connection === target) renderApprovals();
+    }, 0);
+  }
+}
+const reportApprovalError = (message: string) => {
+  panelError.textContent = message;
+};
+const approvals = new ApprovalPanel(approvalContainer, decideApproval, reportApprovalError);
+const activePanel = new ActiveWorkPanel(
+  activeWorkList,
+  (item) => decideApproval(item, "stop"),
+  reportApprovalError,
 );
 const access = new AccessPanel(
   accessContainer,
@@ -282,12 +332,38 @@ function renderApprovals(snapshot = latest, connected = available) {
     ...(snapshot?.commands ?? []),
     ...(snapshot?.sessions ?? []),
   ];
-  const pending = items.filter((item) => item.state === "pending").length;
-  approvalCount.hidden = pending === 0;
-  approvalCount.textContent = `${pending} 件需要你`;
-  approvals.render(items, connected);
+  const { pending, ongoing } = splitApprovalItems(items);
+  approvalCount.hidden = pending.length === 0;
+  approvalCount.textContent = `${pending.length} 件需要你`;
+  activeCount.hidden = ongoing.length === 0;
+  activeCount.setAttribute("aria-label", `執行中的工作 ${ongoing.length} 項`);
+  activeCount.title = `執行中的工作 ${ongoing.length} 項`;
+  activeNumber.textContent = String(ongoing.length);
+  const focusWasInApproval = approvalContainer.contains(document.activeElement);
+  approvals.render(pending, connected);
+  if (focusWasInApproval && !approvalContainer.contains(document.activeElement)) {
+    const nextApproval =
+      approvalContainer.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    if (nextApproval) nextApproval.focus();
+    else if (!activeCount.hidden) activeCount.focus();
+    else if (!accessContainer.hidden)
+      accessContainer.querySelector<HTMLElement>("summary")?.focus();
+    else if (!disconnect.hidden) disconnect.focus();
+    else connectButton.focus();
+  }
+  const focusWasInActiveWork = activeWork.contains(document.activeElement);
+  activePanel.render(ongoing, connected);
+  if (ongoing.length === 0) {
+    showActiveWork(false);
+    if (focusWasInActiveWork) (approvalCount.hidden ? disconnect : approvalCount).focus();
+  } else if (pending.length > previousPending) {
+    showActiveWork(false);
+    if (focusWasInActiveWork) approvalCount.focus();
+  }
+  previousPending = pending.length;
 }
 approvalCount.addEventListener("click", () => {
+  showActiveWork(false);
   const first = document.querySelector<HTMLElement>("#approvals .approval-card.pending");
   first?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   first?.querySelector<HTMLButtonElement>("button")?.focus();
@@ -367,6 +443,7 @@ function startStream(target: PanelConnection) {
   void connect();
 }
 function showWorkbench(url: string) {
+  showActiveWork(false);
   frame.src = parseWorkbenchUrl(url);
   frame.hidden = false;
   setup.hidden = true;
@@ -380,6 +457,7 @@ function showWorkbench(url: string) {
 
 function showSettings(page: "general" | "mcp" = "general") {
   if (!connection) return;
+  showActiveWork(false);
   for (const button of settingsPages) {
     const active = button.dataset.settingsPage === page;
     button.classList.toggle("active", active);
@@ -480,7 +558,7 @@ disconnect.addEventListener("click", async () => {
   stopStream();
   connection = undefined;
   latest = undefined;
-  approvals.render([]);
+  renderApprovals(undefined, false);
   frame.removeAttribute("src");
   frame.hidden = true;
   settings.hidden = true;

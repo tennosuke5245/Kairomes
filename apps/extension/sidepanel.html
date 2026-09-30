@@ -16,9 +16,17 @@
         <span id="connection-status" role="status"><i></i>未配對</span>
         <section id="access" aria-label="操作權限設定" hidden></section>
         <button type="button" id="approval-count" hidden>1 件需要你</button>
+        <button type="button" id="active-count" aria-controls="active-work" aria-expanded="false" hidden><span class="active-count-label">執行中</span><span id="active-number">0</span></button>
         <button type="button" id="disconnect" hidden>解除配對</button>
       </div>
     </header>
+    <section id="active-work" aria-label="執行中的工作" hidden>
+      <div class="active-work-heading">
+        <h2 tabindex="-1">執行中的工作</h2>
+        <button type="button" id="active-close" aria-label="關閉執行中的工作清單">×</button>
+      </div>
+      <div id="active-work-list"></div>
+    </section>
     <p id="panel-error" role="alert"></p>
     <section id="approvals" aria-label="本機核准" hidden></section>
     <main id="setup">

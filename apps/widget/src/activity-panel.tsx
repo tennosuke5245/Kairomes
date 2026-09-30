@@ -6,6 +6,7 @@ import {
   CircleNotchIcon,
   ClockIcon,
   FileTextIcon,
+  FolderIcon,
   ImageIcon,
   MagnifyingGlassIcon,
   PencilSimpleIcon,
@@ -121,6 +122,7 @@ function stateLabel(entry: ActivityEntry) {
 export function ActivityPanel({
   snapshot,
   error,
+  emptyWorkspace,
   following,
   onFollow,
   onSelect,
@@ -128,6 +130,7 @@ export function ActivityPanel({
 }: {
   snapshot?: ActivitySnapshot;
   error: string;
+  emptyWorkspace: boolean;
   following: boolean;
   onFollow(): void;
   onSelect(entry: ActivityEntry): void;
@@ -167,11 +170,24 @@ export function ActivityPanel({
           <strong>件待確認 · 請查看上方核准卡</strong>
         </div>
       )}
+      {emptyWorkspace && entries.length > 0 && (
+        <p className="stream-project-hint" role="status">
+          尚未掛載專案，請在 Kairomes Desktop 新增資料夾。
+        </p>
+      )}
       {!entries.length && (
         <div className="stream-empty">
-          <ChatCircleDotsIcon className="stream-empty-icon" weight="duotone" aria-hidden="true" />
-          <h2>等待 ChatGPT 操作</h2>
-          <p>在 ChatGPT 提出任務，進度會顯示在這裡。</p>
+          {emptyWorkspace ? (
+            <FolderIcon className="stream-empty-icon" weight="duotone" aria-hidden="true" />
+          ) : (
+            <ChatCircleDotsIcon className="stream-empty-icon" weight="duotone" aria-hidden="true" />
+          )}
+          <h2>{emptyWorkspace ? "尚未掛載專案" : "等待 ChatGPT 操作"}</h2>
+          <p>
+            {emptyWorkspace
+              ? "請在 Kairomes Desktop 新增資料夾。"
+              : "在 ChatGPT 提出任務，進度會顯示在這裡。"}
+          </p>
         </div>
       )}
       <div className="stream-list">
