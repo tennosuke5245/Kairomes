@@ -5,7 +5,7 @@
 ## 開發環境
 
 - 安裝 [Bun](https://bun.sh/docs/installation) 1.4.2 或以上。在專案根目錄執行 `bun install --frozen-lockfile`。
-- 修改 Desktop 或建置桌面程式時，依 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)安裝 Rust 1.89 或以上與作業系統套件。Windows 需要 Microsoft C++ Build Tools、WebView2 與 Rust MSVC toolchain。
+- 修改 Desktop 或建置桌面程式時，依 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)安裝 Rust 1.90 或以上與作業系統套件。Windows 需要 Microsoft C++ Build Tools、WebView2 與 Rust MSVC toolchain。
 - Windows 11 是目前已驗證的 Desktop 開發環境。CI 會在 Windows、macOS 與 Linux 執行核心檢查；macOS／Linux 的 Desktop 發佈與真實 Tunnel 流程尚未完成實機驗證。
 - 現行操作方式見 [README](README.md)；安全邊界與回報方式見 [SECURITY.md](SECURITY.md)。
 
@@ -29,7 +29,7 @@ Headless 模式需先結束 Desktop 或既有 Host，再以 `bun run app --port 
 
 ## 發佈預覽版
 
-將根目錄 `package.json`、各 workspace、擴充功能 manifest、Tauri 與 Rust 版本維持一致，先執行 `bun run check` 和 `bun run desktop:check`。從已推送的發佈 commit 建立同版號的 tag，例如 `v0.1.3`，再推送該 tag。Release 工作流程只接受與 `package.json` 版本相符的 tag；檢查通過後會建立 Windows NSIS 安裝程式、可解壓載入的 Chrome／Edge 擴充功能 ZIP 與 SHA-256 清單，並附在 GitHub Release。`0.x` 版本標記為預覽版。安裝程式目前未簽章，擴充功能也未經商店發佈。
+將根目錄 `package.json`、各 workspace、擴充功能 manifest、Tauri 與 Rust 版本維持一致，先執行 `bun run check` 和 `bun run desktop:check`。從已推送的發佈 commit 建立同版號的 tag，例如 `v0.1.4`，再推送該 tag。Release 工作流程只接受與 `package.json` 版本相符的 tag；檢查通過後會建立 Windows NSIS 安裝程式、可解壓載入的 Chrome／Edge 擴充功能 ZIP 與 SHA-256 清單，並附在 GitHub Release。`0.x` 版本標記為預覽版。安裝程式目前未簽章，擴充功能也未經商店發佈。
 
 ## 提交變更
 

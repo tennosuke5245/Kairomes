@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-async function readJson(relativePath: string): Promise<{ version?: unknown }> {
+type Manifest = { version?: unknown; dependencies?: Record<string, unknown> };
+
+async function readJson(relativePath: string): Promise<Manifest> {
   const content = await readFile(path.join(root, relativePath), "utf8");
-  return JSON.parse(content) as { version?: unknown };
+  return JSON.parse(content) as Manifest;
 }
 
 const rootManifest = await readJson("package.json");
@@ -54,6 +56,33 @@ for (const line of cargo.split(/\r?\n/)) {
 }
 if (!cargoVersion) throw new Error(`${cargoPath} is missing [package].version`);
 versions.set(cargoPath, cargoVersion);
+
+const desktopManifest = await readJson(path.join("apps", "desktop", "package.json"));
+const cargoLockPath = path.join("apps", "desktop", "src-tauri", "Cargo.lock");
+const cargoLock = await readFile(path.join(root, cargoLockPath), "utf8");
+const lockedPackages = cargoLock.split(/^\s*\[\[package\]\]\s*$/m).map((section) => ({
+  name: section.match(/^\s*name\s*=\s*"([^"]+)"\s*$/m)?.[1],
+  version: section.match(/^\s*version\s*=\s*"([^"]+)"\s*$/m)?.[1],
+}));
+for (const [jsPackage, rustPackage] of [
+  ["@tauri-apps/api", "tauri"],
+  ["@tauri-apps/plugin-dialog", "tauri-plugin-dialog"],
+] as const) {
+  const jsVersion = desktopManifest.dependencies?.[jsPackage];
+  if (typeof jsVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(jsVersion))
+    throw new Error(`Desktop ${jsPackage} must use an exact stable version`);
+  const expectedSeries = jsVersion.split(".").slice(0, 2).join(".");
+  const rustPackages = lockedPackages.filter(({ name }) => name === rustPackage);
+  if (rustPackages.length === 0) throw new Error(`${cargoLockPath} is missing ${rustPackage}`);
+  for (const { version } of rustPackages) {
+    if (!version || !/^\d+\.\d+\.\d+$/.test(version))
+      throw new Error(`${cargoLockPath} has an invalid stable version for ${rustPackage}`);
+    if (version.split(".").slice(0, 2).join(".") !== expectedSeries)
+      throw new Error(
+        `Desktop ${jsPackage} ${jsVersion} and locked Rust ${rustPackage} ${version} must share the same major/minor version`,
+      );
+  }
+}
 
 const mismatches = [...versions].filter(([, version]) => version !== rootManifest.version);
 if (mismatches.length > 0) {
