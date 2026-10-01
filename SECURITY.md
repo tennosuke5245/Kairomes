@@ -1,6 +1,6 @@
 # 安全回報
 
-目前為 `0.1.3` 預覽版，尚無正式支援的穩定發佈版本。主線包含 ChatGPT 網頁 MCP 工具、瀏覽器側欄、工作區檔案讀取與結構化變更、一次性命令、需本機批准的終端機及使用者掛載的下游 MCP。不要把本工具當作能隔離本機惡意程序的 sandbox。
+目前為 `0.1.4` 預覽版，尚無正式支援的穩定發佈版本。主線包含 ChatGPT 網頁 MCP 工具、瀏覽器側欄、工作區檔案讀取與結構化變更、一次性命令、需本機批准的終端機及使用者掛載的下游 MCP。不要把本工具當作能隔離本機惡意程序的 sandbox。
 
 目前公開倉庫尚未啟用 GitHub 的 [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository)。若發現能讀取未掛載路徑、繞過核准或預覽權限、洩漏憑證等問題，請先開一則不含漏洞細節的 issue，請求私人聯絡方式。啟用並驗證 **Security → Report a vulnerability** 入口後，可從該處私密回報。絕對不要在公開 issue／PR 張貼密鑰、私人檔案或利用步驟。
 

@@ -20,6 +20,13 @@ updates:
     directory: /apps/desktop/src-tauri
     schedule:
       interval: weekly
+    groups:
+      cargo-maintenance:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: github-actions
     directory: /
     schedule:
