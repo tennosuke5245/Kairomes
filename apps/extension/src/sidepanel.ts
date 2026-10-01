@@ -61,7 +61,7 @@ function showActiveWork(open: boolean, restoreFocus = false) {
   else if (restoreFocus) activeCount.focus();
 }
 
-activeCount.addEventListener("click", () => showActiveWork(activeWork.hidden));
+activeCount.addEventListener("click", () => showActiveWork(Boolean(activeWork.hidden)));
 activeClose.addEventListener("click", () => showActiveWork(false, true));
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || activeWork.hidden) return;

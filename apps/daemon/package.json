@@ -1,6 +1,6 @@
 {
   "name": "@kairomes/daemon",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,7 @@
   "dependencies": {
     "@kairomes/protocol": "workspace:*",
     "@kairomes/workspace-core": "workspace:*",
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.30.1",
     "@modelcontextprotocol/ext-apps": "1.7.5"
   }
 }

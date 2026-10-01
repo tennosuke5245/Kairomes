@@ -4,6 +4,18 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      bun-maintenance:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # ext-apps 2.x 需先將伺服器與客戶端遷移至 MCP SDK v2。
+      - dependency-name: '@modelcontextprotocol/ext-apps'
+        update-types:
+          - version-update:semver-major
   - package-ecosystem: cargo
     directory: /apps/desktop/src-tauri
     schedule:

@@ -17,7 +17,7 @@ export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
 export * from "./mcp-host.ts";
 export { z };
-export const VERSION = "0.1.2";
+export const VERSION = "0.1.3";
 export const WIDGET_URI = "ui://kairomes/workbench/v6.html";
 export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v2.html";
 export const LIMITS = {
