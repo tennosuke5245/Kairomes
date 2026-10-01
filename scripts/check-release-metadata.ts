@@ -77,9 +77,13 @@ for (const [jsPackage, rustPackage] of [
   for (const { version } of rustPackages) {
     if (!version || !/^\d+\.\d+\.\d+$/.test(version))
       throw new Error(`${cargoLockPath} has an invalid stable version for ${rustPackage}`);
-    if (version.split(".").slice(0, 2).join(".") !== expectedSeries)
+    const isPlugin = rustPackage === "tauri-plugin-dialog";
+    const matches = isPlugin
+      ? version === jsVersion
+      : version.split(".").slice(0, 2).join(".") === expectedSeries;
+    if (!matches)
       throw new Error(
-        `Desktop ${jsPackage} ${jsVersion} and locked Rust ${rustPackage} ${version} must share the same major/minor version`,
+        `Desktop ${jsPackage} ${jsVersion} and locked Rust ${rustPackage} ${version} must ${isPlugin ? "match exactly" : "share the same major/minor version"}`,
       );
   }
 }
