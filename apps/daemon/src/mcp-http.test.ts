@@ -68,7 +68,11 @@ test("a missing synthetic MCP executable leaves a committed, fingerprinted unava
         transport: { kind: "stdio", command, args, env },
       }),
     );
-    expect(server?.message).toBe("無法連線；請由本機使用者檢查這個 MCP 的設定與執行狀態。");
+    // Missing-process errors vary by OS; only these safe diagnostics are acceptable.
+    expect([
+      "找不到啟動程式或工作目錄。",
+      "無法連線；請由本機使用者檢查這個 MCP 的設定與執行狀態。",
+    ]).toContain(server?.message ?? "");
     for (const privateValue of [command, f.directory, ...args, ...env])
       expect(JSON.stringify(state)).not.toContain(privateValue);
     const queried = await post("/api/panel/mcp", panel.panelToken, { action: "list" });
