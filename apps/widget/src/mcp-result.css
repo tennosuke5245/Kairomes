@@ -37,6 +37,7 @@ summary {
 }
 .result-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -44,6 +45,7 @@ summary {
 }
 .result-brand {
   display: flex;
+  flex: 1 1 200px;
   align-items: center;
   min-width: 0;
   gap: 11px;
@@ -57,13 +59,15 @@ summary {
 }
 .result-brand > div {
   min-width: 0;
+  flex: 1;
 }
 .result-brand small {
   display: block;
-  color: var(--red);
-  font-size: 8px;
+  color: var(--red-dark);
+  font-size: 14px;
   font-weight: 750;
   letter-spacing: 0.16em;
+  overflow-wrap: anywhere;
 }
 .result-brand h1 {
   margin: 4px 0 0;
@@ -79,7 +83,7 @@ summary {
   color: var(--green);
   border-radius: 999px;
   background: #e9efe8;
-  font-size: 9px;
+  font-size: 14px;
   font-weight: 750;
 }
 .result-status.error {
@@ -88,13 +92,15 @@ summary {
 }
 .result-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 0 18px 14px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 14px;
 }
 .result-meta strong {
+  max-width: 100%;
   overflow: hidden;
   color: var(--ink);
   text-overflow: ellipsis;
@@ -126,7 +132,8 @@ summary {
   padding: 8px 10px;
   color: var(--muted);
   background: var(--paper);
-  font-size: 9px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 .result-output,
 .result-details {
@@ -135,7 +142,7 @@ summary {
 }
 .result-output h2 {
   margin: 14px 0 8px;
-  font-size: 11px;
+  font-size: 14px;
 }
 .result-output pre,
 .result-details pre {
@@ -148,7 +155,7 @@ summary {
   border-radius: 9px;
   background: #f3efe8;
   font:
-    10px / 1.55 "Cascadia Mono",
+    14px / 1.55 "Cascadia Mono",
     Consolas,
     monospace;
   overflow-wrap: anywhere;
@@ -163,7 +170,7 @@ summary {
   padding: 13px 0;
   color: var(--red-dark);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
 }
 .result-details[open] pre {
@@ -172,9 +179,10 @@ summary {
 .result-notice {
   margin: 0;
   padding: 10px 18px;
-  color: #765052;
+  color: var(--red-dark);
   background: var(--red-soft);
-  font-size: 9px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 @media (max-width: 460px) {
   .result-header {
@@ -197,7 +205,9 @@ summary {
     --ink: #f4f0e9;
     --muted: #aaa29a;
     --line: #353638;
+    --red-dark: #efb2a6;
     --red-soft: #382326;
+    --green: #b7d9bd;
   }
   .result-card,
   .result-empty {

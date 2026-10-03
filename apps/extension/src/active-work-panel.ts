@@ -24,6 +24,7 @@ export class ActiveWorkPanel {
     private readonly container: HTMLElement,
     private readonly stop: (item: ApprovalItem) => Promise<void>,
     private readonly report: (message: string) => void,
+    private readonly uncertain: (item: ApprovalItem) => boolean = () => false,
   ) {}
 
   render(items: ApprovalItem[], available = true) {
@@ -55,7 +56,13 @@ export class ActiveWorkPanel {
         const currentCard = card;
         action.onclick = async (event) => {
           const current = currentCard.item;
-          if (!event.isTrusted || this.busy.has(current.id) || !canStopOngoing(current)) return;
+          if (
+            !event.isTrusted ||
+            this.busy.has(current.id) ||
+            this.uncertain(current) ||
+            !canStopOngoing(current)
+          )
+            return;
           this.busy.add(current.id);
           currentCard.action.disabled = true;
           try {
@@ -98,7 +105,7 @@ export class ActiveWorkPanel {
         "aria-label",
         `${card.action.textContent}：${card.title.textContent}`,
       );
-      card.action.disabled = !available || this.busy.has(item.id);
+      card.action.disabled = !available || this.busy.has(item.id) || this.uncertain(item);
     }
 
     sorted.forEach((item, index) => {

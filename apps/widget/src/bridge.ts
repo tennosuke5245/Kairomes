@@ -9,7 +9,7 @@ import {
   VERSION,
 } from "@kairomes/protocol";
 import { App } from "@modelcontextprotocol/ext-apps";
-import { decodeResult } from "./tool-result.ts";
+import { decodeResult, ResultError } from "./tool-result.ts";
 
 export interface WorkbenchBridge {
   mode: "preview" | "host" | "workbench";
@@ -58,7 +58,8 @@ export function createBridge(): WorkbenchBridge {
                   signal: AbortSignal.timeout(5000),
                 });
                 const data = await response.json();
-                if (!response.ok) throw new Error(data.message ?? "操作內容已無法取得。");
+                if (!response.ok)
+                  throw new ResultError(data.message ?? "操作內容已無法取得。", data.code);
                 return ToolDataSchema.parse(data);
               },
             }

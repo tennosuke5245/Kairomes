@@ -1,0 +1,636 @@
+{
+  "date": "2026-10-03",
+  "surface": "Standalone synthetic HTML design prototype",
+  "browser": "Microsoft Edge / Playwright headless",
+  "browserVersion": "154.0.4258.48",
+  "productImplementation": "Not changed",
+  "hostTransfer": "Not executed",
+  "nativeExtensionApproval": "Not executed",
+  "privateData": "Not used",
+  "network": "No remote requests",
+  "fixture": {
+    "image": "apps/extension/assets/kairomes-k-128.png",
+    "byteSize": 8126,
+    "dimensions": [128, 128],
+    "sha256": "99daefff0b900556a1e27a0f87a985823540e3f7d85a9195fb86881e9469a015"
+  },
+  "states": [
+    "pending",
+    "preparing",
+    "applying",
+    "applied",
+    "unknown",
+    "conflict",
+    "expired",
+    "unavailable",
+    "offline",
+    "denied",
+    "cancelled",
+    "preview_error",
+    "changed"
+  ],
+  "checks": [
+    {
+      "requestedWidth": 360,
+      "state": "pending",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "匯入圖片",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "preparing",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "準備中…",
+      "disabled": true,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "applying",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "寫入中…",
+      "disabled": true,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "applied",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "檢查目前檔案",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "unknown",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "查詢結果",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "conflict",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "expired",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "unavailable",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "offline",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "查詢狀態",
+      "disabled": true,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "denied",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "cancelled",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "preview_error",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "重新載入圖片",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 360,
+      "state": "changed",
+      "clientWidth": 358,
+      "scrollWidth": 358,
+      "width": 360,
+      "primary": "重新審閱",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "pending",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "匯入圖片",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "preparing",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "準備中…",
+      "disabled": true,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "applying",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "寫入中…",
+      "disabled": true,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "applied",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "檢查目前檔案",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "unknown",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "查詢結果",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "conflict",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "expired",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "unavailable",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "offline",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "查詢狀態",
+      "disabled": true,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "denied",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "cancelled",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "preview_error",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "重新載入圖片",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 400,
+      "state": "changed",
+      "clientWidth": 398,
+      "scrollWidth": 398,
+      "width": 400,
+      "primary": "重新審閱",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "pending",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "匯入圖片",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "preparing",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "準備中…",
+      "disabled": true,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "applying",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "寫入中…",
+      "disabled": true,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "applied",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "檢查目前檔案",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "unknown",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "查詢結果",
+      "disabled": false,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "conflict",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "expired",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "unavailable",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "offline",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "查詢狀態",
+      "disabled": true,
+      "imageVisible": true,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "denied",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "cancelled",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "返回清單",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "preview_error",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "重新載入圖片",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    },
+    {
+      "requestedWidth": 480,
+      "state": "changed",
+      "clientWidth": 478,
+      "scrollWidth": 478,
+      "width": 480,
+      "primary": "重新審閱",
+      "disabled": false,
+      "imageVisible": false,
+      "imageLoaded": true
+    }
+  ],
+  "zoomChecks": [
+    {
+      "requestedWidth": 360,
+      "state": "pending",
+      "width": 360,
+      "clientWidth": 178,
+      "scrollWidth": 178,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 360,
+      "state": "unknown",
+      "width": 360,
+      "clientWidth": 178,
+      "scrollWidth": 178,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 360,
+      "state": "unavailable",
+      "width": 360,
+      "clientWidth": 178,
+      "scrollWidth": 178,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 360,
+      "state": "offline",
+      "width": 360,
+      "clientWidth": 178,
+      "scrollWidth": 178,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 400,
+      "state": "pending",
+      "width": 400,
+      "clientWidth": 198,
+      "scrollWidth": 198,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 400,
+      "state": "unknown",
+      "width": 400,
+      "clientWidth": 198,
+      "scrollWidth": 198,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 400,
+      "state": "unavailable",
+      "width": 400,
+      "clientWidth": 198,
+      "scrollWidth": 198,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 400,
+      "state": "offline",
+      "width": 400,
+      "clientWidth": 198,
+      "scrollWidth": 198,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 480,
+      "state": "pending",
+      "width": 480,
+      "clientWidth": 238,
+      "scrollWidth": 238,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 480,
+      "state": "unknown",
+      "width": 480,
+      "clientWidth": 238,
+      "scrollWidth": 238,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 480,
+      "state": "unavailable",
+      "width": 480,
+      "clientWidth": 238,
+      "scrollWidth": 238,
+      "cssZoom": "2"
+    },
+    {
+      "requestedWidth": 480,
+      "state": "offline",
+      "width": 480,
+      "clientWidth": 238,
+      "scrollWidth": 238,
+      "cssZoom": "2"
+    }
+  ],
+  "zoomMethod": "CSS zoom 2 within fixed rendered panel width; synthetic reflow, not native sidePanel browser-zoom verification",
+  "mobileChecks": [
+    {
+      "width": 360,
+      "view": "board",
+      "clientWidth": 360,
+      "scrollWidth": 360
+    },
+    {
+      "width": 360,
+      "view": "interactive",
+      "clientWidth": 360,
+      "scrollWidth": 360
+    },
+    {
+      "width": 360,
+      "view": "boundary",
+      "clientWidth": 360,
+      "scrollWidth": 360
+    },
+    {
+      "width": 400,
+      "view": "board",
+      "clientWidth": 400,
+      "scrollWidth": 400
+    },
+    {
+      "width": 400,
+      "view": "interactive",
+      "clientWidth": 400,
+      "scrollWidth": 400
+    },
+    {
+      "width": 400,
+      "view": "boundary",
+      "clientWidth": 400,
+      "scrollWidth": 400
+    },
+    {
+      "width": 480,
+      "view": "board",
+      "clientWidth": 480,
+      "scrollWidth": 480
+    },
+    {
+      "width": 480,
+      "view": "interactive",
+      "clientWidth": 480,
+      "scrollWidth": 480
+    },
+    {
+      "width": 480,
+      "view": "boundary",
+      "clientWidth": 480,
+      "scrollWidth": 480
+    }
+  ],
+  "interactions": [
+    "approve->applying->applied",
+    "current file synthetic version check",
+    "deny",
+    "cancel preparing",
+    "unknown->query original synthetic receipt",
+    "Escape->queue->detail focus",
+    "integrity disclosure"
+  ],
+  "errors": [],
+  "remoteRequests": [],
+  "screenshots": [
+    "overview.png",
+    "pending-400.png",
+    "pending-200-percent-400.png",
+    "boundaries.png",
+    "unknown-mobile-400.png"
+  ]
+}

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Kairomes · 圖片匯入設計稿</title>
+    <link rel="stylesheet" href="image-import.css">
+    <script src="image-import.js" defer></script>
+  </head>
+  <body>
+    <header class="design-header">
+      <a class="design-brand" href="../image-import-plan.md">
+        <img src="../../../apps/extension/assets/kairomes-k-128.png" alt="">
+        <span>Kairomes <small>產品設計 / 2026.10.03</small></span>
+      </a>
+      <span class="draft-label">設計草稿 · 合成資料</span>
+    </header>
+    <main class="design-main">
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">CHATGPT → YOUR WORKSPACE</p>
+          <h1 id="page-title">讓產生的圖片，進入專案。</h1>
+          <p class="lead">確認圖片與儲存位置，核准後建立本機檔案。</p>
+        </div>
+        <p class="prototype-note">這是可操作的設計稿。按鈕只切換合成狀態；圖片使用公開品牌素材，尚未驗證真實 ChatGPT／Tunnel 傳檔。</p>
+      </section>
+      <nav class="view-nav" aria-label="設計稿視圖">
+        <button type="button" data-view="board" aria-pressed="true">核心畫面</button>
+        <button type="button" data-view="interactive" aria-pressed="false">互動預覽</button>
+        <button type="button" data-view="boundary" aria-pressed="false">傳遞與核准邊界</button>
+      </nav>
+      <section id="board-view" aria-label="三個核心畫面">
+        <div class="board-grid">
+          <article class="board-column">
+            <header class="frame-heading"><span>01</span><div><h2>審閱圖片</h2><p>確認這張圖與目的地，再決定是否匯入。</p></div></header>
+            <div class="panel-mount" data-board-state="pending"></div>
+          </article>
+          <article class="board-column">
+            <header class="frame-heading"><span>02</span><div><h2>檢查成果</h2><p>顯示落檔收據，可重新讀取目前檔案。</p></div></header>
+            <div class="panel-mount" data-board-state="applied"></div>
+          </article>
+          <article class="board-column">
+            <header class="frame-heading"><span>03</span><div><h2>結果待確認</h2><p>保留原操作身份，查詢後才恢復操作。</p></div></header>
+            <div class="panel-mount" data-board-state="unknown"></div>
+          </article>
+        </div>
+        <p class="board-footnote">核心稿寬度 400px；字級、暖紙色與紅色主要動作沿用現行側欄。核准由原生 Extension 呈現。</p>
+      </section>
+      <section id="interactive-view" class="interactive-layout" aria-label="圖片匯入互動原型" hidden>
+        <aside class="scenario-controls">
+          <h2>情境</h2>
+          <p class="control-note">以下控制只存在於設計稿。</p>
+          <fieldset id="scenario-buttons" class="scenario-list"><legend class="sr-only">選擇情境</legend></fieldset>
+          <fieldset class="width-controls"><legend>側欄寬度</legend>
+            <button type="button" data-width="360" aria-pressed="false">360</button>
+            <button type="button" data-width="400" aria-pressed="true">400</button>
+            <button type="button" data-width="480" aria-pressed="false">480</button>
+          </fieldset>
+          <label class="checkbox-control"><input id="zoom-control" type="checkbox">200% 縮放（合成）</label>
+          <button type="button" id="reset-scenario" class="reset-button">重設為審閱圖片</button>
+        </aside>
+        <div class="interactive-stage"><div id="interactive-panel" class="panel-mount"></div></div>
+        <aside class="scenario-explanation" aria-live="polite">
+          <span class="eyebrow">設計決策</span><h2 id="scenario-title">審閱圖片</h2><p id="scenario-rationale"></p>
+          <dl><dt>核准位置</dt><dd>Extension 原生介面</dd><dt>寫入範圍</dt><dd>已掛載專案內的相對路徑</dd><dt>第一期規則</dt><dd>個別核准、只建立新檔</dd></dl>
+          <a href="../image-import-ux.md">閱讀完整互動規格 ↗</a>
+        </aside>
+      </section>
+      <section id="boundary-view" aria-labelledby="boundary-title" hidden>
+        <h2 id="boundary-title">圖片內容與核准，走不同通道。</h2>
+        <div class="boundary-flow">
+          <article><span class="flow-step">01 / 宿主</span><h3>ChatGPT</h3><p>產生圖片，將正式檔案參照交給最外層的 <code>file</code> 輸入。</p><span class="boundary-badge">待真實宿主驗證</span></article>
+          <span class="flow-arrow" aria-hidden="true">→</span>
+          <article><span class="flow-step">02 / 內容</span><h3>Kairomes Host</h3><p>受限下載、驗證與暫存圖片。回傳匯入身份，不把下載網址送入活動紀錄。</p><span class="boundary-badge">新增直接公開工具</span></article>
+          <span class="flow-arrow" aria-hidden="true">→</span>
+          <article><span class="flow-step">03 / 決策</span><h3>原生側欄</h3><p>從可信通道讀取待審圖片，核對內容身份與目的地，再個別核准。</p><span class="boundary-badge">模型與 widget 無核准權</span></article>
+          <span class="flow-arrow" aria-hidden="true">→</span>
+          <article><span class="flow-step">04 / 成果</span><h3>本機專案</h3><p>只建立新檔。核准與落檔之間再次核對掛載、路徑及內容版本。</p><span class="boundary-badge">回傳大小與完整雜湊</span></article>
+        </div>
+        <div class="boundary-notes"><article><h3>傳檔門檻先通過</h3><p>正式檔案 object 與 Drive 的 runtime 路徑改寫分開驗證。工具出現在清單，不代表檔案交付成功。</p></article><article><h3>核准只綁這件操作</h3><p>瀏覽專案選擇不會重設目的地。核准內容有變、斷線或結果不明時，決策按鈕停用。</p></article><article><h3>分清收據與目前檔案</h3><p>「已存檔」描述當次寫入；重新讀取後，才顯示目前檔案與當次版本是否一致。</p></article></div>
+        <a class="architecture-link" href="../image-import-architecture.md">查看契約、驗證閘門與安全規格 ↗</a>
+      </section>
+    </main>
+    <template id="panel-template">
+      <section class="product-panel" aria-label="Kairomes 圖片匯入側欄">
+        <header class="native-header">
+          <div class="native-brand"><img src="../../../apps/extension/assets/kairomes-k-128.png" alt="Kairomes"><span class="scope-label">全部本機操作</span><span aria-hidden="true">⌄</span></div>
+          <span class="access-mode">逐步確認 <span aria-hidden="true">⌄</span></span>
+          <div class="native-status"><span class="connection-label"><i></i>核准通道已連線</span><button type="button" class="queue-count" data-action="queue">需確認 1</button></div>
+        </header>
+        <div class="product-body">
+          <button type="button" class="back-button" data-action="queue">← 返回清單</button>
+          <div class="title-row"><h2 class="product-title" tabindex="-1">匯入圖片</h2><span class="state-badge">等待核准</span></div>
+          <p class="product-summary">儲存 ChatGPT 產生的專案封面。</p>
+          <dl class="destination-fields"><div><dt>專案</dt><dd>品牌素材專案</dd></div><div><dt>儲存為</dt><dd><code>assets/cover.png</code></dd></div></dl>
+          <figure class="image-preview"><div class="image-stage"><img src="../../../apps/extension/assets/kairomes-k-128.png" alt="待匯入圖片：暖色背景上的 Kairomes 紅色標誌"></div><figcaption><span>128 × 128</span><span>7.9 KiB</span><span>PNG</span></figcaption></figure>
+          <div class="empty-preview" hidden><span class="empty-symbol" aria-hidden="true">▧</span><p class="empty-message"></p></div>
+          <div class="state-message" role="status" hidden><span class="message-symbol" aria-hidden="true">!</span><p class="message-text"></p></div>
+          <p class="write-scope">只建立新檔 · 不覆寫</p>
+          <p class="approval-expiry">14:35 到期</p>
+          <details class="technical-details"><summary>來源與完整性</summary><dl><div><dt>來源</dt><dd>ChatGPT 圖片檔</dd></div><div><dt>內容版本</dt><dd><code class="full-hash">99daefff0b900556a1e27a0f87a985823540e3f7d85a9195fb86881e9469a015</code></dd></div><div><dt>操作編號</dt><dd><code>00000000-0000-4000-8000-000000000101</code></dd></div><div><dt>大小</dt><dd>8,126 bytes</dd></div></dl></details>
+          <div class="file-verification" role="status" hidden>目前檔案與當次寫入版本一致。</div>
+        </div>
+        <footer class="decision-footer"><button type="button" class="secondary-action" data-action="secondary">拒絕</button><button type="button" class="primary-action" data-action="primary">匯入圖片</button></footer>
+        <p class="panel-announcement sr-only" aria-live="polite" aria-atomic="true"></p>
+      </section>
+    </template>
+  </body>
+</html>

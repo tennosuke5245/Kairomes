@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import type { HandoffInput } from "../../../packages/protocol/src/handoff.ts";
+import { VERSION } from "../../../packages/protocol/src/index.ts";
+import { handoffError } from "./handoff-copy.ts";
 import type { DesktopSnapshot, WorkspaceSummary } from "./model.ts";
 
 type PairingResult = { pairingUrl?: string };
@@ -27,7 +30,7 @@ function mockSnapshot(): DesktopSnapshot {
       message: demo === "runtime-error" ? "本機服務意外停止。" : "本機服務正在背景執行。",
     },
     companion: {
-      version: "0.1.4",
+      version: VERSION,
       overall: { tone: demo === "ready" ? "good" : "busy", label: "Kairomes" },
       workspaces: mockWorkspaces,
       workbench: {
@@ -128,4 +131,13 @@ export async function addWorkspace(path: string): Promise<WorkspaceSummary> {
 export async function removeWorkspace(workspaceId: string): Promise<void> {
   if (inTauri()) await invoke("remove_workspace", { workspaceId });
   else mockWorkspaces = mockWorkspaces.filter((workspace) => workspace.id !== workspaceId);
+}
+
+export async function handoffRequest<T>(input: HandoffInput): Promise<T> {
+  if (!inTauri()) throw new Error("接續需使用 Kairomes Desktop；此頁只提供介面預覽。");
+  try {
+    return await invoke<T>("handoff_request", { input });
+  } catch (caught) {
+    throw handoffError(caught);
+  }
 }

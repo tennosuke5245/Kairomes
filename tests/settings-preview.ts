@@ -1,6 +1,8 @@
 import { McpPanel } from "../apps/extension/src/mcp-panel.ts";
 import type { McpCatalogTool, McpPanelState } from "../packages/protocol/src/index.ts";
 
+const fixtureOptions = new URLSearchParams(location.search);
+
 const names = [
   "click",
   "close_page",
@@ -30,6 +32,9 @@ const names = [
   "upload_file",
   "wait_for",
 ];
+if (fixtureOptions.get("count") === "100") {
+  while (names.length < 100) names.push(`fixture_tool_${names.length}`);
+}
 
 function tool(name: string, index: number): McpCatalogTool {
   const readOnly = /^(get_|list_|take_|wait_)/.test(name);
@@ -47,7 +52,7 @@ function tool(name: string, index: number): McpCatalogTool {
         ? "Capture a screenshot of the page or a selected element and return it to ChatGPT."
         : `Chrome DevTools action: ${name.replaceAll("_", " ")}.`,
     enabled: true,
-    availability: "ready",
+    availability: fixtureOptions.has("unavailable") && index === 42 ? "unavailable" : "ready",
     read_only_hint: readOnly,
     destructive_hint: readOnly ? false : null,
     open_world_hint: !readOnly,
@@ -79,6 +84,8 @@ const panel = new McpPanel(
       enabled?: boolean;
       name?: string;
     };
+    if (["add_stdio", "add_http"].includes(input.action) && fixtureOptions.has("add-failed"))
+      throw new Error("合成測試：無法加入，請核對設定。");
     if (input.action === "set_server_enabled") {
       state = {
         ...state,
@@ -99,11 +106,21 @@ const panel = new McpPanel(
       };
     }
     if (input.action === "remove") state = { ...state, servers: [] };
+    state = { ...state, catalog_revision: crypto.randomUUID() };
     return structuredClone(state);
   },
   (message) => {
     const error = document.querySelector<HTMLElement>("#panel-error");
-    if (error) error.textContent = message;
+    if (error) {
+      error.textContent = message;
+      error.hidden = !message;
+      const notice = document.querySelector<HTMLElement>("#panel-notice");
+      const content = document.querySelector<HTMLElement>(".settings-content");
+      if (notice && content) {
+        if (notice.parentElement !== content) content.prepend(notice);
+        notice.hidden = !message;
+      }
+    }
   },
 );
 panel.render(state, true);

@@ -7,7 +7,7 @@ function git(cwd: string, args: string[]): Promise<GitResult> {
   return new Promise((resolve) => {
     execFile(
       "git",
-      args,
+      ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", ...args],
       {
         cwd,
         windowsHide: true,

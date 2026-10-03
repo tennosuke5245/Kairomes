@@ -1,5 +1,15 @@
 import { type ToolData, ToolDataSchema } from "@kairomes/protocol";
 
+export class ResultError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "ResultError";
+  }
+}
+
 export function decodeResult(result: {
   isError?: boolean;
   content?: unknown;
@@ -10,12 +20,15 @@ export function decodeResult(result: {
     : [];
   if (result.isError) {
     let message = "工具無法完成操作。";
+    let code: string | undefined;
     try {
-      message = JSON.parse(texts[0]?.text ?? "{}").message ?? message;
+      const data = JSON.parse(texts[0]?.text ?? "{}");
+      if (typeof data.message === "string") message = data.message;
+      if (typeof data.code === "string") code = data.code;
     } catch {
       /* Keep safe fallback. */
     }
-    throw new Error(message);
+    throw new ResultError(message, code);
   }
   const candidates: unknown[] = [result.structuredContent];
   for (const item of texts) {

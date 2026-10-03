@@ -17,8 +17,12 @@ const result = await Bun.build({
 });
 if (!result.success) throw new AggregateError(result.logs, "Extension build failed");
 await Promise.all(
-  ["manifest.json", "sidepanel.html", "sidepanel.css", "assets/kairomes-k-128.png"].map((file) =>
-    copyFile(new URL(file, app), new URL(file, dist)),
-  ),
+  [
+    "manifest.json",
+    "sidepanel.html",
+    "sidepanel.css",
+    "mcp-panel.css",
+    "assets/kairomes-k-128.png",
+  ].map((file) => copyFile(new URL(file, app), new URL(file, dist))),
 );
 console.log("Extension built: apps/extension/dist (load unpacked in Chrome / Edge)");

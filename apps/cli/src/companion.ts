@@ -11,10 +11,13 @@ import {
   startWorkbench,
   verifyWorkbenchConnection,
 } from "@kairomes/daemon";
-import { KairomesError, publicError, VERSION, z } from "@kairomes/protocol";
+import { HandoffInputSchema, KairomesError, publicError, VERSION, z } from "@kairomes/protocol";
 import { WorkspaceRegistry } from "@kairomes/workspace-core";
+import { HandoffBriefs } from "../../daemon/src/handoff-brief.ts";
+import { openExternal } from "./browser.ts";
 import { companionPage } from "./companion-page.ts";
 import { validExtensionId } from "./extension-id.ts";
+import { HandoffStarts } from "./handoff-starts.ts";
 
 const SETTINGS_FILE = "companion-settings.json";
 const CONNECTION_FILE = "companion-connection.json";
@@ -234,23 +237,6 @@ async function loadLogoBase64() {
   throw new KairomesError("COMPANION_ASSET_MISSING", "找不到 Companion 標誌資源。");
 }
 
-async function openExternal(url: string) {
-  const argv =
-    process.platform === "win32"
-      ? [
-          path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "rundll32.exe"),
-          "url.dll,FileProtocolHandler",
-          url,
-        ]
-      : process.platform === "darwin"
-        ? ["open", url]
-        : ["xdg-open", url];
-  const child = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  const exitCode = await child.exited;
-  if (exitCode !== 0)
-    throw new KairomesError("OPEN_FAILED", "無法開啟瀏覽器，請重新啟動 Companion。");
-}
-
 function stripTerminalControls(value: string) {
   return [...stripVTControlCharacters(value)]
     .filter((character) => {
@@ -467,6 +453,12 @@ class TunnelSupervisor {
 }
 
 class CompanionRuntime {
+  private readonly handoffStarts = new HandoffStarts();
+  private handoffService?: Promise<{
+    briefs: HandoffBriefs;
+    registry: WorkspaceRegistry;
+    instanceId: string;
+  }>;
   private settings: CompanionSettings = {};
   private registry?: WorkspaceRegistry;
   private ownedWorkbench?: Awaited<ReturnType<typeof startWorkbench>>;
@@ -515,6 +507,7 @@ class CompanionRuntime {
       registry = await WorkspaceRegistry.open(this.dataDirectory);
       const workbench = await startWorkbench(registry, html, 0, this.settings.extensionId, {
         mcpResultHtml,
+        openBrowser: this.opener,
       });
       this.registry = registry;
       this.ownedWorkbench = workbench;
@@ -542,6 +535,8 @@ class CompanionRuntime {
   }
 
   private async closeOwnedWorkbench() {
+    this.handoffStarts.cancelAll();
+    await this.closeHandoff();
     const workbench = this.ownedWorkbench;
     const registry = this.registry;
     this.ownedWorkbench = undefined;
@@ -686,6 +681,68 @@ class CompanionRuntime {
     return { workspace };
   }
 
+  async handoff(input: unknown, signal: AbortSignal) {
+    const action = HandoffInputSchema.parse(input);
+    // Cleanup needs only the existing draft service. A lost workbench must not
+    // prevent cancellation or cause a replacement workbench to start.
+    if (action.action === "cancel") {
+      this.handoffStarts.cancel(action.draft_id);
+      const service = await this.handoffService?.catch(() => null);
+      return service ? service.briefs.perform(action, signal) : { cancelled: true };
+    }
+    if (action.action === "start")
+      return this.handoffStarts.run(action, signal, (check) => this.handoffBriefs(check));
+    return (await this.handoffBriefs()).perform(action, signal);
+  }
+
+  private async handoffBriefs(checkStart: () => void = () => undefined) {
+    const check = () => {
+      if (this.closed) throw new KairomesError("HANDOFF_EXPIRED", "接續服務已停止。");
+      checkStart();
+    };
+    check();
+    await this.ensureWorkbenchReady();
+    check();
+    const { instanceId } = await this.workbenchConnection();
+    check();
+    const existing = await this.handoffService;
+    check();
+    if (existing && existing.instanceId !== instanceId) {
+      await this.closeHandoff();
+      check();
+    }
+    if (!this.handoffService) {
+      const pending = WorkspaceRegistry.open(this.dataDirectory).then((registry) => {
+        if (this.closed || this.handoffService !== pending) {
+          registry.close();
+          throw new KairomesError("HANDOFF_EXPIRED", "接續服務已停止。");
+        }
+        return { briefs: new HandoffBriefs(registry), registry, instanceId };
+      });
+      this.handoffService = pending;
+      void pending.catch(() => {
+        if (this.handoffService === pending) this.handoffService = undefined;
+      });
+    }
+    const { briefs } = await this.handoffService;
+    check();
+    return briefs;
+  }
+
+  private async closeHandoff() {
+    const service = this.handoffService;
+    this.handoffService = undefined;
+    if (!service) return;
+    const resources = await service.catch(() => null);
+    if (!resources) return;
+    const { briefs, registry } = resources;
+    try {
+      await briefs.close();
+    } finally {
+      registry.close();
+    }
+  }
+
   async removeWorkspace(workspaceId: string) {
     await this.withRegistry((registry) => registry.remove(workspaceId));
     return { workspaceId };
@@ -778,6 +835,8 @@ class CompanionRuntime {
   async close() {
     if (this.closed) return;
     this.closed = true;
+    this.handoffStarts.close();
+    await this.closeHandoff();
     await this.tunnel.stop();
     await this.closeOwnedWorkbench();
     this.workbenchState = "stopped";
@@ -883,7 +942,7 @@ export async function startCompanionApplication(options: {
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: options.port ?? 0,
-    maxRequestBodySize: 4096,
+    maxRequestBodySize: 64 * 1024,
     async fetch(request, bunServer) {
       const url = new URL(request.url);
       const origin = `http://127.0.0.1:${bunServer.port}`;
@@ -898,7 +957,10 @@ export async function startCompanionApplication(options: {
         return new Response(page, {
           headers: { ...headers, "Content-Type": "text/html; charset=utf-8" },
         });
-      if (request.method !== "POST" || !["/api/status", "/api/action"].includes(url.pathname))
+      if (
+        request.method !== "POST" ||
+        !["/api/status", "/api/action", "/api/handoff"].includes(url.pathname)
+      )
         return new Response("Not found", { status: 404, headers });
       if (request.headers.get("origin") !== origin)
         return new Response("Invalid origin", { status: 403, headers });
@@ -911,13 +973,17 @@ export async function startCompanionApplication(options: {
       if (!request.headers.get("content-type")?.startsWith("application/json"))
         return new Response("Expected JSON", { status: 415, headers });
       try {
+        const body = await request.text();
+        if (Buffer.byteLength(body) > (url.pathname === "/api/handoff" ? 64 * 1024 : 4096))
+          throw new KairomesError("REQUEST_TOO_LARGE", "本機請求超過大小上限。");
+        const parsedBody: unknown = JSON.parse(body);
+        if (url.pathname === "/api/handoff")
+          return Response.json(await runtime.handoff(parsedBody, request.signal), { headers });
         if (url.pathname === "/api/status") {
-          z.object({})
-            .strict()
-            .parse(await request.json());
+          z.object({}).strict().parse(parsedBody);
           return Response.json(await runtime.status(), { headers });
         }
-        const input = ActionSchema.parse(await request.json());
+        const input = ActionSchema.parse(parsedBody);
         let result: Record<string, unknown> = {};
         if (input.action === "open_workbench") await runtime.openWorkbench();
         else if (input.action === "open_connectors") await runtime.openConnectors();

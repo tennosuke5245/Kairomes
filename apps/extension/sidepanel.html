@@ -5,19 +5,26 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Kairomes 工作台</title>
     <link rel="stylesheet" href="sidepanel.css">
+    <link rel="stylesheet" href="mcp-panel.css">
   </head>
   <body>
     <header class="native-bar">
       <div class="native-brand">
-        <img src="assets/kairomes-k-128.png" alt="">
+        <div class="native-logo">
+          <img src="assets/kairomes-k-128.png" alt="">
+          <span id="connection-status" role="img" aria-label="未配對" title="未配對"><i></i></span>
+        </div>
         <span><strong>Kairomes</strong></span>
+        <select id="workspace-filter" aria-label="瀏覽專案" hidden><option value="">全部本機操作</option></select>
       </div>
       <div class="native-actions">
-        <span id="connection-status" role="status"><i></i>未配對</span>
         <section id="access" aria-label="操作權限設定" hidden></section>
-        <button type="button" id="approval-count" hidden>1 件需要你</button>
+        <button type="button" id="settings-open" aria-controls="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-.5 2-2 1.2-2-.6-2 3.4L4 10.4v2.3l-1.5 1.4 2 3.4 2-.6 2 1.2.5 2h4l.5-2 2-1.2 2 .6 2-3.4-1.5-1.4v-2.3l1.5-1.4-2-3.4-2 .6-2-1.2L13 3Z"/><circle cx="11" cy="11.5" r="3"/></svg>設定</button>
+        <div class="connection-controls">
+          <button type="button" id="panel-recover" hidden>查詢狀態</button>
+        </div>
+        <button type="button" id="approval-count" aria-controls="approvals" aria-expanded="false" hidden>需確認 1</button>
         <button type="button" id="active-count" aria-controls="active-work" aria-expanded="false" hidden><span class="active-count-label">執行中</span><span id="active-number">0</span></button>
-        <button type="button" id="disconnect" hidden>解除配對</button>
       </div>
     </header>
     <section id="active-work" aria-label="執行中的工作" hidden>
@@ -27,13 +34,16 @@
       </div>
       <div id="active-work-list"></div>
     </section>
-    <p id="panel-error" role="alert"></p>
+    <div id="panel-notice" hidden>
+      <p id="panel-error" role="alert"></p>
+    </div>
+    <p id="panel-status" class="visually-hidden" role="status" aria-live="polite"></p>
+    <p id="approval-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
     <section id="approvals" aria-label="本機核准" hidden></section>
     <main id="setup">
       <div class="setup-shell">
         <header class="setup-intro">
-          <h1>連接本機工作台</h1>
-          <p>在 Kairomes Desktop 的「連線設定」貼上此 Extension ID，再把產生的配對連結貼到下方。</p>
+          <h1>連接工作台</h1>
         </header>
         <section class="setup-identity" aria-label="此擴充功能的 ID">
           <span>Extension ID</span>
@@ -46,12 +56,12 @@
           <label for="address">配對連結</label>
           <input id="address" type="password" autocomplete="off" spellcheck="false" required placeholder="貼上 Desktop 產生的連結">
           <button id="connect-button" type="submit">連接工作台</button>
-          <p>配對只在這台電腦使用，連結不會交給 ChatGPT。</p>
         </form>
         <p id="error" role="alert"></p>
         <details id="setup-advanced" class="setup-advanced">
-          <summary>命令列與疑難排解</summary>
+          <summary>如何取得配對連結</summary>
           <div class="setup-advanced-content">
+            <p>在 Desktop「連線設定」貼上 Extension ID，再複製配對連結。請勿分享連結。</p>
             <h2>命令列啟動</h2>
             <p>未使用 Desktop 時，在專案目錄執行：</p>
             <div class="command-row compact">
@@ -69,7 +79,7 @@
               <code id="pair-command"></code>
               <button type="button" class="copy-button" data-copy-target="pair-command" aria-label="複製重新配對指令">複製</button>
             </div>
-            <p>重啟 app、瀏覽器或更新 Extension 後需重新配對。請勿分享配對連結。</p>
+            <p>重啟 app、瀏覽器或更新 Extension 後需重新配對。</p>
           </div>
         </details>
         <p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
@@ -94,12 +104,16 @@
               <h1 tabindex="-1">一般</h1>
             </div>
           </header>
-          <article class="settings-info-card">
-            <div>
-              <strong>操作權限</strong>
-              <p>從右上角切換模式，授權可隨時收回。</p>
-            </div>
-          </article>
+          <dl class="connection-details">
+            <dt>核准通道</dt><dd id="approval-channel">未配對</dd>
+            <dt>工作台資料</dt><dd id="workbench-channel">待確認</dd>
+            <dt>ChatGPT／Tunnel</dt><dd>此側欄無法確認；請在 ChatGPT 呼叫 workspace_list。</dd>
+          </dl>
+          <button type="button" id="disconnect" hidden>解除配對</button>
+          <details class="settings-tunnel-details">
+            <summary>從 Codex 接續</summary>
+            <p>在 Desktop「專案」選擇「從 Codex 接續」。先在此側欄核對該專案的操作權限。</p>
+          </details>
           <article class="settings-info-card settings-tunnel-card">
             <div>
               <strong>ChatGPT Tunnel</strong>

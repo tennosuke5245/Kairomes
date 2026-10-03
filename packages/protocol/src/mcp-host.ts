@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { McpAuthSummarySchema } from "./mcp-auth.ts";
 
 const McpServerStateSchema = z.enum(["disconnected", "connecting", "ready", "unavailable"]);
 
@@ -163,6 +164,32 @@ export const McpMountConfigSchema = z
   .strict();
 export type McpMountConfig = z.infer<typeof McpMountConfigSchema>;
 
+/** Canonical launch identity; enablement is mutable and verified separately. */
+export function mcpConfigIdentitySource(config: Pick<McpMountConfig, "name" | "transport">) {
+  const identity = McpMountConfigSchema.pick({ name: true, transport: true }).parse({
+    name: config.name,
+    transport: config.transport,
+  });
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+    if (value && typeof value === "object")
+      return `{${Object.keys(value)
+        .sort()
+        .map(
+          (key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`,
+        )
+        .join(",")}}`;
+    return JSON.stringify(value) ?? "null";
+  };
+  return canonical({ version: 1, ...identity });
+}
+
+export async function mcpConfigFingerprint(config: Pick<McpMountConfig, "name" | "transport">) {
+  const bytes = new TextEncoder().encode(mcpConfigIdentitySource(config));
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export const McpMountFileSchema = z
   .object({ version: z.literal(1), servers: z.array(McpMountConfigSchema).max(16) })
   .strict();
@@ -170,10 +197,15 @@ const McpPanelServerSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   transport: z.enum(["stdio", "http"]),
+  config_fingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   enabled: z.boolean(),
   state: McpServerStateSchema,
   message: z.string().optional(),
   tools: z.array(McpCatalogToolSchema),
+  auth: McpAuthSummarySchema.optional(),
 });
 export const McpPanelStateSchema = z.object({
   catalog_revision: z.string(),

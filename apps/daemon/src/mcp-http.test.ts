@@ -1,11 +1,84 @@
 import { expect, test } from "bun:test";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { McpCallSchema, McpCatalogSchema, McpPanelStateSchema } from "@kairomes/protocol";
+import {
+  McpCallSchema,
+  McpCatalogSchema,
+  McpPanelStateSchema,
+  mcpConfigFingerprint,
+} from "@kairomes/protocol";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { fixture } from "../../../tests/fixtures.ts";
 import { startWorkbench } from "./preview.ts";
 import { readWorkbenchConnection } from "./workbench-connection.ts";
+
+test("a missing synthetic MCP executable leaves a committed, fingerprinted unavailable server", async () => {
+  const f = await fixture();
+  const extensionId = "a".repeat(32);
+  const extensionOrigin = `chrome-extension://${extensionId}`;
+  const app = await startWorkbench(
+    f.registry,
+    "<html><head><!--KAIROMES_MODE--></head></html>",
+    0,
+    extensionId,
+  );
+  try {
+    const connection = await readWorkbenchConnection(f.state);
+    const post = (route: string, token: string, body: unknown, origin = extensionOrigin) =>
+      fetch(`${connection.origin}${route}`, {
+        method: "POST",
+        headers: {
+          Origin: origin,
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(5000),
+      });
+    const pairedUrl = await (
+      await post("/api/pairing/create", connection.adminToken, { extensionId }, connection.origin)
+    ).json();
+    const fragment = new URLSearchParams(new URL(pairedUrl.pairingUrl).hash.slice(1));
+    const panel = await (
+      await post("/api/panel/pair", "", {
+        code: fragment.get("code"),
+        instanceId: connection.instanceId,
+      })
+    ).json();
+    const command = path.join(f.directory, "never-created-synthetic-mcp.exe");
+    const args = ["synthetic-private-argument"];
+    const env: string[] = [];
+    const body = { action: "add_stdio", name: "無法啟動的合成服務", command, args, env };
+    const response = await post("/api/panel/mcp", panel.panelToken, body);
+    expect(response.status).toBe(200);
+    const state = McpPanelStateSchema.parse(await response.json());
+    const server = state.servers[0];
+    expect(state.servers).toHaveLength(1);
+    expect(server).toMatchObject({
+      name: body.name,
+      enabled: true,
+      transport: "stdio",
+      state: "unavailable",
+      tools: [],
+    });
+    expect(server?.config_fingerprint).toBe(
+      await mcpConfigFingerprint({
+        name: body.name,
+        transport: { kind: "stdio", command, args, env },
+      }),
+    );
+    expect(server?.message).toBe("無法連線；請由本機使用者檢查這個 MCP 的設定與執行狀態。");
+    for (const privateValue of [command, f.directory, ...args, ...env])
+      expect(JSON.stringify(state)).not.toContain(privateValue);
+    const queried = await post("/api/panel/mcp", panel.panelToken, { action: "list" });
+    expect(queried.status).toBe(200);
+    expect(McpPanelStateSchema.parse(await queried.json())).toEqual(state);
+  } finally {
+    await app.close();
+    await f.dispose();
+  }
+});
 
 test("trusted sidebar mounts an MCP while the fixed ChatGPT broker schema stays connected", async () => {
   const f = await fixture();
@@ -80,6 +153,14 @@ test("trusted sidebar mounts an MCP while the fixed ChatGPT broker schema stays 
       state: "ready",
       tools: expect.arrayContaining([expect.objectContaining({ name: "lookup", enabled: true })]),
     });
+    expect(mounted.servers[0]?.config_fingerprint).toBe(
+      await mcpConfigFingerprint({
+        name: "Sidebar fixture",
+        transport: { kind: "stdio", command: process.execPath, args: [fixturePath], env: [] },
+      }),
+    );
+    expect(JSON.stringify(mounted)).not.toContain(fixturePath);
+    expect(JSON.stringify(mounted)).not.toContain(process.execPath);
     const serverId = mounted.servers[0]?.id;
     if (!serverId) throw new Error("MCP server was not mounted");
 

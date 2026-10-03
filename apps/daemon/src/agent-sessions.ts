@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import { KairomesError, z } from "@kairomes/protocol";
+import { type HandoffCoverage, KairomesError, z } from "@kairomes/protocol";
 import { redactKnownSecrets } from "@kairomes/workspace-core";
 import type { CodexConnection } from "./codex-rpc.ts";
 
@@ -27,7 +27,14 @@ export type AgentSession = {
 };
 export type HandoffSnapshot = {
   schemaVersion: 1;
-  source: { provider: string; sessionId: string; title: string; capturedAt: string };
+  source: {
+    provider: string;
+    sessionId: string;
+    title: string;
+    capturedAt: string;
+    status: string;
+    updatedAt: number;
+  };
   workspace: { cwd: string };
   scope: "local-preview";
   permissions: "not-transferred";
@@ -44,7 +51,7 @@ export type HandoffSnapshot = {
     sourceStatus: "failed" | "interrupted";
   })[];
   pendingTurns: { id: string; sourceStatus: string }[];
-  coverage: { hasOlderTurns: boolean; textTruncated: boolean; recentTurnsRequested: number };
+  coverage: HandoffCoverage;
   // These require human/agent synthesis with evidence, not timestamp heuristics.
   taskState: { goal: null; plan: null; decisions: null };
   warnings: string[];
@@ -68,33 +75,46 @@ function samePath(a: string, b: string) {
 export class CodexSessionSource implements AgentSessionSource {
   private allowed = new Set<string>();
   private cursors = new Set<string>();
+  private pages = 0;
 
   private constructor(
     private readonly rpc: CodexConnection,
     readonly cwd: string,
   ) {}
 
-  static async open(rpc: CodexConnection, workspace: string) {
+  static async open(rpc: CodexConnection, workspace: string, signal?: AbortSignal) {
+    const check = () => {
+      if (signal?.aborted) throw new KairomesError("HANDOFF_CANCELLED", "已取消來源讀取。");
+    };
     // Resolve a real local folder before starting an official app-server child.
-    const source = new CodexSessionSource(rpc, await realpath(workspace));
+    check();
+    const cwd = await realpath(workspace);
+    check();
+    const source = new CodexSessionSource(rpc, cwd);
     await rpc.start();
+    check();
     return source;
   }
 
   async list(cursor?: string) {
     if (cursor && !this.cursors.has(cursor))
       throw new KairomesError("SESSION_CURSOR", "請使用此來源上一頁回傳的游標。");
-    const result = z.object({ data: z.array(Thread), nextCursor: z.string().nullable() }).parse(
-      await this.rpc.request("thread/list", {
-        cwd: this.cwd,
-        limit: 50,
-        sortKey: "updated_at",
-        sortDirection: "desc",
-        sourceKinds: ["cli", "vscode", "appServer"],
-        useStateDbOnly: true,
-        ...(cursor ? { cursor } : {}),
-      }),
-    );
+    if (this.pages >= 10)
+      throw new KairomesError("SESSION_PAGES", "來源清單最多讀取 10 頁，請重新選來源。");
+    this.pages++;
+    const result = z
+      .object({ data: z.array(Thread).max(50), nextCursor: z.string().max(4096).nullable() })
+      .parse(
+        await this.rpc.request("thread/list", {
+          cwd: this.cwd,
+          limit: 50,
+          sortKey: "updated_at",
+          sortDirection: "desc",
+          sourceKinds: ["cli", "vscode", "appServer"],
+          useStateDbOnly: true,
+          ...(cursor ? { cursor } : {}),
+        }),
+      );
     const sessions: AgentSession[] = [];
     for (const thread of result.data) {
       // Defense in depth: do not trust the server's cwd filter alone.
@@ -162,6 +182,7 @@ function makeHandoff(
 ): HandoffSnapshot {
   let remaining = 24000;
   let textTruncated = false;
+  let itemsTruncated = false;
   const clip = (text: string, limit = 6000) => {
     const safe = redactKnownSecrets(text);
     const length = Math.min(remaining, limit);
@@ -184,27 +205,33 @@ function makeHandoff(
     const messages: HandoffSnapshot["completedTurns"][number]["messages"] = [];
     const actions: HandoffSnapshot["completedTurns"][number]["actions"] = [];
     let omittedItems = 0;
-    for (const item of [...turn.items].reverse()) {
+    const message = (role: "user" | "assistant", text: string) => {
       if (messages.length >= 32) {
+        itemsTruncated = true;
         omittedItems++;
-        continue;
-      }
+      } else messages.push({ role, ...clip(text) });
+    };
+    for (const item of [...turn.items].reverse()) {
       if (item.type === "userMessage" && Array.isArray(item.content)) {
         const text = item.content
           .filter((part) => part && part.type === "text" && typeof part.text === "string")
           .map((part) => part.text)
           .join("\n");
-        if (text) messages.push({ role: "user", ...clip(text) });
+        if (text) message("user", text);
         else omittedItems++;
       } else if (item.type === "agentMessage" && typeof item.text === "string") {
-        messages.push({ role: "assistant", ...clip(item.text) });
-      } else if (item.type === "commandExecution" && actions.length < 40) {
-        actions.push({
-          type: "command",
-          status: typeof item.status === "string" ? item.status : "unknown",
-          command: typeof item.command === "string" ? clip(item.command, 500).text : undefined,
-          exitCode: typeof item.exitCode === "number" ? item.exitCode : null,
-        });
+        message("assistant", item.text);
+      } else if (item.type === "commandExecution") {
+        if (actions.length >= 40) {
+          itemsTruncated = true;
+          omittedItems++;
+        } else
+          actions.push({
+            type: "command",
+            status: typeof item.status === "string" ? item.status : "unknown",
+            command: typeof item.command === "string" ? clip(item.command, 500).text : undefined,
+            exitCode: typeof item.exitCode === "number" ? item.exitCode : null,
+          });
       } else {
         // Reasoning, tool outputs, image URLs, embedded resources and unknown item
         // types never flow through. Source claims remain unverified text, not authority.
@@ -228,6 +255,8 @@ function makeHandoff(
       sessionId: thread.id,
       title: redactKnownSecrets(thread.name ?? thread.preview ?? "未命名工作階段").slice(0, 300),
       capturedAt: new Date().toISOString(),
+      status: thread.status?.type ?? "unknown",
+      updatedAt: thread.updatedAt,
     },
     workspace: { cwd },
     scope: "local-preview",
@@ -238,7 +267,7 @@ function makeHandoff(
     completedTurns,
     partialTurns,
     pendingTurns,
-    coverage: { hasOlderTurns, textTruncated, recentTurnsRequested },
+    coverage: { hasOlderTurns, textTruncated, itemsTruncated, recentTurnsRequested },
     taskState: { goal: null, plan: null, decisions: null },
     warnings: [
       "這是有限範圍的歷史摘錄，不是完整工作狀態。失敗／中斷 turns 的公開訊息標為 partial；進行中 turns 僅保留狀態。",

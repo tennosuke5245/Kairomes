@@ -1,14 +1,13 @@
-import {
-  type ActivityEntry,
-  type Artifact,
-  type FileResult,
-  type McpCall,
-  type McpCatalog,
-  type SearchResult,
-  type Snapshot,
-  type ToolData,
-  VERSION,
-  type Workspace,
+import type {
+  ActivityEntry,
+  Artifact,
+  FileResult,
+  McpCall,
+  McpCatalog,
+  SearchResult,
+  Snapshot,
+  ToolData,
+  Workspace,
 } from "@kairomes/protocol";
 import {
   ArrowLeftIcon,
@@ -23,34 +22,37 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { focusSequence, unreadActivity, workspaceFilterMessage } from "./activity-model.ts";
 import { ActivityPanel, latestFocus, useActivity } from "./activity-panel.tsx";
 import { ArtifactPanel } from "./artifact-panel.tsx";
 import { createBridge } from "./bridge.ts";
 import { buildChatMessage } from "./chat-context.ts";
 import { CommandPanel } from "./command-panel.tsx";
 import { FileChangePanel } from "./file-change-panel.tsx";
-import { OverviewPanel } from "./overview-panel.tsx";
+import {
+  boundedInspectorWidth,
+  INSPECTOR_LAYOUT,
+  inspectorBounds,
+  inspectorKeyWidth,
+} from "./inspector-size.ts";
+import { type OverviewContext, OverviewPanel } from "./overview-panel.tsx";
+import { invalidateHostViewerRead, readCurrentResult } from "./read-current-result.ts";
 import { TerminalPanel } from "./terminal-panel.tsx";
+import { ResultError } from "./tool-result.ts";
+import { retainWorkspaceNames, type WorkspaceNameHistory } from "./workspace-name-history.ts";
 
 const bridge = createBridge();
 const hasReplacementCharacter = (value: string) => value.includes("\uFFFD");
-function projectMonogram(name: string) {
-  const words = name
-    .trim()
-    .split(/[\s_-]+/)
-    .filter(Boolean);
-  return (
-    words.length > 1
-      ? words.slice(0, 2).map((word) => Array.from(word)[0])
-      : Array.from(words[0] ?? "?").slice(0, 2)
-  )
-    .join("")
-    .toUpperCase();
-}
+const parentOrigin =
+  document.querySelector('meta[name="kairomes-parent-origin"]')?.getAttribute("content") ?? "";
+const trustedParent =
+  /^chrome-extension:\/\/[a-p]{32}$/.test(parentOrigin) && window.parent !== window;
 
 function mcpModelContext(catalog: McpCatalog) {
   const enabled = catalog.tools.filter((tool) => tool.enabled && tool.availability === "ready");
@@ -125,9 +127,17 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   const [connected, setConnected] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedId, setSelectedId] = useState("");
-  const [projectHint, setProjectHint] = useState<{ id: string; label: string; top: number }>();
+  const [workspaceFilter, setWorkspaceFilter] = useState<string | null>(null);
+  const workspaceFilterRef = useRef<string | null>(null);
+  const [nativeControls, setNativeControls] = useState(false);
+  const [unavailableResult, setUnavailableResult] = useState<{
+    entry: ActivityEntry;
+    expired: boolean;
+  }>();
   const selectedIdRef = useRef(selectedId);
   const liveWorkspacesRef = useRef<Workspace[] | undefined>(undefined);
+  const liveWorkspaceInstance = useRef<string | undefined>(undefined);
+  const retainedWorkspace = useRef<string | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [file, setFile] = useState<FileResult | null>(null);
   const [search, setSearch] = useState<SearchResult | null>(null);
@@ -154,14 +164,27 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   const requestId = useRef(0);
   const activity = useActivity(bridge);
   const [following, setFollowing] = useState(true);
+  const [pausedOverview, setPausedOverview] = useState<OverviewContext>();
+  const [workspaceNameHistory, setWorkspaceNameHistory] = useState<WorkspaceNameHistory>();
+  const readThrough = useRef(0);
+  const previousInstance = useRef<string | undefined>(undefined);
   const [terminalFocus, setTerminalFocus] = useState<{ id: string; seq: number }>();
   const [commandFocus, setCommandFocus] = useState<{ id: string; seq: number }>();
   const [changeFocus, setChangeFocus] = useState<{ id: string; seq: number }>();
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     if (bridge.mode !== "workbench") return 410;
-    const saved = Number.parseInt(localStorage.getItem("kairomes.inspector-width") ?? "", 10);
-    return Number.isFinite(saved) ? Math.min(760, Math.max(320, saved)) : 410;
+    try {
+      const saved = Number.parseInt(localStorage.getItem("kairomes.inspector-width") ?? "", 10);
+      return boundedInspectorWidth(saved, { min: 320, max: 760 });
+    } catch {
+      return 410;
+    }
   });
+  const workbenchElement = useRef<HTMLDivElement>(null);
+  const inspectorId = useId();
+  const [containerWidth, setContainerWidth] = useState(0);
+  const inspectorRange = inspectorBounds(containerWidth);
+  const visibleInspectorWidth = boundedInspectorWidth(inspectorWidth, inspectorRange);
   const resizeCleanup = useRef<(() => void) | undefined>(undefined);
   const detailBackButton = useRef<HTMLButtonElement>(null);
   const fileBackButton = useRef<HTMLButtonElement>(null);
@@ -176,7 +199,113 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     async () => {},
   );
   const workspace = workspaces.find((item) => item.id === selectedId);
+  const historicalNames =
+    workspaceNameHistory?.instanceId === activity.snapshot?.instanceId
+      ? workspaceNameHistory?.names
+      : undefined;
+  const workspaceLabel = workspace?.name ?? historicalNames?.get(selectedId);
+  const workspaceRemoved =
+    bridge.mode === "workbench" &&
+    !!selectedId &&
+    liveWorkspacesRef.current !== undefined &&
+    !workspace;
   const detailOpen = bridge.mode === "workbench" && (view !== "overview" || !!selectedEntry);
+  const unread = following
+    ? 0
+    : unreadActivity(activity.snapshot, readThrough.current, workspaceFilter);
+
+  useEffect(() => {
+    if (bridge.mode !== "workbench" || !activity.snapshot) return;
+    const currentSnapshot = activity.snapshot;
+    setWorkspaceNameHistory((previous) =>
+      retainWorkspaceNames(previous, currentSnapshot, [
+        snapshot?.workspace.id,
+        file?.workspace_id,
+        search?.workspace_id,
+        artifact?.workspace_id,
+        selectedEntry?.workspaceId,
+        unavailableResult?.entry.workspaceId,
+        pausedOverview?.entry?.workspaceId,
+        pausedOverview?.file?.workspace_id,
+        pausedOverview?.search?.workspace_id,
+        pausedOverview?.artifact?.workspace_id,
+      ]),
+    );
+  }, [
+    activity.snapshot,
+    snapshot,
+    file,
+    search,
+    artifact,
+    selectedEntry,
+    unavailableResult,
+    pausedOverview,
+  ]);
+
+  useEffect(() => {
+    if (bridge.mode !== "workbench" || !trustedParent) return;
+    const receive = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.origin !== parentOrigin) return;
+      const message = workspaceFilterMessage(event.data);
+      if (!message) return;
+      setNativeControls(true);
+      if (workspaceFilterRef.current === message.workspaceId) return;
+      workspaceFilterRef.current = message.workspaceId;
+      requestId.current++;
+      automaticWorkspace.current = null;
+      setBusy(false);
+      setWorkspaceFilter(message.workspaceId);
+      if (message.workspaceId) setSelectedId(message.workspaceId);
+      setSelectedEntry(undefined);
+      setUnavailableResult(undefined);
+      setView("overview");
+      setFollowing(true);
+      setPausedOverview(undefined);
+      lastFollowed.current = "";
+    };
+    window.addEventListener("message", receive);
+    window.parent.postMessage({ type: "kairomes:workbench-ready", version: 1 }, parentOrigin);
+    return () => window.removeEventListener("message", receive);
+  }, []);
+
+  useEffect(() => {
+    if (following) readThrough.current = focusSequence(activity.snapshot, workspaceFilter);
+  }, [activity.snapshot, following, workspaceFilter]);
+
+  const activityAvailable = !!activity.snapshot && !activity.error;
+  useEffect(() => {
+    if (bridge.mode !== "workbench" || !trustedParent) return;
+    window.parent.postMessage(
+      {
+        type: "kairomes:workbench-status",
+        version: 1,
+        available: activityAvailable,
+      },
+      parentOrigin,
+    );
+  }, [activityAvailable]);
+
+  useEffect(() => {
+    const instance = activity.snapshot?.instanceId;
+    if (!instance || instance === previousInstance.current) return;
+    if (previousInstance.current) {
+      requestId.current++;
+      setSelectedEntry(undefined);
+      setUnavailableResult(undefined);
+      setFile(null);
+      setSearch(null);
+      setArtifact(null);
+      setMcpCall(null);
+      setLoadedResultId(undefined);
+      setView("overview");
+      setFollowing(true);
+      setPausedOverview(undefined);
+      setError("工作台已重啟；歷史詳情已清除。");
+    }
+    previousInstance.current = instance;
+    lastFollowed.current = "";
+    readThrough.current = 0;
+  }, [activity.snapshot?.instanceId]);
 
   useEffect(() => {
     if (bridge.mode !== "workbench" || detailWasOpen.current === detailOpen) return;
@@ -220,6 +349,14 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   useEffect(() => {
     if (bridge.mode !== "workbench" || !activity.snapshot?.workspaces) return;
     const liveWorkspaces = activity.snapshot.workspaces;
+    const instanceChanged =
+      liveWorkspaceInstance.current !== undefined &&
+      liveWorkspaceInstance.current !== activity.snapshot.instanceId;
+    liveWorkspaceInstance.current = activity.snapshot.instanceId;
+    if (instanceChanged) retainedWorkspace.current = undefined;
+    const previouslyMounted =
+      !instanceChanged &&
+      liveWorkspacesRef.current?.some((item) => item.id === selectedIdRef.current);
     liveWorkspacesRef.current = liveWorkspaces;
     setWorkspaces((prior) =>
       prior.length === liveWorkspaces.length &&
@@ -231,17 +368,41 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         : liveWorkspaces,
     );
     const current = selectedIdRef.current;
-    if (liveWorkspaces.some((item) => item.id === current)) return;
+    if (
+      workspaceFilterRef.current &&
+      !liveWorkspaces.some((item) => item.id === workspaceFilterRef.current)
+    ) {
+      workspaceFilterRef.current = null;
+      setWorkspaceFilter(null);
+    }
+    if (liveWorkspaces.some((item) => item.id === current)) {
+      retainedWorkspace.current = undefined;
+      return;
+    }
+    if (
+      current &&
+      !instanceChanged &&
+      (previouslyMounted || retainedWorkspace.current === current || !following || detailOpen)
+    ) {
+      retainedWorkspace.current = current;
+      if (previouslyMounted) {
+        requestId.current++;
+        setBusy(false);
+        automaticWorkspace.current = null;
+      }
+      return;
+    }
     const next = liveWorkspaces[0]?.id ?? "";
     if (next === current) return;
     automaticWorkspace.current = null;
     setSelectedEntry(undefined);
     setView("overview");
     setSelectedId(next);
-  }, [activity.snapshot]);
+  }, [activity.snapshot, following, detailOpen]);
 
   useEffect(() => {
     if (bridge.mode !== "host" || !hostResult) return;
+    if (invalidateHostViewerRead(hostResult, requestId)) setBusy(false);
     const selectResultWorkspace = (id: string, browse: boolean) => {
       if (id !== selectedIdRef.current) {
         automaticWorkspace.current = { id, browse };
@@ -326,18 +487,32 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     [],
   );
 
+  useLayoutEffect(() => {
+    const element = workbenchElement.current;
+    if (!element) return;
+    setContainerWidth(Number.parseFloat(getComputedStyle(element).width));
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setContainerWidth(entry.contentRect.width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   function resizeInspector(next: number) {
-    const maximum = Math.min(760, Math.max(320, window.innerWidth - 500));
-    const width = Math.min(maximum, Math.max(320, next));
+    const width = boundedInspectorWidth(next, inspectorRange);
     setInspectorWidth(width);
-    localStorage.setItem("kairomes.inspector-width", String(width));
+    try {
+      localStorage.setItem("kairomes.inspector-width", String(width));
+    } catch {
+      // Resizing remains available when the host blocks local storage.
+    }
   }
 
   function beginInspectorResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     resizeCleanup.current?.();
     const startX = event.clientX;
-    const startWidth = inspectorWidth;
+    const startWidth = visibleInspectorWidth;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
     target.classList.add("dragging");
@@ -359,9 +534,37 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
 
   function pauseFollow() {
     if (bridge.mode !== "workbench") return;
+    if (following) {
+      readThrough.current = focusSequence(activity.snapshot, workspaceFilter);
+      setPausedOverview({
+        entry: latestFocus(activity.snapshot, workspaceFilter),
+        file,
+        search,
+        artifact,
+        mcpCall,
+        loadedResultId,
+      });
+    }
     setFollowing(false);
     requestId.current++;
     setBusy(false);
+  }
+
+  function showUnavailableDetail(entry: ActivityEntry, expired: boolean) {
+    if (entry.workspaceId && entry.workspaceId !== selectedId) {
+      automaticWorkspace.current = { id: entry.workspaceId, browse: false };
+      setSelectedId(entry.workspaceId);
+      setSnapshot(null);
+      setFile(null);
+      setSearch(null);
+      setArtifact(null);
+    }
+    setError("");
+    setBusy(false);
+    setLoadedResultId(undefined);
+    setSelectedEntry(entry);
+    setUnavailableResult({ entry, expired });
+    setView("overview");
   }
 
   showActivityRef.current = async (entry, openDetail = false) => {
@@ -370,13 +573,17 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
       const data = entry.resultId ? await bridge.activity?.result(entry.resultId) : undefined;
       if (request !== requestId.current) return;
       if (!data && !entry.sessionId && !entry.commandId && !entry.changeId && !entry.importId) {
-        if (openDetail) setError("這筆動態已無法開啟，請查看最新結果。");
+        if (openDetail) showUnavailableDetail(entry, false);
         return;
       }
       setLoadedResultId(entry.resultId);
       const targetWorkspace = entry.workspaceId;
       if (targetWorkspace && targetWorkspace !== selectedId) {
-        automaticWorkspace.current = { id: targetWorkspace, browse: data?.kind !== "snapshot" };
+        automaticWorkspace.current = {
+          id: targetWorkspace,
+          browse:
+            workspaces.some((item) => item.id === targetWorkspace) && data?.kind !== "snapshot",
+        };
         setSelectedId(targetWorkspace);
         setSnapshot(null);
         setFile(null);
@@ -384,6 +591,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         setArtifact(null);
       }
       setError("");
+      setUnavailableResult(undefined);
       setBusy(false);
       const detail = openDetail;
       setSelectedEntry(openDetail ? entry : undefined);
@@ -433,7 +641,14 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         if (detail) setView("files");
       } else if (data?.kind === "workspaces") setWorkspaces(data.workspaces);
     } catch (cause) {
-      if (request === requestId.current)
+      if (
+        request === requestId.current &&
+        openDetail &&
+        cause instanceof ResultError &&
+        cause.code === "RESULT_EXPIRED"
+      ) {
+        showUnavailableDetail(entry, true);
+      } else if (request === requestId.current)
         setError(cause instanceof Error ? cause.message : "無法取得操作內容。");
     }
   };
@@ -485,6 +700,13 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   }, [acceptMcpCatalog]);
 
   async function browse(id: string, relative = "") {
+    if (
+      bridge.mode === "workbench" &&
+      liveWorkspacesRef.current &&
+      !liveWorkspacesRef.current.some((item) => item.id === id)
+    ) {
+      return;
+    }
     const current = ++requestId.current;
     setBusy(true);
     setError("");
@@ -538,7 +760,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   // Restore the latest action after initial workspace selection has reset its viewer.
   useEffect(() => {
     if (!connected || !following) return;
-    const entry = latestFocus(activity.snapshot);
+    const entry = latestFocus(activity.snapshot, workspaceFilter);
     if (
       !entry ||
       (!entry.resultId &&
@@ -552,10 +774,10 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     if (lastFollowed.current === key) return;
     lastFollowed.current = key;
     void showActivityRef.current(entry);
-  }, [activity.snapshot, following, connected]);
+  }, [activity.snapshot, following, connected, workspaceFilter]);
 
   async function openFile(relative: string, start = 1, returnTab: "files" | "search" = "files") {
-    setLoadedResultId(undefined);
+    if (workspaceRemoved) return;
     setFileReturnTab(returnTab);
     setTab("files");
     setView("files");
@@ -563,12 +785,15 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     setBusy(true);
     setError("");
     try {
-      const data = await bridge.call("file_read", {
-        workspace_id: selectedId,
-        path: relative,
-        start_line: start,
-      });
-      if (current === requestId.current && data.kind === "file") {
+      const data = await readCurrentResult(
+        { kind: "file", workspaceId: selectedId, path: relative },
+        () =>
+          bridge.call("file_read", { workspace_id: selectedId, path: relative, start_line: start }),
+        () => current === requestId.current,
+      );
+      if (data?.kind === "file") {
+        setLoadedResultId(undefined);
+        setSelectedEntry(undefined);
         focusFileBackOnLoad.current = returnTab === "search" && !file;
         setFile(data);
       }
@@ -581,17 +806,22 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   }
 
   async function openArtifact(relative: string) {
-    setLoadedResultId(undefined);
+    if (workspaceRemoved) return;
     setView("artifact");
     const current = ++requestId.current;
     setBusy(true);
     setError("");
     try {
-      const data = await bridge.call("artifact_preview", {
-        workspace_id: selectedId,
-        path: relative,
-      });
-      if (current === requestId.current && data.kind === "artifact") setArtifact(data);
+      const data = await readCurrentResult(
+        { kind: "artifact", workspaceId: selectedId, path: relative },
+        () => bridge.call("artifact_preview", { workspace_id: selectedId, path: relative }),
+        () => current === requestId.current,
+      );
+      if (data?.kind === "artifact") {
+        setLoadedResultId(undefined);
+        setSelectedEntry(undefined);
+        setArtifact(data);
+      }
     } catch (cause) {
       if (current === requestId.current)
         setError(cause instanceof Error ? cause.message : "無法預覽圖片。");
@@ -601,7 +831,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   }
 
   async function runSearch() {
-    setLoadedResultId(undefined);
+    if (workspaceRemoved) return;
     if (!query.trim() || !selectedId) return;
     if (hasReplacementCharacter(query)) {
       setQuery("");
@@ -618,7 +848,12 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         workspace_id: selectedId,
         query: query.trim(),
       });
-      if (current === requestId.current && data.kind === "search") setSearch(data);
+      if (current === requestId.current && data.kind === "search") {
+        setFile(null);
+        setSelectedEntry(undefined);
+        setLoadedResultId(undefined);
+        setSearch(data);
+      }
     } catch (cause) {
       if (current === requestId.current)
         setError(cause instanceof Error ? cause.message : "搜尋失敗。");
@@ -628,6 +863,8 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   }
 
   function showFileList() {
+    requestId.current++;
+    setBusy(false);
     setFile(null);
     setTab("files");
     if (selectedId && (!snapshot || snapshot.workspace.id !== selectedId)) void browse(selectedId);
@@ -635,6 +872,8 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   }
 
   function returnFromFile() {
+    requestId.current++;
+    setBusy(false);
     if (fileReturnTab === "search" && search) {
       setFile(null);
       setTab("search");
@@ -692,119 +931,105 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                 ? "終端機"
                 : "即時摘要";
     const workspaceName = (id?: string) =>
-      workspaces.find((item) => item.id === id)?.name ?? "此工作台";
-    const projectEmptyMessage = activity.error
-      ? "連線中，專案狀態待同步。"
-      : connected
-        ? "尚未掛載專案，請在 Desktop 新增。"
-        : "正在讀取專案…";
-    const showProjectHint = (id: string, label: string, element: HTMLElement) => {
-      const bounds = element.getBoundingClientRect();
-      const root = element.closest<HTMLElement>(".signal-workbench");
-      const rootTop = root?.getBoundingClientRect().top ?? 0;
-      const top = Math.max(
-        36,
-        Math.min(
-          (root?.clientHeight ?? window.innerHeight) - 36,
-          bounds.top - rootTop + bounds.height / 2,
-        ),
-      );
-      setProjectHint({ id, label, top });
-    };
+      workspaces.find((item) => item.id === id)?.name ??
+      (id ? historicalNames?.get(id) : undefined) ??
+      "其他本機操作";
     const selectOverview = () => {
+      requestId.current++;
+      setBusy(false);
       setView("overview");
       setSelectedEntry(undefined);
-      setFollowing(true);
+      setUnavailableResult(undefined);
+    };
+    const resumeLatest = () => {
+      requestId.current++;
+      setBusy(false);
+      setSelectedEntry(undefined);
+      setUnavailableResult(undefined);
+      setView("overview");
       lastFollowed.current = "";
+      setFollowing(true);
+      setPausedOverview(undefined);
     };
     return (
       <div
-        className={`signal-workbench signal-view-${view} ${view !== "overview" || selectedEntry ? "signal-detail-open" : ""}`}
-        style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
+        ref={workbenchElement}
+        className={`signal-workbench ${nativeControls ? "signal-native-controls" : ""} signal-view-${view} ${view !== "overview" || selectedEntry ? "signal-detail-open" : ""}`}
+        style={
+          {
+            "--inspector-width": `${visibleInspectorWidth}px`,
+            "--signal-canvas-min": `${INSPECTOR_LAYOUT.canvasMin}px`,
+            "--signal-handle-width": `${INSPECTOR_LAYOUT.handle}px`,
+            "--signal-inspector-gutter": `${INSPECTOR_LAYOUT.gutter}px`,
+          } as CSSProperties
+        }
       >
-        <nav className="signal-project-rail" aria-label={`專案，${workspaces.length} 個`}>
-          <div className="signal-projects">
-            {workspaces.length === 0 && (
-              <span
-                className="signal-project-empty"
-                role="status"
-                title={projectEmptyMessage}
-                aria-label={projectEmptyMessage}
-                onMouseEnter={(event) =>
-                  showProjectHint("empty", projectEmptyMessage, event.currentTarget)
-                }
-                onMouseLeave={() => setProjectHint(undefined)}
-              >
-                <FolderIcon aria-hidden="true" />
-              </span>
-            )}
-            {workspaces.map((item) => (
+        {!nativeControls && (
+          <header className="signal-project-header">
+            <select
+              aria-label="瀏覽專案"
+              value={workspaceFilter ?? ""}
+              onChange={(event) => {
+                const id = event.target.value || null;
+                requestId.current++;
+                automaticWorkspace.current = null;
+                setBusy(false);
+                workspaceFilterRef.current = id;
+                setWorkspaceFilter(id);
+                if (id) setSelectedId(id);
+                setSelectedEntry(undefined);
+                setUnavailableResult(undefined);
+                setView("overview");
+                setFollowing(true);
+                setPausedOverview(undefined);
+                lastFollowed.current = "";
+                if (trustedParent)
+                  window.parent.postMessage(
+                    { type: "kairomes:workspace-select", version: 1, workspaceId: id },
+                    parentOrigin,
+                  );
+              }}
+            >
+              <option value="">全部本機操作</option>
+              {workspaces.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+            {trustedParent && (
               <button
                 type="button"
-                key={item.id}
-                className={item.id === selectedId ? "active" : ""}
-                title={`${item.name} · ${activity.error ? "連線待恢復" : "已掛載"}`}
-                aria-label={`${item.name}，${activity.error ? "狀態待同步" : "已掛載"}${item.id === selectedId ? "，已選取" : ""}`}
-                aria-describedby={projectHint?.id === item.id ? "signal-project-hint" : undefined}
-                aria-current={item.id === selectedId ? "page" : undefined}
-                onMouseEnter={(event) => showProjectHint(item.id, item.name, event.currentTarget)}
-                onMouseLeave={(event) => {
-                  if (document.activeElement !== event.currentTarget) setProjectHint(undefined);
-                }}
-                onFocus={(event) => showProjectHint(item.id, item.name, event.currentTarget)}
-                onBlur={() => setProjectHint(undefined)}
-                onClick={() => {
-                  if (!detailOpen) rememberDetailTrigger();
-                  pauseFollow();
-                  setSelectedEntry(undefined);
-                  automaticWorkspace.current = null;
-                  setSelectedId(item.id);
-                  setView("files");
-                }}
-              >
-                <span className="signal-project-initial" aria-hidden="true">
-                  {projectMonogram(item.name)}
-                </span>
-                {item.id === selectedId && <i />}
-              </button>
-            ))}
-          </div>
-          {window.parent !== window && (
-            <div className="signal-rail-bottom">
-              <button
-                type="button"
-                title="開啟 Kairomes 設定"
-                aria-label="開啟 Kairomes 設定"
+                aria-label="開啟設定"
                 onClick={() =>
-                  window.parent.postMessage({ type: "kairomes:open-settings", version: 1 }, "*")
+                  window.parent.postMessage(
+                    { type: "kairomes:open-settings", version: 1 },
+                    parentOrigin,
+                  )
                 }
               >
                 <GearSixIcon aria-hidden="true" />
               </button>
-            </div>
-          )}
-        </nav>
-        {projectHint && (
-          <span
-            id="signal-project-hint"
-            className="signal-project-hint"
-            role="tooltip"
-            style={{ top: `${projectHint.top}px` }}
-          >
-            {projectHint.label}
-          </span>
+            )}
+          </header>
         )}
         <main className="signal-canvas">
           <ActivityPanel
             snapshot={activity.snapshot}
-            error={activity.error || (view === "overview" ? error : "")}
+            error={activity.error || (!detailOpen ? error : "")}
             emptyWorkspace={connected && workspaces.length === 0}
             following={following}
             workspaceName={workspaceName}
-            onFollow={() => {
-              lastFollowed.current = "";
-              setFollowing((value) => !value);
+            workspaceId={workspaceFilter}
+            unread={unread}
+            nativeControls={nativeControls}
+            onFiles={() => {
+              rememberDetailTrigger();
+              pauseFollow();
+              setView("files");
+              showFileList();
             }}
+            onFollow={() => (following ? pauseFollow() : resumeLatest())}
             onSelect={(entry) => {
               if (!detailOpen) rememberDetailTrigger();
               pauseFollow();
@@ -817,42 +1042,41 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
           className="signal-inspector-resizer"
           aria-label="調整摘要寬度"
           aria-orientation="vertical"
-          aria-valuemin={320}
-          aria-valuemax={760}
-          aria-valuenow={inspectorWidth}
+          aria-controls={inspectorId}
+          aria-valuemin={inspectorRange.min}
+          aria-valuemax={inspectorRange.max}
+          aria-valuenow={visibleInspectorWidth}
+          aria-valuetext={`${visibleInspectorWidth} 像素`}
           tabIndex={0}
           title="拖曳調整摘要寬度"
           onPointerDown={beginInspectorResize}
           onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") {
+            const next = inspectorKeyWidth(event.key, visibleInspectorWidth, inspectorRange);
+            if (next !== undefined) {
               event.preventDefault();
-              resizeInspector(inspectorWidth + 24);
-            }
-            if (event.key === "ArrowRight") {
-              event.preventDefault();
-              resizeInspector(inspectorWidth - 24);
-            }
-            if (event.key === "Home") {
-              event.preventDefault();
-              resizeInspector(320);
-            }
-            if (event.key === "End") {
-              event.preventDefault();
-              resizeInspector(760);
+              resizeInspector(next);
             }
           }}
         />
 
-        <aside className="signal-inspector" aria-label={inspectorTitle}>
+        <aside id={inspectorId} className="signal-inspector" aria-label={inspectorTitle}>
           {(view !== "overview" || selectedEntry) && (
             <header className="detail-heading">
               <button ref={detailBackButton} type="button" onClick={selectOverview}>
                 <ArrowLeftIcon /> 返回動態
               </button>
-              <strong>{inspectorTitle}</strong>
+              <strong>
+                {inspectorTitle}
+                {workspaceLabel ? ` · ${workspaceLabel}` : ""}
+              </strong>
             </header>
           )}
-          {error && (
+          {workspaceRemoved && (
+            <p className="workspace-unmounted" role="status">
+              專案已解除掛載
+            </p>
+          )}
+          {error && detailOpen && (
             <div role="alert" className="error-banner">
               <span>{error}</span>
               <button type="button" aria-label="關閉錯誤訊息" onClick={() => setError("")}>
@@ -860,28 +1084,63 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
               </button>
             </div>
           )}
-          {view === "overview" && (
-            <OverviewPanel
-              snapshot={activity.snapshot}
-              bridge={bridge}
-              file={file}
-              search={search}
-              artifact={artifact}
-              mcpCall={mcpCall}
-              loadedResultId={loadedResultId}
-              selectedEntry={selectedEntry}
-              workspaceName={workspaceName}
-              onFiles={() => {
-                if (!detailOpen) rememberDetailTrigger();
-                pauseFollow();
-                setView("files");
-              }}
-              onSelect={(entry) => {
-                if (!detailOpen) rememberDetailTrigger();
-                pauseFollow();
-                void showActivityRef.current(entry, true);
-              }}
-            />
+          {view === "overview" && unavailableResult ? (
+            <section className="result-unavailable" role="status">
+              <h1>{unavailableResult.expired ? "詳情已到期" : "詳情無法取得"}</h1>
+              {unavailableResult.entry.path && <p>{unavailableResult.entry.path}</p>}
+              {unavailableResult.entry.workspaceId &&
+                unavailableResult.entry.path &&
+                workspaces.some((item) => item.id === unavailableResult.entry.workspaceId) &&
+                ["file_read", "artifact_preview"].includes(unavailableResult.entry.tool ?? "") && (
+                  <button
+                    type="button"
+                    disabled={workspaceRemoved || busy}
+                    onClick={() => {
+                      setUnavailableResult(undefined);
+                      setSelectedEntry(undefined);
+                      setLoadedResultId(undefined);
+                      const id = unavailableResult.entry.workspaceId;
+                      const path = unavailableResult.entry.path;
+                      if (!id || !path) return;
+                      automaticWorkspace.current = { id, browse: false };
+                      setSelectedId(id);
+                      setView("files");
+                      setFile(null);
+                      setSearch(null);
+                      void browse(id, "");
+                    }}
+                  >
+                    瀏覽目前檔案
+                  </button>
+                )}
+            </section>
+          ) : (
+            view === "overview" && (
+              <OverviewPanel
+                snapshot={activity.snapshot}
+                bridge={bridge}
+                file={file}
+                search={search}
+                artifact={artifact}
+                mcpCall={mcpCall}
+                loadedResultId={loadedResultId}
+                selectedEntry={selectedEntry}
+                pausedOverview={pausedOverview}
+                workspaceId={workspaceFilter}
+                workspaceName={workspaceName}
+                onFiles={() => {
+                  if (!detailOpen) rememberDetailTrigger();
+                  pauseFollow();
+                  setView("files");
+                  showFileList();
+                }}
+                onSelect={(entry) => {
+                  if (!detailOpen) rememberDetailTrigger();
+                  pauseFollow();
+                  void showActivityRef.current(entry, true);
+                }}
+              />
+            )
           )}
           {view === "changes" && selectedId && (
             <FileChangePanel
@@ -911,9 +1170,18 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
               visible
               liveSessions={activity.snapshot?.sessions}
               focus={terminalFocus}
+              readOnly={workspaceRemoved}
             />
           )}
-          {view === "artifact" && artifact && <ArtifactPanel artifact={artifact} bridge={bridge} />}
+          {view === "artifact" && artifact && (
+            <ArtifactPanel
+              artifact={artifact}
+              bridge={bridge}
+              historical={!!loadedResultId}
+              busy={busy}
+              onReload={workspaceRemoved ? undefined : () => void openArtifact(artifact.path)}
+            />
+          )}
           {view === "files" && (
             <section className="signal-files" aria-label="專案檔案">
               <header>
@@ -921,9 +1189,18 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                   <h1>{file?.path || snapshot?.path || workspace?.name || "檔案"}</h1>
                 </div>
                 {file && (
-                  <button ref={fileBackButton} type="button" onClick={returnFromFile}>
-                    {fileReturnTab === "search" && search ? "返回搜尋結果" : "返回清單"}
-                  </button>
+                  <div className="signal-file-actions">
+                    <button
+                      type="button"
+                      disabled={workspaceRemoved || busy}
+                      onClick={() => void openFile(file.path, file.start_line, fileReturnTab)}
+                    >
+                      重新讀取
+                    </button>
+                    <button ref={fileBackButton} type="button" onClick={returnFromFile}>
+                      {fileReturnTab === "search" && search ? "返回搜尋結果" : "返回清單"}
+                    </button>
+                  </div>
                 )}
               </header>
               <form
@@ -940,6 +1217,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                   placeholder="搜尋專案內容"
                   maxLength={200}
                   value={query}
+                  disabled={workspaceRemoved}
                   onChange={(event) => setQuery(event.target.value)}
                 />
               </form>
@@ -960,6 +1238,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                     <button
                       type="button"
                       key={`${match.path}:${match.line}`}
+                      disabled={workspaceRemoved || busy}
                       onClick={() => {
                         void openFile(match.path, Math.max(1, match.line - 5), "search");
                       }}
@@ -973,6 +1252,8 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
               ) : file ? (
                 <div className="signal-file-preview">
                   <div className="signal-file-meta">
+                    <code title={file.version}>版本 {file.version.slice(0, 12)}</code>
+                    <span>{loadedResultId ? "執行時讀取" : "目前讀取"}</span>
                     <span>第 {file.start_line} 行起</span>
                     <span>{file.total_lines} 行</span>
                     <span>唯讀</span>
@@ -992,6 +1273,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                     {file.start_line > 1 && (
                       <button
                         type="button"
+                        disabled={workspaceRemoved || busy}
                         onClick={() =>
                           void openFile(
                             file.path,
@@ -1006,6 +1288,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                     {file.next_line && (
                       <button
                         type="button"
+                        disabled={workspaceRemoved || busy}
                         onClick={() => void openFile(file.path, file.next_line ?? 1, fileReturnTab)}
                       >
                         下一頁
@@ -1019,6 +1302,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                     <button
                       type="button"
                       className="signal-back"
+                      disabled={workspaceRemoved || busy}
                       onClick={() => void browse(selectedId, crumbs.slice(0, -1).join("/"))}
                     >
                       <ArrowLeftIcon /> 上一層
@@ -1028,6 +1312,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
                     <button
                       type="button"
                       key={entry.path}
+                      disabled={workspaceRemoved || busy}
                       onClick={() =>
                         entry.kind === "directory"
                           ? void browse(selectedId, entry.path)
@@ -1054,13 +1339,6 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
             </section>
           )}
         </aside>
-        <footer className="signal-footer">
-          <span>
-            <i className={connected ? "online" : ""} />
-            {connected ? "工作台已連線" : "尚未連線"}
-          </span>
-          <span>v{VERSION}</span>
-        </footer>
       </div>
     );
   }

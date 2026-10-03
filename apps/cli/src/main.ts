@@ -15,6 +15,7 @@ import {
 import { KairomesError, publicError, VERSION } from "@kairomes/protocol";
 import { defaultDataDirectory, WorkspaceRegistry } from "@kairomes/workspace-core";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { openExternal } from "./browser.ts";
 import { runCompanion } from "./companion.ts";
 import { doctor } from "./doctor.ts";
 import { validExtensionId } from "./extension-id.ts";
@@ -346,6 +347,7 @@ async function main() {
         command === "app"
           ? await startWorkbench(registry, html, port, extensionId, {
               mcpResultHtml,
+              openBrowser: openExternal,
             })
           : startPreview(registry, html, port);
       let autoPairingUrl: string | undefined;

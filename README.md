@@ -14,13 +14,15 @@
 
 Kairomes 在 Windows 背景執行，透過 OpenAI Secure MCP Tunnel 接收 ChatGPT 的工具請求。它不讀取 ChatGPT Cookie 或聊天頁面，也不代你送出訊息。
 
-> **0.1.4 預覽版**：目前提供 Windows 11 安裝程式，尚未簽章；側欄需手動載入。macOS／Linux Desktop 與真實 Tunnel 流程尚未完成實機驗證。
+> **原始碼版本 0.2.0**：新增原生 MCP 登入、側欄改善與 Codex 接續。現有下載仍為 [v0.1.4](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.4)；新版可依[貢獻指南](CONTRIBUTING.md)建置，發版進度見[更新紀錄](CHANGELOG.md)。Windows 安裝程式尚未簽章，側欄需手動載入。
 
 ## 功能
 
 - **使用專案檔案**：掛載不會整包上傳；ChatGPT 列出、讀取或搜尋時，工具結果會經 Tunnel 傳回。
-- **查看操作**：側欄列出專案、工具進度、檔案變更與待核准事項。
+- **查看操作與成果**：側欄列出專案、待核准事項及執行中的工作；檔案差異、圖片和命令輸出可固定閱讀。
 - **管理權限**：檔案修改、命令與終端機可逐次核准，也可設定自主模式。
+- **加入 MCP**：在側欄設定管理本機 stdio 或遠端 HTTP 服務；需要 OAuth 的服務由系統瀏覽器登入。
+- **從 Codex 接續**：選取同一專案的紀錄或手動摘要，核對後複製到 ChatGPT。
 
 ## 安裝
 
@@ -73,6 +75,45 @@ tunnel-client init `
 - 連線有問題時看 Desktop「疑難排解」。若已有手動啟動的 Host，先結束它再開 Desktop，讓 Desktop 接手管理。
 
 更新時先完全結束舊版，再安裝新版 Desktop。把新版側欄檔案覆蓋到原本載入的資料夾，並在擴充功能頁按「重新載入」；若 Extension ID 改變，需重新配對。
+
+### 側欄與核准
+
+頂列可選專案、調整操作權限及開啟「設定」。連線圓點位於 K 標誌旁，詳細通道狀態在「設定 → 一般」；選專案只篩選瀏覽，不改變 ChatGPT 工具目標或授權範圍。
+
+點「需確認」查看短佇列，再開啟單件參數、位置、期限或完整差異。內容變更須重新審閱，斷線或到期不能核准。回覆遺失時使用「查詢狀態」核對原操作；結果未明前不重送。
+
+成果可固定閱讀，按「最新」恢復跟隨。畫面保留執行時版本、Exit code、輸出截斷與到期狀態；命令成功不代表整個任務已驗證。
+
+### 加入 MCP 與登入
+
+點「設定 → MCP 整合 → 加入 MCP」，選擇本機程式或遠端網址。工具可搜尋、篩選與開關；服務未連線或清單失敗時，按卡片的重試入口。
+
+需要 OAuth 的遠端服務：填名稱與 MCP URL → 儲存 → 按「登入」→ 在系統瀏覽器完成授權。取得最新工具清單後才顯示已連線；等待時可取消。登入保留於當次 Host，重啟需再登入；「清除登入」只清除本機資料。
+
+目前支援公開 HTTPS、PKCE S256 與 DCR public client；內網 OAuth、CIMD 專用服務及跨重啟登入尚未支援。Layer 的網址為 `https://mcp.app.layer.ai/mcp`，使用者已回報修補後連線成功，詳見[相容性紀錄](docs/product-design/mcp-oauth-recovery.md)。既有 stdio 與靜態 Authorization 配置可繼續使用。
+
+<details>
+<summary>以 stdio 橋接 Layer</summary>
+
+依 [Layer 官方設定](https://layer.ai/mcp)使用 `mcp-remote`。Windows 的啟動程式填 `npx.cmd`，參數每行一個：
+
+```text
+-y
+mcp-remote@latest
+https://mcp.app.layer.ai/mcp
+--auth-timeout
+120
+```
+
+`--auth-timeout` 是 [mcp-remote 的回呼等待秒數](https://github.com/punkpeye/mcp-remote/blob/main/README.md)。Kairomes 的 stdio 初始化最多等 120 秒，工具清單另等 10 秒；登入後仍失敗時可重新探索。設定已保存不等於 MCP 已連線。
+
+</details>
+
+### 從 Codex 接續（選用）
+
+在 Desktop「專案」按「從 Codex 接續」，選擇同一已掛載資料夾的 Codex 紀錄或手動摘要。填目標與下一步，停止來源、核對側欄權限，再審閱摘要及相關檔案，複製貼入 ChatGPT；複製前會再次檢查版本。
+
+接續不自動發送訊息、移轉程序或授權。來源仍進行中、未知或版本不符時只能看草稿；讀取紀錄需本機 Codex CLI，手動摘要不需要。設計、檢查與待驗證範圍見[產品設計文件](docs/product-design/README.md)。
 
 ## 安全
 

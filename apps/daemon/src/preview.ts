@@ -1,15 +1,19 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   KairomesError,
+  McpAuthInputSchema,
   McpPanelInputSchema,
+  PanelAccessInputSchema,
   publicError,
   type ToolName,
   z,
 } from "@kairomes/protocol";
 import type { WorkspaceRegistry } from "@kairomes/workspace-core";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { AccessReceipts } from "./access-receipts.ts";
 import { approvalPage } from "./approval-page.ts";
 import type { ArtifactDownload } from "./artifact-imports.ts";
+import type { McpHostManager } from "./mcp-host.ts";
 import { PanelPairing } from "./pairing.ts";
 import { createMcpServer } from "./server.ts";
 import { snapshotStream } from "./snapshot-stream.ts";
@@ -80,7 +84,12 @@ export async function startWorkbench(
   widgetHtml: string,
   port = 4318,
   extensionId?: string,
-  options: { artifactDownload?: ArtifactDownload; mcpResultHtml?: string } = {},
+  options: {
+    artifactDownload?: ArtifactDownload;
+    mcpResultHtml?: string;
+    mcpHost?: McpHostManager;
+    openBrowser?: (url: string) => Promise<void>;
+  } = {},
 ) {
   if (extensionId && !/^[a-p]{32}$/.test(extensionId))
     throw new KairomesError("USAGE", "Extension ID 必須是瀏覽器顯示的 32 位 a～p 字母。");
@@ -96,6 +105,7 @@ export async function startWorkbench(
       instanceId,
       mcpToken,
       extensionId,
+      openBrowser: options.openBrowser,
     },
     options.mcpResultHtml,
   );
@@ -130,6 +140,7 @@ function startLocalServer(
     instanceId: string;
     mcpToken: string;
     extensionId?: string;
+    openBrowser?: (url: string) => Promise<void>;
   },
   mcpResultHtml?: string,
 ) {
@@ -137,6 +148,11 @@ function startLocalServer(
   let inFlightMcp = 0;
   const streams = new Set<() => void>();
   const pairing = new PanelPairing(workbench?.extensionId);
+  const accessReceipts = new AccessReceipts((owner) => pairing.valid(owner));
+  if (workbench)
+    service.mcp.configureAuth(workbench.instanceId, workbench.openBrowser, (owner) =>
+      pairing.valid(owner),
+    );
   const extensionOrigin = workbench?.extensionId
     ? `chrome-extension://${workbench.extensionId}`
     : undefined;
@@ -145,7 +161,7 @@ function startLocalServer(
   const adminToken = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
   const html = widgetHtml?.replace(
     "<!--KAIROMES_MODE-->",
-    `<meta name="kairomes-mode" content="${workbench ? "workbench" : "preview"}">`,
+    `<meta name="kairomes-mode" content="${workbench ? "workbench" : "preview"}"><meta name="kairomes-parent-origin" content="${extensionOrigin ?? ""}">`,
   );
   const hashes = Array.from(
     `${html ?? ""}${approvalPage}`.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g),
@@ -181,6 +197,7 @@ function startLocalServer(
         "/api/panel/disconnect",
         "/api/panel/access",
         "/api/panel/mcp",
+        "/api/panel/mcp-auth",
       ].includes(url.pathname);
       if (panel) {
         if (!workbench || !extensionOrigin || request.headers.get("origin") !== extensionOrigin)
@@ -283,36 +300,47 @@ function startLocalServer(
               .strict()
               .parse(await request.json());
             pairing.revoke(panelToken);
+            service.mcp.revokeAuthOwner(panelToken);
+            accessReceipts.revoke(panelToken);
             await service.revokeAccessOwner(panelToken);
             return Response.json({ disconnected: true }, { headers: panelHeaders });
           }
           if (url.pathname === "/api/panel/access") {
-            const input = z
-              .discriminatedUnion("action", [
-                z
-                  .object({
-                    action: z.literal("enable"),
-                    workspace_id: z.string().uuid(),
-                    level: z.enum(["files", "full"]).default("full"),
-                    minutes: z
-                      .union([z.literal(15), z.literal(60), z.literal(240), z.null()])
-                      .default(60),
-                  })
-                  .strict(),
-                z
-                  .object({ action: z.literal("disable"), workspace_id: z.string().uuid() })
-                  .strict(),
-              ])
-              .parse(await request.json());
-            if (input.action === "enable")
-              await service.enableAccess(
-                input.workspace_id,
-                input.level,
-                input.minutes,
-                panelToken,
-                () => pairing.valid(panelToken),
+            const input = PanelAccessInputSchema.parse(await request.json());
+            // A slow body must not keep authority after its pairing was revoked.
+            if (!pairing.valid(panelToken))
+              return Response.json(
+                { message: "配對已失效。" },
+                { status: 401, headers: panelHeaders },
               );
-            else await service.disableAccess(input.workspace_id);
+            const execute = async (valid: () => boolean) => {
+              if (input.action === "enable")
+                await service.enableAccess(
+                  input.workspace_id,
+                  input.level,
+                  input.minutes,
+                  panelToken,
+                  valid,
+                );
+              else if (input.action === "disable") await service.disableAccess(input.workspace_id);
+            };
+            const receipt =
+              input.action === "status"
+                ? accessReceipts.status(panelToken, input.request_id)
+                : input.request_id && input.valid_until
+                  ? await accessReceipts.run(
+                      panelToken,
+                      { ...input, request_id: input.request_id, valid_until: input.valid_until },
+                      execute,
+                    )
+                  : undefined;
+            if (input.action !== "status" && !input.request_id)
+              await execute(() => pairing.valid(panelToken));
+            if (!pairing.valid(panelToken))
+              return Response.json(
+                { message: "配對已失效。" },
+                { status: 401, headers: panelHeaders },
+              );
             return Response.json(
               {
                 instanceId: workbench.instanceId,
@@ -322,12 +350,30 @@ function startLocalServer(
                 commands: service.commands.approvals(),
                 changes: service.changes.approvals(),
                 imports: service.imports.approvals(),
+                ...(receipt ? { access_receipt: receipt } : {}),
               },
               { headers: panelHeaders },
             );
           }
+          if (url.pathname === "/api/panel/mcp-auth") {
+            const input = McpAuthInputSchema.parse(await request.json());
+            if (!pairing.valid(panelToken))
+              return Response.json(
+                { message: "配對已失效。" },
+                { status: 401, headers: panelHeaders },
+              );
+            if (input.instance_id !== workbench.instanceId)
+              throw new KairomesError("INSTANCE_CHANGED", "工作台已重新啟動，請重新配對。");
+            const receipt = service.mcp.auth(panelToken, input);
+            return Response.json(receipt, { headers: panelHeaders });
+          }
           if (url.pathname === "/api/panel/mcp") {
             const input = McpPanelInputSchema.parse(await request.json());
+            if (!pairing.valid(panelToken))
+              return Response.json(
+                { message: "配對已失效。" },
+                { status: 401, headers: panelHeaders },
+              );
             if (input.action === "add_stdio") {
               const config = await service.mcp.addStdio({
                 name: input.name,
@@ -406,7 +452,14 @@ function startLocalServer(
             { headers: panelHeaders },
           );
         } catch (error) {
-          return Response.json(publicError(error), { status: 400, headers: panelHeaders });
+          const exposed = publicError(error);
+          const status =
+            exposed.code === "ACCESS_RECEIPT_LIMIT"
+              ? 429
+              : ["ACCESS_REQUEST_CHANGED", "ACCESS_REQUEST_EXPIRED"].includes(exposed.code)
+                ? 409
+                : 400;
+          return Response.json(exposed, { status, headers: panelHeaders });
         }
       }
       if (
@@ -652,6 +705,7 @@ function startLocalServer(
       clearInterval(workspaceRefresh);
       for (const close of streams) close();
       pairing.close();
+      accessReceipts.close();
       server.stop(true);
       await service.close();
     },

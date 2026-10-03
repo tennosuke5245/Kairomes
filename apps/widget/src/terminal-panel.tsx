@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
+import { currentTerminalSession, terminalActive, terminalSelection } from "./terminal-state.ts";
 
 export function TerminalPanel({
   bridge,
@@ -12,6 +13,7 @@ export function TerminalPanel({
   visible,
   liveSessions,
   focus,
+  readOnly = false,
 }: {
   bridge: WorkbenchBridge;
   workspaceId: string;
@@ -20,9 +22,11 @@ export function TerminalPanel({
   visible: boolean;
   liveSessions?: TerminalSession[];
   focus?: { id: string; seq: number };
+  readOnly?: boolean;
 }) {
-  const [sessions, setSessions] = useState<TerminalSession[]>([]);
-  const [selected, setSelected] = useState("");
+  const [listed, setListed] = useState<TerminalSession[]>([]);
+  const [polledSession, setPolledSession] = useState<TerminalSession>();
+  const [selected, setSelected] = useState(focus?.id ?? "");
   const [shell, setShell] = useState(platform === "win32" ? "powershell" : "bash");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -31,8 +35,14 @@ export function TerminalPanel({
   const term = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
   const current = useRef<TerminalSession | undefined>(undefined);
-  const session = sessions.find((item) => item.id === selected);
-  current.current = session;
+  const sessions = (liveSessions ?? listed).filter((item) => item.workspace_id === workspaceId);
+  const session = currentTerminalSession(
+    sessions.find((item) => item.id === selected),
+    polledSession,
+  );
+  const unavailable = !!selected && !session;
+  const locked = readOnly || unavailable;
+  current.current = locked ? undefined : session;
   const isVisible = useRef(visible);
   isVisible.current = visible;
   const hasLive = liveSessions !== undefined;
@@ -40,10 +50,7 @@ export function TerminalPanel({
   useEffect(() => {
     if (!liveSessions) return;
     const filtered = liveSessions.filter((item) => item.workspace_id === workspaceId);
-    setSessions(filtered);
-    setSelected((id) =>
-      filtered.some((item) => item.id === id) ? id : (filtered.at(-1)?.id ?? ""),
-    );
+    setSelected((id) => terminalSelection(filtered, id));
   }, [liveSessions, workspaceId]);
 
   useEffect(() => {
@@ -59,10 +66,8 @@ export function TerminalPanel({
         const data = await bridge.call("terminal_list");
         if (active && data.kind === "terminals") {
           const filtered = data.sessions.filter((item) => item.workspace_id === workspaceId);
-          setSessions(filtered);
-          setSelected((id) =>
-            filtered.some((item) => item.id === id) ? id : (filtered.at(-1)?.id ?? ""),
-          );
+          setListed(filtered);
+          setSelected((id) => terminalSelection(filtered, id));
         }
       } catch (cause) {
         if (active) setError(String(cause));
@@ -78,11 +83,15 @@ export function TerminalPanel({
 
   useEffect(() => {
     if (!mount.current) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    Terminal.strings.promptLabel = "終端機輸入";
+    Terminal.strings.tooMuchOutput = "輸出過多，請逐行閱讀。";
     const terminal = new Terminal({
       cols: 100,
       rows: 28,
-      cursorBlink: true,
-      fontSize: 13,
+      cursorBlink: !reducedMotion.matches,
+      screenReaderMode: true,
+      fontSize: 14,
       fontFamily: '"Cascadia Code", Consolas, monospace',
       scrollback: 2000,
       disableStdin: true,
@@ -92,6 +101,10 @@ export function TerminalPanel({
     const addon = new FitAddon();
     terminal.loadAddon(addon);
     terminal.open(mount.current);
+    const updateMotion = () => {
+      terminal.options.cursorBlink = !reducedMotion.matches;
+    };
+    reducedMotion.addEventListener("change", updateMotion);
     // Never permit terminal escape sequences to access the browser clipboard.
     const clipboard = terminal.parser.registerOscHandler(52, () => true);
     term.current = terminal;
@@ -161,6 +174,7 @@ export function TerminalPanel({
       clearTimeout(inputTimer);
       clearTimeout(resizeTimer);
       observer.disconnect();
+      reducedMotion.removeEventListener("change", updateMotion);
       input.dispose();
       resized.dispose();
       clipboard.dispose();
@@ -171,13 +185,13 @@ export function TerminalPanel({
   }, [bridge]);
 
   useEffect(() => {
-    if (term.current) term.current.options.disableStdin = session?.state !== "running";
+    if (term.current) term.current.options.disableStdin = locked || session?.state !== "running";
     if (!visible) return;
     fit.current?.fit();
     // A newly selected shell may still have its creation size even when xterm's
     // visible size did not change, so onResize alone is insufficient.
     let active = true;
-    if (session?.state === "running" && term.current)
+    if (!locked && session?.state === "running" && term.current)
       void bridge
         .call("terminal_resize", {
           session_id: session.id,
@@ -190,7 +204,7 @@ export function TerminalPanel({
     return () => {
       active = false;
     };
-  }, [bridge, visible, session?.id, session?.state]);
+  }, [bridge, visible, session?.id, session?.state, locked]);
 
   useEffect(() => {
     if (!selected) return;
@@ -199,17 +213,23 @@ export function TerminalPanel({
     let timer: ReturnType<typeof setTimeout>;
     term.current?.reset();
     setNewOutput(false);
+    setPolledSession(undefined);
+    setError("");
     const poll = async () => {
       let delay = isVisible.current ? 250 : 1000;
       try {
         const data = await bridge.call("terminal_poll", { session_id: selected, cursor });
-        if (!active || data.kind !== "terminal") return;
-        setSessions((items) =>
-          items.map((item) => (item.id === data.session.id ? data.session : item)),
+        if (!active) return;
+        if (data.kind !== "terminal" || data.session.id !== selected)
+          throw new Error("終端機回應格式不符。");
+        setPolledSession((prior) =>
+          prior?.id === data.session.id
+            ? currentTerminalSession(prior, data.session)
+            : data.session,
         );
         if (data.truncated) {
           term.current?.reset();
-          setError("較早的輸出已超過保留上限，已載入目前保留的內容。");
+          setError("較早輸出已不再保留。");
         }
         if (data.output) {
           const buffer = term.current?.buffer.active;
@@ -222,7 +242,7 @@ export function TerminalPanel({
         cursor = data.cursor;
         if (data.has_more) delay = 20;
         else if (data.session.state === "pending") delay = 1500;
-        else if (!["starting", "running"].includes(data.session.state)) return;
+        else if (!terminalActive(data.session)) return;
       } catch (cause) {
         if (active) setError(String(cause));
         delay = 2500;
@@ -237,6 +257,7 @@ export function TerminalPanel({
   }, [bridge, selected]);
 
   async function request() {
+    if (locked) return;
     setBusy(true);
     setError("");
     try {
@@ -248,7 +269,7 @@ export function TerminalPanel({
         rows: 28,
       });
       if (data.kind === "terminal") {
-        setSessions((items) => [
+        setListed((items) => [
           ...items.filter((item) => item.id !== data.session.id),
           data.session,
         ]);
@@ -261,11 +282,10 @@ export function TerminalPanel({
     }
   }
   async function stop() {
-    if (!selected) return;
+    if (locked || !selected) return;
     try {
       const data = await bridge.call("terminal_stop", { session_id: selected });
-      if (data.kind === "terminal")
-        setSessions((items) => items.map((item) => (item.id === selected ? data.session : item)));
+      if (data.kind === "terminal") setPolledSession(data.session);
     } catch (cause) {
       setError(String(cause));
     }
@@ -286,7 +306,8 @@ export function TerminalPanel({
             setError("");
           }}
         >
-          {!sessions.length && <option value="">尚無工作階段</option>}
+          {!sessions.length && !selected && <option value="">尚無工作階段</option>}
+          {selected && !session && <option value={selected}>詳情已無法取得</option>}
           {sessions.map((item) => (
             <option key={item.id} value={item.id}>
               {item.shell} · {item.id.slice(0, 8)} · {labels[item.state]}
@@ -296,6 +317,7 @@ export function TerminalPanel({
         <select
           aria-label="選擇 Shell"
           value={shell}
+          disabled={locked}
           onChange={(event) => setShell(event.target.value)}
         >
           {(platform === "win32" ? ["powershell", "cmd"] : ["bash", "sh"]).map((name) => (
@@ -305,7 +327,7 @@ export function TerminalPanel({
         <button
           type="button"
           className="accent-button"
-          disabled={busy}
+          disabled={locked || busy}
           onClick={() => void request()}
         >
           {busy ? "建立中…" : "新增終端機"}
@@ -313,21 +335,18 @@ export function TerminalPanel({
         <button
           type="button"
           className="text-button terminal-stop"
-          disabled={!session || !["pending", "starting", "running"].includes(session.state)}
+          disabled={
+            locked || !session || !["pending", "starting", "running"].includes(session.state)
+          }
           onClick={() => void stop()}
         >
           停止
         </button>
       </div>
-      {(!session || session.state === "pending") && (
+      {!locked && ((!selected && !session) || session?.state === "pending") && (
         <div className="terminal-notice">
-          <strong>{session ? "等待你核准此工作階段" : "從目前資料夾開啟 shell"}</strong>
-          <p>
-            {session
-              ? `請求 ${session.id.slice(0, 8)}。已配對 Extension 時，直接在側欄上方核准；核准後會自動顯示輸出。獨立工作台可使用本機審批頁。`
-              : `起始位置：${cwd || "/"}。新增後核准 15 分鐘的主機存取。`}
-          </p>
-          <p>主機 shell 可修改檔案、存取工作區外的資料及連網。</p>
+          <strong>{session ? "等待核准" : `起始位置：${cwd || "/"}`}</strong>
+          <p>{session ? "請在原生側欄確認。" : "需核准 15 分鐘；可操作工作區外及連網。"}</p>
         </div>
       )}
       {error && (
@@ -353,16 +372,20 @@ export function TerminalPanel({
           有新輸出 · 返回底部
         </button>
       )}
-      <div className="terminal-footer">
-        <span>HOST PTY · {session ? labels[session.state] : "未啟動"}</span>
-        <span>
-          {session?.state === "running"
-            ? `授權至 ${new Date(session.expires_at).toLocaleTimeString()}`
-            : session?.exit_code !== null && session?.exit_code !== undefined
-              ? `Exit ${session.exit_code}`
-              : "點選終端畫面即可輸入"}
-        </span>
-      </div>
+      {(!selected || session) && (
+        <div className="terminal-footer">
+          <span>HOST PTY · {session ? labels[session.state] : "未啟動"}</span>
+          <span>
+            {readOnly
+              ? "唯讀"
+              : session?.state === "running"
+                ? `授權至 ${new Date(session.expires_at).toLocaleTimeString()}`
+                : session?.exit_code !== null && session?.exit_code !== undefined
+                  ? `Exit ${session.exit_code}`
+                  : "唯讀"}
+          </span>
+        </div>
+      )}
     </section>
   );
 }

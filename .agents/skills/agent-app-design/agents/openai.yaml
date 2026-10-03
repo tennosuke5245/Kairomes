@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent App 產品設計"
+  short_description: "以可見畫面與官方證據分析 Agent 介面、互動狀態及跨工具接力模式"
+  default_prompt: "使用 $agent-app-design 分析指定 Agent app 的現行畫面與工作流程，整理可移用的設計模式。"

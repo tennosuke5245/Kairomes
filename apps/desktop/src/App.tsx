@@ -42,6 +42,8 @@ import {
   removeWorkspace,
   saveRuntimeApiKey,
 } from "./api.ts";
+import { HandoffFlow } from "./handoff-flow.tsx";
+import { handoffInvalidReason } from "./handoff-session.ts";
 import {
   type DesktopSnapshot,
   deriveDesktopView,
@@ -325,6 +327,8 @@ function RemoveWorkspaceDialog({
 export function App() {
   const [route, setRoute] = useState<Route>("overview");
   const [snapshot, setSnapshot] = useState<DesktopSnapshot>(initialSnapshot);
+  const [statusCurrent, setStatusCurrent] = useState(false);
+  const refreshRevision = useRef(0);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const keyDialogTrigger = useRef<HTMLButtonElement | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -334,13 +338,35 @@ export function App() {
   const [localMcpCommand, setLocalMcpCommand] = useState("");
   const [localMcpCommandError, setLocalMcpCommandError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<WorkspaceSummary | null>(null);
+  const [handoffTarget, setHandoffTarget] = useState<WorkspaceSummary | null>(null);
 
   const view = useMemo(() => deriveDesktopView(snapshot), [snapshot]);
+  const handoffInvalid = handoffTarget
+    ? handoffInvalidReason(snapshot, handoffTarget.id, statusCurrent)
+    : null;
+
+  useEffect(() => {
+    if (!handoffTarget || !handoffInvalid) return;
+    const returnId = `handoff-project-${handoffTarget.id}`;
+    setHandoffTarget(null);
+    setNotice(handoffInvalid);
+    requestAnimationFrame(() => {
+      const trigger = document.getElementById(returnId);
+      if (trigger instanceof HTMLButtonElement && !trigger.disabled) trigger.focus();
+      else document.getElementById("projects-title")?.focus();
+    });
+  }, [handoffTarget, handoffInvalid]);
 
   const refresh = useCallback(async () => {
+    const revision = ++refreshRevision.current;
     try {
-      setSnapshot(await getDesktopStatus());
+      const next = await getDesktopStatus();
+      if (revision !== refreshRevision.current) return;
+      setSnapshot(next);
+      setStatusCurrent(true);
     } catch (caught) {
+      if (revision !== refreshRevision.current) return;
+      setStatusCurrent(false);
       setNotice(caught instanceof Error ? caught.message : "無法讀取 Kairomes 狀態。");
     }
   }, []);
@@ -655,11 +681,23 @@ export function App() {
           </div>
         ) : null}
 
-        {route === "projects" ? (
+        {route === "projects" && handoffTarget && !handoffInvalid ? (
+          <HandoffFlow
+            workspace={handoffTarget}
+            onClose={() => {
+              const returnId = `handoff-project-${handoffTarget.id}`;
+              setHandoffTarget(null);
+              requestAnimationFrame(() => document.getElementById(returnId)?.focus());
+            }}
+          />
+        ) : null}
+        {route === "projects" && (!handoffTarget || handoffInvalid) ? (
           <div className="projects-page">
             <section className="projects-intro">
               <div>
-                <h2>已加入的專案</h2>
+                <h2 id="projects-title" tabIndex={-1}>
+                  已加入的專案
+                </h2>
                 <p>選擇本機資料夾，讓 ChatGPT 在授權範圍內協作。</p>
               </div>
               <button
@@ -687,6 +725,20 @@ export function App() {
                     <div className="project-copy">
                       <h3>{workspace.name}</h3>
                     </div>
+                    <button
+                      id={`handoff-project-${workspace.id}`}
+                      className="button secondary"
+                      type="button"
+                      disabled={
+                        Boolean(busyAction) ||
+                        Boolean(handoffInvalidReason(snapshot, workspace.id, statusCurrent))
+                      }
+                      onClick={() => {
+                        setHandoffTarget(workspace);
+                      }}
+                    >
+                      從 Codex 接續
+                    </button>
                     <button
                       className="button danger-text project-remove"
                       type="button"

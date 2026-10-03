@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { KairomesError } from "@kairomes/protocol";
+import { KairomesError, VERSION } from "@kairomes/protocol";
 
 type RpcId = string | number;
 type RpcMessage = {
@@ -97,7 +97,6 @@ export class CodexRpc implements CodexConnection {
       if (lost) return;
       lost = true;
       this.ready = false;
-      if (this.child === child) this.child = undefined;
       for (const call of this.pending.values()) {
         clearTimeout(call.timer);
         call.reject(
@@ -106,12 +105,24 @@ export class CodexRpc implements CodexConnection {
       }
       this.pending.clear();
     };
-    child.on("error", disconnect);
-    child.on("exit", disconnect);
-    child.stdin.on("error", disconnect);
+    child.on("error", () => {
+      disconnect();
+      if (!child.pid && this.child === child) this.child = undefined;
+      else child.kill();
+    });
+    child.on("exit", () => {
+      disconnect();
+      if (this.child === child) this.child = undefined;
+    });
+    child.stdin.on("error", () => {
+      disconnect();
+      // A broken input pipe does not prove process exit. Keep ownership until the
+      // exit event so close() can wait for and finish cleanup of this reader.
+      child.kill();
+    });
     try {
       await this.request("initialize", {
-        clientInfo: { name: "kairomes", title: "Kairomes", version: "0.1.4" },
+        clientInfo: { name: "kairomes", title: "Kairomes", version: VERSION },
         capabilities: this.capabilities,
       });
       this.write({ method: "initialized", params: {} });
@@ -181,7 +192,7 @@ export class CodexRpc implements CodexConnection {
     if (!child) return;
     const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     child.stdin.end();
-    const timer = setTimeout(() => child.kill(), 1500);
+    const timer = setTimeout(() => child.kill("SIGKILL"), 1500);
     await exited;
     clearTimeout(timer);
   }

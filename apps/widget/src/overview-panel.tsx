@@ -11,7 +11,6 @@ import {
   fileChangeLabels,
   type McpCall,
   type SearchResult,
-  type TerminalSession,
   terminalLabels,
 } from "@kairomes/protocol";
 import {
@@ -25,33 +24,50 @@ import {
   TerminalWindowIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { activityLabel, activityTitle } from "./activity-model.ts";
 import { latestFocus } from "./activity-panel.tsx";
 import { ArtifactPreview } from "./artifact-panel.tsx";
 import type { WorkbenchBridge } from "./bridge.ts";
 import { CommandOutput, useCommandOutput } from "./command-panel.tsx";
+import { requireFileChangeResult } from "./result-identity.ts";
+import { TerminalOutputPreview } from "./terminal-output.tsx";
 
 function CommandPreview({ bridge, command }: { bridge: WorkbenchBridge; command: Command }) {
   const { result, error } = useCommandOutput(bridge, command.id, 4000);
   return <CommandOutput result={result} error={error} />;
 }
 
-function DiffPreview({ bridge, change }: { bridge: WorkbenchBridge; change: FileChange }) {
-  const [diff, setDiff] = useState("");
-  const [error, setError] = useState("");
+export function DiffPreview({ bridge, change }: { bridge: WorkbenchBridge; change: FileChange }) {
+  const identity = `${change.workspace_id}:${change.id}`;
+  const [state, setState] = useState({ identity, diff: "", truncated: false, error: "" });
+  const { diff, truncated, error } =
+    state.identity === identity ? state : { diff: "", truncated: false, error: "" };
   useEffect(() => {
     let stopped = false;
+    setState({ identity, diff: "", truncated: false, error: "" });
     void bridge
       .call("file_change_poll", { change_id: change.id })
       .then((data) => {
-        if (!stopped && data.kind === "file_change") setDiff(data.diff);
+        if (stopped) return;
+        const result = requireFileChangeResult(data, {
+          id: change.id,
+          workspaceId: change.workspace_id,
+        });
+        setState({ identity, diff: result.diff, truncated: result.diff_truncated, error: "" });
       })
       .catch((cause) => {
-        if (!stopped) setError(cause instanceof Error ? cause.message : "無法取得差異。");
+        if (!stopped)
+          setState({
+            identity,
+            diff: "",
+            truncated: false,
+            error: cause instanceof Error ? cause.message : "無法取得差異。",
+          });
       });
     return () => {
       stopped = true;
     };
-  }, [bridge, change.id]);
+  }, [bridge, change.id, change.workspace_id, identity]);
   if (error) return <p className="inspector-error">{error}</p>;
   if (!diff) return <p className="inspector-muted">正在整理技術差異…</p>;
   const occurrences = new Map<string, number>();
@@ -82,43 +98,12 @@ function DiffPreview({ bridge, change }: { bridge: WorkbenchBridge; change: File
           <code>{line || " "}</code>
         </div>
       ))}
-      {diff.split("\n").length > 160 && <p>差異較長，完整內容請開啟變更檢視。</p>}
+      {(truncated || diff.split("\n").length > 160) && <p>僅顯示部分差異。</p>}
     </section>
   );
 }
 
-function OutputPreview({ bridge, session }: { bridge: WorkbenchBridge; session: TerminalSession }) {
-  const [output, setOutput] = useState("");
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let stopped = false;
-    let cursor = 0;
-    let text = "";
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const data = await bridge.call("terminal_poll", { session_id: session.id, cursor });
-        if (stopped || data.kind !== "terminal") return;
-        cursor = data.cursor;
-        text = (text + data.text).slice(-4000);
-        setOutput(text);
-        setError("");
-        if (data.has_more || ["pending", "starting", "running"].includes(data.session.state))
-          timer = setTimeout(() => void poll(), data.has_more ? 100 : 1500);
-      } catch (cause) {
-        if (!stopped) setError(cause instanceof Error ? cause.message : "無法取得輸出。");
-      }
-    };
-    void poll();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [bridge, session.id]);
-  return <pre className="output-preview">{error || output || "尚無輸出。"}</pre>;
-}
-
-function McpImagePreview({
+export function McpImagePreview({
   bridge,
   media,
   label,
@@ -127,26 +112,34 @@ function McpImagePreview({
   media: Extract<McpCall["content"][number], { type: "image" }>;
   label: string;
 }) {
-  const [source, setSource] = useState("");
-  const [error, setError] = useState("");
+  const identity = media.media_id;
+  const [preview, setPreview] = useState({ identity, source: "", error: "" });
+  const { source, error } = preview.identity === identity ? preview : { source: "", error: "" };
   useEffect(() => {
     let stopped = false;
     let objectUrl = "";
+    setPreview({ identity, source: "", error: "" });
     if (!bridge.loadMcpMedia) return;
     void bridge
       .loadMcpMedia(media.media_id)
       .then((url) => {
         objectUrl = url;
-        if (!stopped) setSource(url);
+        if (stopped) URL.revokeObjectURL(url);
+        else setPreview({ identity, source: url, error: "" });
       })
       .catch((cause) => {
-        if (!stopped) setError(cause instanceof Error ? cause.message : "無法載入 MCP 圖片預覽。");
+        if (!stopped)
+          setPreview({
+            identity,
+            source: "",
+            error: cause instanceof Error ? cause.message : "無法載入 MCP 圖片預覽。",
+          });
       });
     return () => {
       stopped = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [bridge, media.media_id]);
+  }, [bridge, media.media_id, identity]);
   return (
     <figure className="mcp-media-preview">
       {source ? (
@@ -227,18 +220,29 @@ function McpCallSummary({ value, bridge }: { value: McpCall; bridge: WorkbenchBr
 
 const operationLabel = { edit: "修改", write: "寫入", delete: "刪除" } as const;
 
+export interface OverviewContext {
+  entry?: ActivityEntry;
+  file: FileResult | null;
+  search: SearchResult | null;
+  artifact: Artifact | null;
+  mcpCall: McpCall | null;
+  loadedResultId?: string;
+}
+
 export function OverviewPanel({
   snapshot,
   bridge,
-  file,
-  search,
-  artifact,
-  mcpCall,
+  file: liveFile,
+  search: liveSearch,
+  artifact: liveArtifact,
+  mcpCall: liveMcpCall,
   onSelect,
   onFiles,
   workspaceName,
-  loadedResultId,
+  loadedResultId: liveResultId,
   selectedEntry,
+  pausedOverview,
+  workspaceId,
 }: {
   snapshot?: ActivitySnapshot;
   bridge: WorkbenchBridge;
@@ -251,8 +255,17 @@ export function OverviewPanel({
   workspaceName(id?: string): string;
   loadedResultId?: string;
   selectedEntry?: ActivityEntry;
+  pausedOverview?: OverviewContext;
+  workspaceId?: string | null;
 }) {
-  const current = selectedEntry ?? latestFocus(snapshot);
+  const held = selectedEntry ? undefined : pausedOverview;
+  const file = held ? held.file : liveFile;
+  const search = held ? held.search : liveSearch;
+  const artifact = held ? held.artifact : liveArtifact;
+  const mcpCall = held ? held.mcpCall : liveMcpCall;
+  const loadedResultId = held ? held.loadedResultId : liveResultId;
+  const current =
+    selectedEntry ?? (pausedOverview ? pausedOverview.entry : latestFocus(snapshot, workspaceId));
   const session = snapshot?.sessions.find((item) => item.id === current?.sessionId);
   const command = snapshot?.commands?.find((item) => item.id === current?.commandId);
   const change = snapshot?.changes?.find((item) => item.id === current?.changeId);
@@ -311,7 +324,7 @@ export function OverviewPanel({
               )}
             </span>
             <div>
-              <h1>{current.title}</h1>
+              <h1>{activityTitle(current)}</h1>
             </div>
           </div>
           {current.message && <p className="inspector-error">{current.message}</p>}
@@ -365,7 +378,7 @@ export function OverviewPanel({
             <>
               <div className="inspector-status-row">
                 <span className={`inspector-status state-${command.state}`}>
-                  {commandLabels[command.state]}
+                  {command.state === "succeeded" ? "已結束" : commandLabels[command.state]}
                 </span>
                 {command.exit_code !== null && <span>Exit {command.exit_code}</span>}
               </div>
@@ -398,24 +411,21 @@ export function OverviewPanel({
               </button>
               <details className="inspector-technical">
                 <summary>最近輸出</summary>
-                <OutputPreview bridge={bridge} session={session} />
+                <TerminalOutputPreview key={session.id} bridge={bridge} session={session} />
               </details>
             </>
           ) : (
             <>
               <div className="inspector-status-row">
                 <span className={`inspector-status state-${current.state}`}>
-                  {current.state === "working"
-                    ? "正在處理"
-                    : current.state === "failed"
-                      ? "未完成"
-                      : "已完成"}
+                  {activityLabel(current)}
                 </span>
                 {current.path && <span>{current.path}</span>}
               </div>
               {fileMatches && file && (
                 <section className="inspector-section">
                   <h2>內容預覽</h2>
+                  <p className="result-version">版本 {file.version.slice(0, 12)} · 執行時讀取</p>
                   {file.redacted && <p>已遮罩已知密鑰格式。</p>}
                   <pre className="result-excerpt">
                     {file.content.split("\n").slice(0, 16).join("\n")}
@@ -470,7 +480,7 @@ function ArtifactImportSummary({
         <span>{(value.byte_size / 1024).toFixed(1)} KiB</span>
       </div>
       <section className="inspector-section">
-        <h2>圖片會放在哪裡？</h2>
+        <h2>目的檔案</h2>
         <p>{value.summary}</p>
         <code className="inspector-command">{value.path}</code>
       </section>
@@ -483,7 +493,7 @@ function ArtifactImportSummary({
       {value.state === "pending" && (
         <div className="inspector-callout">
           <InfoIcon weight="fill" />
-          <span>圖片已驗證並等待你決定；核准卡就在工作台上方，而且不會覆寫既有檔案。</span>
+          <span>請在原生側欄核准。</span>
         </div>
       )}
       {artifact && (

@@ -1,10 +1,15 @@
 import { type Command, type CommandResult, commandActive, commandLabels } from "@kairomes/protocol";
 import { useEffect, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
+import { commandEvidence, outputEvidence } from "./result-evidence.ts";
+import { requireCommandResult } from "./result-identity.ts";
+import { ResultError } from "./tool-result.ts";
 
 export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65536) {
-  const [result, setResult] = useState<CommandResult>();
-  const [error, setError] = useState("");
+  const [state, setState] = useState<{ id: string; result?: CommandResult; error: string }>({
+    id,
+    error: "",
+  });
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -15,8 +20,7 @@ export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65
     let clippedOut = false,
       clippedErr = false,
       backoff = 1000;
-    setResult(undefined);
-    setError("");
+    setState({ id, error: "" });
     const tail = (text: string) => {
       const cut = Math.max(0, text.length - limit);
       const first = text.charCodeAt(cut);
@@ -24,33 +28,41 @@ export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65
     };
     const poll = async () => {
       try {
-        const next = await bridge.call("command_poll", {
+        const data = await bridge.call("command_poll", {
           command_id: id,
           stdout_cursor: out,
           stderr_cursor: err,
         });
         if (stopped) return;
-        if (next.kind !== "command") throw new Error("命令回應格式不符。");
+        const next = requireCommandResult(data, id);
         out = next.stdout_cursor;
         err = next.stderr_cursor;
         clippedOut ||= next.stdout_truncated || stdout.length + next.stdout.length > limit;
         clippedErr ||= next.stderr_truncated || stderr.length + next.stderr.length > limit;
         stdout = tail(stdout + next.stdout);
         stderr = tail(stderr + next.stderr);
-        setResult({
-          ...next,
-          stdout,
-          stderr,
-          stdout_truncated: clippedOut,
-          stderr_truncated: clippedErr,
+        setState({
+          id,
+          result: {
+            ...next,
+            stdout,
+            stderr,
+            stdout_truncated: clippedOut,
+            stderr_truncated: clippedErr,
+          },
+          error: "",
         });
-        setError("");
         backoff = 1000;
         if (next.has_more || !next.output_complete)
           timer = setTimeout(() => void poll(), next.has_more ? 50 : 750);
       } catch (cause) {
         if (stopped) return;
-        setError(cause instanceof Error ? cause.message : "無法讀取命令結果。");
+        setState((previous) => ({
+          id,
+          result: previous.id === id ? previous.result : undefined,
+          error: cause instanceof Error ? cause.message : "無法讀取命令結果。",
+        }));
+        if (cause instanceof ResultError && cause.code === "COMMAND_NOT_FOUND") return;
         timer = setTimeout(() => void poll(), backoff);
         backoff = Math.min(5000, backoff * 2);
       }
@@ -61,17 +73,36 @@ export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65
       clearTimeout(timer);
     };
   }, [bridge, id, limit]);
-  return { result: result?.command.id === id ? result : undefined, error };
+  return state.id === id
+    ? { result: state.result, error: state.error }
+    : { result: undefined, error: "" };
 }
 
-export function CommandOutput({ result, error }: { result?: CommandResult; error: string }) {
+export function CommandOutput({
+  result,
+  error,
+  evidence = true,
+}: {
+  result?: CommandResult;
+  error: string;
+  evidence?: boolean;
+}) {
   const hasStdout = Boolean(result?.stdout || result?.stdout_truncated);
   const hasStderr = Boolean(result?.stderr || result?.stderr_truncated);
   return (
     <>
-      {error && <p role="alert">{error} 正在重試讀取，命令不會重跑。</p>}
+      {error && <p role="alert">{error}</p>}
+      {evidence && result && result.command.state !== "pending" && (
+        <p
+          className="result-evidence"
+          role="status"
+          data-evidence={commandEvidence(result, !!error) ? "complete" : "unconfirmed"}
+        >
+          {outputEvidence(result, !!error)} · 執行時結果
+        </p>
+      )}
       {result?.command.message && <p role="status">{result.command.message}</p>}
-      {!hasStdout && !hasStderr && result?.command.state !== "pending" && (
+      {!hasStdout && !hasStderr && !error && result?.command.state !== "pending" && (
         <p className="muted">{result ? "沒有輸出。" : "正在讀取輸出…"}</p>
       )}
       {hasStdout && (
@@ -106,8 +137,8 @@ export function CommandPanel({
   const [listed, setListed] = useState<Command[]>([]);
   const [selected, setSelected] = useState(focus?.id ?? "");
   const [listError, setListError] = useState("");
-  const [actionError, setActionError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState({ id: "", message: "" });
+  const [busyId, setBusyId] = useState("");
   useEffect(() => {
     if (focus) setSelected(focus.id);
   }, [focus]);
@@ -136,8 +167,9 @@ export function CommandPanel({
   const commands = (liveCommands ?? listed)
     .filter((c) => c.workspace_id === workspaceId)
     .sort((a, b) => b.created_at - a.created_at);
-  const selectedCommand = commands.find((c) => c.id === selected) ?? commands[0];
+  const selectedCommand = selected ? commands.find((c) => c.id === selected) : commands[0];
   const id = selectedCommand?.id ?? "";
+  const currentActionError = actionError.id === id ? actionError.message : "";
   const { result, error } = useCommandOutput(bridge, id);
   // A final SSE snapshot can arrive before the next output page. Never briefly
   // show "waiting for approval" again after cancellation has been confirmed.
@@ -154,7 +186,7 @@ export function CommandPanel({
           disabled={!commands.length}
           onChange={(e) => {
             setSelected(e.target.value);
-            setActionError("");
+            setActionError({ id: e.target.value, message: "" });
           }}
         >
           {!commands.length && <option value="">尚無命令</option>}
@@ -168,36 +200,35 @@ export function CommandPanel({
           <button
             type="button"
             className="text-button danger"
-            disabled={busy}
+            disabled={!!busyId}
             onClick={async () => {
-              setBusy(true);
-              setActionError("");
+              setBusyId(id);
+              setActionError({ id, message: "" });
               try {
                 await bridge.call("command_cancel", { command_id: id });
               } catch (cause) {
-                setActionError(
-                  cause instanceof Error ? cause.message : "取消結果尚未確認，請等待狀態更新。",
-                );
+                setActionError({
+                  id,
+                  message:
+                    cause instanceof Error ? cause.message : "取消結果尚未確認，請等待狀態更新。",
+                });
               } finally {
-                setBusy(false);
+                setBusyId("");
               }
             }}
           >
-            {busy ? "取消中…" : "取消命令"}
+            {busyId === id ? "取消中…" : "取消命令"}
           </button>
         )}
       </div>
       <div className="command-content">
-        {(listError || actionError) && <p role="alert">{listError || actionError}</p>}
+        {(listError || currentActionError) && <p role="alert">{listError || currentActionError}</p>}
         {!current ? (
-          <>
-            <h2>尚無命令</h2>
-            <p>ChatGPT 執行命令時，結果會顯示在這裡。</p>
-          </>
+          <h2>{selected ? "命令詳情已無法取得" : "尚無命令"}</h2>
         ) : (
           <>
             <h2 role="status">
-              {commandLabels[current.state]}
+              {current.state === "succeeded" ? "已結束" : commandLabels[current.state]}
               {current.exit_code !== null ? ` · Exit ${current.exit_code}` : ""}
             </h2>
             <p className="muted">
@@ -207,11 +238,8 @@ export function CommandPanel({
                 : ""}
             </p>
             <pre className="command-argv">{JSON.stringify(current.argv, null, 2)}</pre>
-            {current.state === "pending" && (
-              <p className="pending-indicator">請在側欄核准；未配對時可使用本機審批頁。</p>
-            )}
+            {current.state === "pending" && <p className="pending-indicator">請在原生側欄核准。</p>}
             <CommandOutput result={result} error={error} />
-            <p className="muted">請以結束碼判斷結果；取消不會復原已執行的動作。</p>
           </>
         )}
       </div>

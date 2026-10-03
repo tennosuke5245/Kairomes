@@ -51,9 +51,9 @@ test("workbench defaults to no embedding and rejects stale instance identity", a
   const app = await startWorkbench(f.registry, minimalHtml, 0);
   try {
     const c = await readWorkbenchConnection(f.state);
-    expect((await fetch(c.origin)).headers.get("Content-Security-Policy")).toContain(
-      "frame-ancestors 'none'",
-    );
+    const page = await fetch(c.origin);
+    expect(page.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
+    expect(await page.text()).toContain('<meta name="kairomes-parent-origin" content="">');
     await expect(
       verifyWorkbenchConnection({ ...c, instanceId: crypto.randomUUID() }),
     ).rejects.toMatchObject({ code: "WORKBENCH_UNAVAILABLE" });
@@ -110,7 +110,13 @@ test("web workbench has no chat backend; MCP/UI/admin authority and frame bounda
         body: JSON.stringify({ action: "list" }),
       });
     const page = await fetch(c.origin);
-    expect(await page.text()).toContain('content="workbench"');
+    const pageHtml = await page.text();
+    expect(pageHtml).toContain('content="workbench"');
+    expect(pageHtml).toContain(
+      `<meta name="kairomes-parent-origin" content="chrome-extension://${extensionId}">`,
+    );
+    expect(pageHtml).not.toContain(c.adminToken);
+    expect(pageHtml).not.toContain(c.mcpToken);
     expect(page.headers.get("Content-Security-Policy")).toContain(
       `frame-ancestors chrome-extension://${extensionId}`,
     );

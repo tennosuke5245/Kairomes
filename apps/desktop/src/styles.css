@@ -426,12 +426,6 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   gap: 13px;
-  opacity: 0.48;
-}
-.journey-node.current,
-.journey-node.error,
-.journey-node.done {
-  opacity: 1;
 }
 .journey-icon {
   width: 39px;
@@ -468,7 +462,7 @@ summary:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 14px;
 }
 .journey-state {
   color: var(--ink-soft);
@@ -1183,5 +1177,159 @@ summary:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+.handoff-page {
+  max-width: 820px;
+}
+.handoff-page .button,
+.handoff-page .text-link,
+.handoff-page .field-error {
+  font-size: 14px;
+}
+.handoff-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.handoff-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+.handoff-heading h2 {
+  margin: 0 0 5px;
+  font-size: 22px;
+}
+.handoff-heading span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.handoff-sources {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+.handoff-source {
+  display: grid;
+  gap: 7px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.handoff-source strong {
+  overflow-wrap: anywhere;
+}
+.handoff-source span {
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.handoff-fields {
+  display: grid;
+  gap: 16px;
+  margin: 20px 0;
+}
+.handoff-fields label {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+}
+.handoff-fields label span {
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.handoff-page textarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  line-height: 1.5;
+}
+.handoff-page textarea:focus-visible,
+.handoff-page button:focus-visible,
+.handoff-check input:focus-visible,
+.handoff-details summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+.handoff-details {
+  margin: 16px 0;
+  border-block: 1px solid var(--line-soft);
+  padding: 12px 0;
+  font-size: 14px;
+}
+.handoff-details summary {
+  cursor: pointer;
+}
+.handoff-details p {
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+.handoff-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+  line-height: 1.6;
+}
+.handoff-details li {
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+.handoff-check {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  gap: 8px;
+  margin: 12px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.handoff-check input {
+  flex-shrink: 0;
+  accent-color: var(--signal);
+}
+.handoff-preview {
+  margin-top: 20px;
+}
+.handoff-preview h3 {
+  font-size: 14px;
+}
+.handoff-preview textarea {
+  min-height: 260px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 14px;
+}
+.handoff-preview p[role="status"] {
+  font-size: 14px;
+}
+.project-card {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+@media (max-width: 700px) {
+  .project-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .project-card > .button {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .handoff-heading {
+    flex-wrap: wrap;
+  }
+  .handoff-heading > div {
+    flex-basis: 60%;
   }
 }

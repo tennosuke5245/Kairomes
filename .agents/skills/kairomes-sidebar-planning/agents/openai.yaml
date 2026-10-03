@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kairomes 側欄規劃"
+  short_description: "以現行程式碼與窄版畫面規劃 Kairomes 側欄改進、交接及可驗收的開發工作"
+  default_prompt: "使用 $kairomes-sidebar-planning 檢視目前側欄，提出精簡的操作流程與後續開發規格。"

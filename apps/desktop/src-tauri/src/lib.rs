@@ -530,6 +530,43 @@ async fn remove_workspace(workspace_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn handoff_request(input: Value) -> Result<Value, String> {
+    // Zod strictly validates the action at the trusted Companion. No generic route,
+    // source home, RPC method or control credential is accepted from the webview.
+    let encoded = serde_json::to_vec(&input).map_err(|_| "接續請求格式不正確。".to_string())?;
+    if encoded.len() > 64 * 1024 {
+        return Err("接續請求超過大小上限。".to_string());
+    }
+    let connection = read_connection()?;
+    let client = Client::builder()
+        .redirect(Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|_| "無法建立接續連線。".to_string())?;
+    let response = client
+        .post(format!("{}/api/handoff", connection.origin))
+        .header("Origin", &connection.origin)
+        .bearer_auth(&connection.token)
+        .json(&input)
+        .send()
+        .await
+        .map_err(|_| "接續來源未回應，請重新建立草稿。".to_string())?;
+    let status = response.status();
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|_| "接續回應格式不正確。".to_string())?;
+    if !status.is_success() {
+        return Err(value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("無法完成接續核對。")
+            .to_string());
+    }
+    Ok(value)
+}
+
+#[tauri::command]
 fn open_external(app: AppHandle, target: String) -> Result<(), String> {
     let url = match target.as_str() {
         "runtime_keys" => RUNTIME_KEYS_URL,
@@ -647,6 +684,7 @@ pub fn run() {
             configure_extension,
             add_workspace,
             remove_workspace,
+            handoff_request,
             open_external
         ])
         .run(tauri::generate_context!())

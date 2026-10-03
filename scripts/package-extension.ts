@@ -11,6 +11,7 @@ const expectedFiles = [
   "assets/kairomes-k-128.png",
   "background.js",
   "manifest.json",
+  "mcp-panel.css",
   "sidepanel.css",
   "sidepanel.html",
   "sidepanel.js",
@@ -144,6 +145,7 @@ if (!sourceManifestBytes.equals(builtManifestBytes)) {
 const html = await readFile(path.join(dist, "sidepanel.html"), "utf8");
 for (const reference of [
   'href="sidepanel.css"',
+  'href="mcp-panel.css"',
   'src="sidepanel.js"',
   'src="assets/kairomes-k-128.png"',
 ]) {

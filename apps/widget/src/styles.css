@@ -700,12 +700,11 @@ h1 > span {
 
 /* Signal Workbench ------------------------------------------------------- */
 .signal-workbench {
-  --project-rail-width: 68px;
   --signal-bg: #f5f0e7;
   --signal-paper: #fffdf8;
   --signal-ink: #242123;
-  --signal-muted: #766f6a;
-  --signal-faint: #a69e95;
+  --signal-muted: #665e58;
+  --signal-faint: #665e58;
   --signal-line: #ded7cc;
   --signal-line-strong: #cfc5b8;
   --signal-red: #b9363f;
@@ -718,15 +717,59 @@ h1 > span {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 68px minmax(360px, 1fr) 8px min(
+  grid-template-columns: minmax(var(--signal-canvas-min, 320px), 1fr) var(
+      --signal-handle-width,
+      8px
+    ) min(
       var(--inspector-width, 410px),
-      calc(100% - 436px)
-    );
-  grid-template-rows: minmax(0, 1fr) 28px;
+      calc(
+        100% -
+        var(--signal-canvas-min, 320px) -
+        var(--signal-handle-width, 8px) -
+        var(--signal-inspector-gutter, 16px)
+      )
+    ) var(--signal-inspector-gutter, 16px);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   color: var(--signal-ink);
   background: radial-gradient(circle at 42% 18%, #fffdf9 0, transparent 34%), var(--signal-bg);
   font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif;
+  font-size: 14px;
+}
+.signal-native-controls {
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+.signal-project-header {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--signal-line);
+}
+.signal-project-header select {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--signal-line);
+  border-radius: 6px;
+  background: var(--signal-paper);
+  font: inherit;
+}
+.signal-project-header button {
+  min-width: 32px;
+  min-height: 32px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
 }
 .signal-workbench *,
 .signal-workbench *::before,
@@ -748,6 +791,7 @@ h1 > span {
 .signal-workbench select,
 .signal-workbench input {
   color: inherit;
+  font-size: 14px;
 }
 .signal-workbench .inspector-primary,
 .signal-workbench .inspector-empty button {
@@ -903,15 +947,15 @@ h1 > span {
   box-shadow: 0 0 0 3px #79a2681f;
 }
 .signal-canvas {
-  grid-column: 2;
-  grid-row: 1;
+  grid-column: 1;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 .signal-inspector-resizer {
-  grid-column: 3;
-  grid-row: 1;
+  grid-column: 2;
+  grid-row: 2;
   z-index: 4;
   position: relative;
   min-width: 8px;
@@ -957,14 +1001,14 @@ body.resizing-inspector * {
   user-select: none;
 }
 .signal-inspector {
-  grid-column: 4;
-  grid-row: 1;
+  grid-column: 3;
+  grid-row: 2;
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  margin: 16px 16px 14px 0;
+  margin: 16px 0 14px;
   overflow: hidden;
   border: 1px solid var(--signal-line);
   border-radius: 16px;
@@ -996,7 +1040,7 @@ body.resizing-inspector * {
 .signal-stream.activity-panel {
   height: 100%;
   min-height: 0;
-  padding: 31px clamp(24px, 4vw, 58px) 80px;
+  padding: 20px clamp(16px, 4vw, 42px) 32px;
   overflow: auto;
   border: 0;
   background: transparent;
@@ -1007,7 +1051,17 @@ body.resizing-inspector * {
   justify-content: space-between;
   gap: 16px;
   max-width: 760px;
-  margin: 0 auto 24px;
+  margin: 0 auto 16px;
+}
+.stream-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stream-actions button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font: inherit;
 }
 .stream-heading h1 {
   margin: 0;
@@ -1599,8 +1653,10 @@ body.resizing-inspector * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex: 0 0 48px;
-  padding: 0 14px;
+  flex: 0 0 auto;
+  min-height: 48px;
+  gap: 8px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--signal-line);
 }
 .detail-heading button {
@@ -1611,7 +1667,9 @@ body.resizing-inspector * {
   font-size: 11px;
 }
 .detail-heading strong {
-  font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
 }
 .signal-inspector .command-panel,
 .signal-inspector .file-change-panel,
@@ -2023,7 +2081,29 @@ body.resizing-inspector * {
   color: var(--signal-ink, var(--text));
 }
 .signal-artifact-panel > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 18px;
+}
+.signal-artifact-panel > header button {
+  padding: 6px 10px;
+  border: 1px solid var(--signal-line, var(--line));
+  border-radius: 6px;
+  font-size: 14px;
+}
+.signal-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.workspace-unmounted {
+  margin: 0;
+  padding: 10px 20px;
+  color: var(--signal-muted);
+  font-size: 14px;
 }
 .signal-artifact-panel > header > span {
   color: var(--signal-red, var(--accent));
@@ -2144,12 +2224,6 @@ body.resizing-inspector * {
   padding-bottom: 11px;
 }
 @media (max-width: 1050px) {
-  .signal-workbench {
-    grid-template-columns: 68px minmax(320px, 1fr) 8px min(
-        var(--inspector-width, 410px),
-        calc(100% - 396px)
-      );
-  }
   .signal-project-rail {
     padding-right: 8px;
     padding-left: 8px;
@@ -2161,25 +2235,22 @@ body.resizing-inspector * {
 }
 @media (max-width: 760px) {
   .signal-workbench {
-    --project-rail-width: 58px;
-    grid-template-columns: 58px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) 24px;
-  }
-  .signal-project-rail {
-    padding: 10px 5px 8px;
+    grid-template-columns: minmax(0, 1fr);
   }
   .signal-canvas,
   .signal-inspector {
-    grid-column: 2;
-    grid-row: 1;
+    grid-column: 1;
+    grid-row: 2;
   }
   .signal-inspector-resizer {
     display: none;
   }
   .signal-inspector {
     z-index: 8;
-    width: min(94%, 440px);
-    margin: 8px 8px 8px auto;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
     transform: translateX(105%);
     transition: transform 180ms ease;
   }
@@ -2207,11 +2278,32 @@ body.resizing-inspector * {
   .signal-footer span:last-child {
     display: none;
   }
+  .signal-stream.activity-panel {
+    padding: 16px 12px 24px;
+  }
+  .stream-list {
+    padding-left: 0;
+  }
+  .stream-entry {
+    gap: 6px;
+  }
+  .stream-card {
+    padding: 10px;
+  }
+  .signal-files .editor-code,
+  .signal-inspector .command-output,
+  .signal-inspector .full-diff {
+    max-height: none;
+    overflow: visible;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .signal-workbench *,
   .signal-workbench *::before,
-  .signal-workbench *::after {
+  .signal-workbench *::after,
+  .workbench *,
+  .workbench *::before,
+  .workbench *::after {
     scroll-behavior: auto;
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
@@ -2283,6 +2375,108 @@ body.resizing-inspector * {
 }
 .command-stderr {
   color: #efb2a6;
+}
+.signal-workbench .stream-meta,
+.signal-workbench .stream-card-footer small,
+.signal-workbench .stream-card-footer button,
+.signal-workbench .inspector-heading,
+.signal-workbench .inspector-heading small,
+.signal-workbench .inspector-status,
+.signal-workbench .inspector-status-row,
+.signal-workbench .inspector-command,
+.signal-workbench .inspector-section p,
+.signal-workbench .inspector-section h2,
+.signal-workbench .inspector-technical summary,
+.signal-workbench .inspector-primary,
+.signal-workbench .detail-heading,
+.signal-workbench .detail-heading button,
+.signal-workbench .signal-file-meta,
+.signal-workbench .signal-file-meta span,
+.signal-workbench .signal-files > header button,
+.signal-workbench .signal-page-actions button,
+.signal-workbench .signal-file-list > p,
+.signal-workbench .signal-file-results > p,
+.signal-workbench .signal-file-results button span,
+.signal-workbench .signal-loading,
+.signal-workbench .terminal-footer,
+.signal-workbench .terminal-notice,
+.signal-workbench .signal-file-list button,
+.signal-workbench .signal-file-results button,
+.signal-workbench .signal-file-results button small,
+.signal-workbench .artifact-details dt,
+.signal-workbench .artifact-details dd,
+.signal-workbench .artifact-preview figcaption,
+.signal-workbench .command-argv,
+.signal-workbench .command-output,
+.signal-workbench .full-diff,
+.signal-workbench .change-status,
+.signal-workbench .file-change-files small,
+.signal-workbench .result-excerpt,
+.signal-workbench .editor-code,
+.signal-workbench .code-line,
+.signal-workbench .line-number {
+  font-size: 14px;
+}
+.signal-workbench button {
+  min-height: 32px;
+}
+.signal-workbench .stream-path,
+.signal-workbench .result-version,
+.signal-workbench .result-evidence,
+.signal-workbench .signal-project-header span {
+  color: var(--signal-muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.signal-workbench .command-stderr {
+  color: #efb2a6;
+}
+.signal-workbench .muted {
+  color: var(--signal-muted);
+}
+.change-file-evidence {
+  flex-wrap: wrap;
+}
+.change-file-evidence .change-version {
+  flex: 1 0 100%;
+  margin-left: 24px;
+  color: var(--signal-muted, var(--muted));
+  font-size: 14px;
+}
+.result-unavailable {
+  padding: 20px;
+  overflow-wrap: anywhere;
+}
+.result-unavailable h1 {
+  font-size: 20px;
+}
+.result-unavailable button {
+  padding: 8px 12px;
+  color: var(--signal-red-dark);
+  border: 1px solid var(--signal-line);
+  border-radius: 6px;
+}
+@media (max-width: 300px) {
+  .stream-heading,
+  .detail-heading,
+  .signal-files > header,
+  .signal-search,
+  .command-toolbar,
+  .file-change-toolbar {
+    flex-wrap: wrap;
+  }
+  .stream-actions {
+    gap: 4px;
+  }
+  .detail-heading strong,
+  .signal-files > header h1 {
+    overflow-wrap: anywhere;
+  }
+  .command-toolbar select,
+  .file-change-toolbar select {
+    max-width: 100%;
+    width: 100%;
+  }
 }
 .command-content small {
   color: var(--muted);

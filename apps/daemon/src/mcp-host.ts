@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
-import { chmod, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   KairomesError,
   LIMITS,
+  type McpAuthInput,
+  type McpAuthResult,
+  type McpAuthSummary,
   type McpCall,
   type McpCatalog,
   type McpCatalogTool,
@@ -13,6 +16,7 @@ import {
   type McpPanelState,
   type McpServerSummary,
   type McpToolDescription,
+  mcpConfigIdentitySource,
   VERSION,
 } from "@kairomes/protocol";
 import { inspectImageBuffer } from "@kairomes/workspace-core";
@@ -21,16 +25,26 @@ import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import {
+  type CallToolResult,
+  ErrorCode,
+  McpError,
+  type Tool,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { type McpOAuthDependencies, McpOAuthManager, type McpOAuthTarget } from "./mcp-oauth.ts";
 
 const CONFIG_FILE = "mcp-servers.json";
 const CONNECT_TIMEOUT = 10_000;
+const STDIO_INITIALIZE_TIMEOUT = 120_000;
 const CALL_TIMEOUT = 30_000;
-const MAX_SCHEMA_BYTES = 24 * 1024;
+const MAX_SCHEMA_BYTES = 64 * 1024;
 const MAX_ARGUMENT_BYTES = 32 * 1024;
 const MAX_ARGUMENT_PREVIEW_BYTES = 4 * 1024;
 const MAX_ARGUMENT_PREVIEW_STRING = 400;
@@ -70,6 +84,8 @@ type Runtime = {
   transport?: Transport;
   tools: Map<string, DiscoveredTool>;
   connecting?: Promise<void>;
+  connectionEpoch?: number;
+  lastFailure?: "list_failed" | "connection_failed";
 };
 
 export type McpForwardedImage = {
@@ -144,8 +160,54 @@ function toolReference(serverId: string, name: string, fingerprint: string): str
   return `mcp_${digest({ serverId, name, fingerprint }, 40)}`;
 }
 
-function safeMessage(): string {
+function safeMessage(error?: unknown, transport?: McpMountConfig["transport"]["kind"]): string {
+  if (error instanceof KairomesError) {
+    if (error.code === "MCP_TOOL_LIMIT") return "工具數量超過 128 項上限。";
+    if (error.code === "MCP_SCHEMA_LIMIT") return "工具定義超過 64 KiB 上限。";
+    if (error.code === "MCP_TOOL_NAME_INVALID") return "服務回傳無效或重複的工具名稱。";
+  }
+  if (error instanceof McpError && error.code === ErrorCode.RequestTimeout)
+    return "連線逾時；請完成必要登入後再重新探索。";
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if (transport === "stdio") {
+    if (code === "ENOENT") return "找不到啟動程式或工作目錄。";
+    if (code === "EACCES" || code === "EPERM") return "啟動權限不足。";
+  }
   return "無法連線；請由本機使用者檢查這個 MCP 的設定與執行狀態。";
+}
+
+function connectionErrorCode(error: unknown, initialized: boolean): string {
+  const phase = initialized ? "tools_list" : "connection";
+  if (error instanceof KairomesError) {
+    if (error.code === "MCP_TOOL_LIMIT") return "tools_limit";
+    if (error.code === "MCP_SCHEMA_LIMIT") return "schema_limit";
+    if (error.code === "MCP_TOOL_NAME_INVALID") return "tools_invalid";
+  }
+  if (error instanceof McpError) {
+    if (error.code === ErrorCode.RequestTimeout) return `${phase}_timeout`;
+    if ([ErrorCode.InvalidParams, ErrorCode.MethodNotFound].includes(error.code))
+      return `${phase}_rejected`;
+  }
+  if (error instanceof StreamableHTTPError) {
+    if (
+      typeof error.code === "number" &&
+      [400, 401, 403, 404, 405, 429, 500, 502, 503, 504].includes(error.code)
+    )
+      return `${phase}_http_${error.code}`;
+    if (error.code === -1) return `${phase}_response_invalid`;
+  }
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if (
+    ["MCP_OAUTH_URL_BLOCKED", "MCP_OAUTH_DNS_BLOCKED", "MCP_OAUTH_REDIRECT_BLOCKED"].includes(
+      String(code),
+    )
+  )
+    return `${phase}_network_blocked`;
+  if (code === "MCP_OAUTH_NETWORK_TIMEOUT") return `${phase}_timeout`;
+  if (code === "MCP_OAUTH_NETWORK_FAILED") return `${phase}_network_failed`;
+  if (code === "MCP_OAUTH_RESPONSE_LIMIT") return `${phase}_response_limit`;
+  if (code === "MCP_OAUTH_RESPONSE_INVALID") return `${phase}_response_invalid`;
+  return initialized ? "tools_list_failed" : "connection_failed";
 }
 
 function validateHttpUrl(input: string): URL {
@@ -341,11 +403,68 @@ export class McpHostManager {
   private runtimes = new Map<string, Runtime>();
   private loaded?: Promise<void>;
   private saving = Promise.resolve();
+  private pendingAdds = 0;
   private configHash = "";
   private closed = false;
+  private readonly oauth: McpOAuthManager;
 
-  constructor(dataDirectory: string) {
+  constructor(dataDirectory: string, options: { oauth?: McpOAuthDependencies } = {}) {
     this.configPath = path.join(dataDirectory, CONFIG_FILE);
+    this.oauth = new McpOAuthManager(options.oauth);
+  }
+
+  private oauthTarget(serverId: string): McpOAuthTarget | undefined {
+    const config = this.runtimes.get(serverId)?.config;
+    if (
+      config?.transport.kind !== "http" ||
+      new URL(config.transport.url).protocol !== "https:" ||
+      Object.keys(config.transport.header_env).some((key) => key.toLowerCase() === "authorization")
+    )
+      return undefined;
+    return {
+      id: config.id,
+      fingerprint: createHash("sha256").update(mcpConfigIdentitySource(config)).digest("hex"),
+      url: config.transport.url,
+      enabled: config.enabled,
+    };
+  }
+
+  configureAuth(
+    instanceId: string,
+    openBrowser: ((url: string) => Promise<void>) | undefined,
+    ownerValid: (owner: string) => boolean,
+  ) {
+    this.oauth.configure({
+      instanceId,
+      openBrowser,
+      ownerValid,
+      target: (id) => this.oauthTarget(id),
+      disconnect: async (id) => {
+        const runtime = this.runtimes.get(id);
+        if (runtime) {
+          runtime.state = "unavailable";
+          await this.disconnect(runtime);
+        }
+      },
+      verify: async (target) => {
+        const runtime = this.runtimes.get(target.id);
+        if (!runtime || this.oauthTarget(target.id)?.fingerprint !== target.fingerprint)
+          return "connection_failed";
+        await this.connect(runtime, true);
+        return runtime.state === "ready" ? "current" : (runtime.lastFailure ?? "connection_failed");
+      },
+    });
+  }
+
+  auth(owner: string, input: McpAuthInput): McpAuthResult {
+    return this.oauth.operation(owner, input);
+  }
+  revokeAuthOwner(owner: string) {
+    this.oauth.revokeOwner(owner);
+  }
+  authSummary(serverId: string): McpAuthSummary | undefined {
+    const target = this.oauthTarget(serverId);
+    return target ? this.oauth.summary(serverId, target.fingerprint) : undefined;
   }
 
   private async load() {
@@ -402,6 +521,15 @@ export class McpHostManager {
     const close: Promise<void>[] = [];
     for (const config of file.data.servers) {
       const prior = this.runtimes.get(config.id);
+      if (
+        prior &&
+        (mcpConfigIdentitySource(prior.config) !== mcpConfigIdentitySource(config) ||
+          !config.enabled)
+      ) {
+        this.oauth.invalidate(config.id, true);
+        close.push(this.disconnect(prior));
+        prior.state = "disconnected";
+      }
       if (prior && stable(prior.config.transport) === stable(config.transport)) {
         prior.config = config;
         next.set(config.id, prior);
@@ -412,30 +540,60 @@ export class McpHostManager {
     }
     for (const [id, prior] of this.runtimes) {
       if (!next.has(id)) close.push(this.disconnect(prior));
+      if (!next.has(id)) this.oauth.invalidate(id, true);
     }
     await Promise.all(close);
     this.runtimes = next;
     this.configHash = nextHash;
   }
 
-  private async persist() {
-    const value = McpMountFileSchema.parse({
-      version: 1,
-      servers: [...this.runtimes.values()].map((runtime) => runtime.config),
-    });
+  private async persist(addition?: McpMountConfig) {
     const task = this.saving.then(async () => {
+      const value = McpMountFileSchema.parse({
+        version: 1,
+        servers: [
+          ...[...this.runtimes.values()].map((runtime) => runtime.config),
+          ...(addition ? [addition] : []),
+        ],
+      });
       const temporary = `${this.configPath}.${crypto.randomUUID()}.tmp`;
       const source = `${JSON.stringify(value, null, 2)}\n`;
-      await writeFile(temporary, source, { mode: 0o600 });
-      await rename(temporary, this.configPath);
-      await chmod(this.configPath, 0o600).catch(() => undefined);
+      try {
+        await writeFile(temporary, source, { mode: 0o600 });
+        await rename(temporary, this.configPath);
+      } catch (error) {
+        await unlink(temporary).catch(() => undefined);
+        throw error;
+      }
+      if (addition)
+        this.runtimes.set(addition.id, {
+          config: addition,
+          state: "disconnected",
+          tools: new Map(),
+        });
       this.configHash = digest(source, 64);
+      await chmod(this.configPath, 0o600).catch(() => undefined);
     });
     this.saving = task.catch(() => undefined);
     await task;
   }
 
-  private transport(config: McpMountConfig): Transport {
+  private async addMount(config: McpMountConfig): Promise<McpMountConfig> {
+    if (this.runtimes.size + this.pendingAdds >= 16)
+      throw new KairomesError("MCP_SERVER_LIMIT", "MCP 掛載數量已達上限。");
+    this.pendingAdds++;
+    try {
+      await this.persist(config);
+    } finally {
+      this.pendingAdds--;
+    }
+    return structuredClone(config);
+  }
+
+  private transport(
+    config: McpMountConfig,
+    oauth?: ReturnType<McpOAuthManager["transport"]>,
+  ): Transport {
     if (config.transport.kind === "stdio") {
       const transport = new StdioClientTransport({
         command: config.transport.command,
@@ -452,7 +610,8 @@ export class McpHostManager {
     const url = validateHttpUrl(config.transport.url);
     return new StreamableHTTPClientTransport(url, {
       requestInit: { headers: headersFromEnvironment(config.transport.header_env) },
-      fetch: fetchWithoutRedirects,
+      ...(oauth ? { authProvider: oauth.authProvider } : {}),
+      fetch: oauth?.fetch ?? fetchWithoutRedirects,
       reconnectionOptions: {
         maxReconnectionDelay: 5000,
         initialReconnectionDelay: 500,
@@ -493,6 +652,7 @@ export class McpHostManager {
   }
 
   private async disconnect(runtime: Runtime) {
+    runtime.connectionEpoch = (runtime.connectionEpoch ?? 0) + 1;
     const client = runtime.client;
     runtime.client = undefined;
     runtime.transport = undefined;
@@ -504,11 +664,32 @@ export class McpHostManager {
     if (this.closed) throw new KairomesError("MCP_HOST_CLOSED", "MCP 掛載服務已關閉。");
     if (!force && runtime.state === "ready" && runtime.client) return;
     if (runtime.connecting) return runtime.connecting;
-    runtime.connecting = (async () => {
-      await this.disconnect(runtime);
+    let task: Promise<void> | undefined;
+    task = (async () => {
+      const cleanup = this.disconnect(runtime);
+      const epoch = runtime.connectionEpoch;
+      let authEpoch = this.oauth.generation(runtime.config.id);
+      const configIdentity = mcpConfigIdentitySource(runtime.config);
+      const current = () =>
+        !this.closed &&
+        runtime.connectionEpoch === epoch &&
+        this.runtimes.get(runtime.config.id) === runtime &&
+        runtime.config.enabled &&
+        mcpConfigIdentitySource(runtime.config) === configIdentity &&
+        this.oauth.generation(runtime.config.id) === authEpoch;
+      await cleanup;
+      if (!current()) return;
       runtime.state = "connecting";
+      runtime.lastFailure = undefined;
+      let initialized = false;
       try {
-        const transport = this.transport(runtime.config);
+        await this.oauth.beforeCall(runtime.config.id, false);
+        if (!current()) return;
+        const target = this.oauthTarget(runtime.config.id);
+        const oauth = target ? await this.oauth.prepareTransport(target) : undefined;
+        authEpoch = this.oauth.generation(runtime.config.id);
+        if (!current()) return;
+        const transport = this.transport(runtime.config, oauth);
         const client = new Client(
           { name: `kairomes:${runtime.config.id}`, version: VERSION },
           {
@@ -517,16 +698,28 @@ export class McpHostManager {
                 autoRefresh: true,
                 debounceMs: 300,
                 onChanged: (error, tools) => {
+                  if (!current() || runtime.client !== client) return;
                   if (error || !tools) {
                     runtime.state = "unavailable";
                     runtime.message = safeMessage();
+                    this.oauth.connectionResult(
+                      runtime.config.id,
+                      "list_failed",
+                      connectionErrorCode(error, true),
+                    );
                     return;
                   }
                   try {
                     this.acceptTools(runtime, tools);
-                  } catch {
+                    this.oauth.connectionResult(runtime.config.id, "current");
+                  } catch (error) {
                     runtime.state = "unavailable";
                     runtime.message = safeMessage();
+                    this.oauth.connectionResult(
+                      runtime.config.id,
+                      "list_failed",
+                      connectionErrorCode(error, true),
+                    );
                   }
                 },
               },
@@ -536,24 +729,55 @@ export class McpHostManager {
         runtime.client = client;
         runtime.transport = transport;
         client.onclose = () => {
-          if (runtime.client !== client) return;
+          if (!current() || runtime.client !== client) return;
           runtime.client = undefined;
           runtime.transport = undefined;
           runtime.state = "unavailable";
           runtime.message = safeMessage();
+          this.oauth.connectionResult(runtime.config.id, "connection_failed");
         };
-        await client.connect(transport, { timeout: CONNECT_TIMEOUT });
+        await client.connect(transport, {
+          timeout:
+            runtime.config.transport.kind === "stdio" ? STDIO_INITIALIZE_TIMEOUT : CONNECT_TIMEOUT,
+        });
+        if (!current() || runtime.client !== client) return;
+        initialized = true;
         const listing = await client.listTools({}, { timeout: CONNECT_TIMEOUT });
+        if (!current() || runtime.client !== client) return;
         this.acceptTools(runtime, listing.tools);
-      } catch {
-        await this.disconnect(runtime);
+        this.oauth.connectionResult(runtime.config.id, "current");
+      } catch (error) {
+        if (!current()) return;
+        const cleanup = this.disconnect(runtime);
+        const cleanupEpoch = runtime.connectionEpoch;
+        await cleanup;
+        if (
+          this.closed ||
+          runtime.connectionEpoch !== cleanupEpoch ||
+          this.runtimes.get(runtime.config.id) !== runtime ||
+          !runtime.config.enabled ||
+          this.oauth.generation(runtime.config.id) !== authEpoch
+        )
+          return;
         runtime.state = "unavailable";
-        runtime.message = safeMessage();
+        runtime.lastFailure = initialized ? "list_failed" : "connection_failed";
+        runtime.message = safeMessage(error, runtime.config.transport.kind);
+        const summary = this.oauth.summary(runtime.config.id);
+        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        if (code === "MCP_AUTH_REQUIRED" || code === "MCP_AUTH_SCOPE_REQUIRED")
+          this.oauth.requireLogin(runtime.config.id);
+        else if (summary?.auth_phase !== "required")
+          this.oauth.connectionResult(
+            runtime.config.id,
+            runtime.lastFailure,
+            connectionErrorCode(error, initialized),
+          );
       } finally {
-        runtime.connecting = undefined;
+        if (runtime.connecting === task) runtime.connecting = undefined;
       }
     })();
-    await runtime.connecting;
+    runtime.connecting = task;
+    await task;
   }
 
   private async discover(refresh = false, serverId?: string) {
@@ -571,6 +795,7 @@ export class McpHostManager {
           runtime.message = undefined;
           return this.disconnect(runtime);
         }
+        if (this.oauth.pending(runtime.config.id)) return Promise.resolve();
         if (refresh || runtime.state === "disconnected") return this.connect(runtime, refresh);
         return Promise.resolve();
       }),
@@ -581,6 +806,7 @@ export class McpHostManager {
     return digest(
       [...this.runtimes.values()].map((runtime) => ({
         id: runtime.config.id,
+        config: mcpConfigIdentitySource(runtime.config),
         state: runtime.state,
         enabled: runtime.config.enabled,
         disabled: runtime.config.disabled_tools,
@@ -881,11 +1107,43 @@ export class McpHostManager {
       throw new KairomesError("MCP_ARGUMENT_INVALID", "參數不符合下游 MCP 工具的 schema。");
     if (!runtime.client) throw new KairomesError("MCP_SERVER_UNAVAILABLE", "下游 MCP 目前未連線。");
     const startedAt = Date.now();
-    const result = await runtime.client.callTool(
-      { name: discovered.tool.name, arguments: input.arguments },
-      undefined,
-      { timeout: CALL_TIMEOUT },
-    );
+    const originalClient = runtime.client;
+    const originalEpoch = runtime.connectionEpoch;
+    const originalConfig = mcpConfigIdentitySource(runtime.config);
+    const originalAuthEpoch = this.oauth.generation(runtime.config.id);
+    await this.oauth.beforeCall(runtime.config.id);
+    if (
+      runtime.client !== originalClient ||
+      runtime.connectionEpoch !== originalEpoch ||
+      runtime.state !== "ready" ||
+      mcpConfigIdentitySource(runtime.config) !== originalConfig ||
+      runtime.tools.get(discovered.tool.name) !== discovered ||
+      !normalizeTool(runtime, discovered).enabled ||
+      this.revision() !== currentRevision
+    )
+      throw new KairomesError("MCP_CATALOG_STALE", "MCP 目錄已變更；請重新確認工具。");
+    let result: Awaited<ReturnType<Client["callTool"]>>;
+    try {
+      result = await originalClient.callTool(
+        { name: discovered.tool.name, arguments: input.arguments },
+        undefined,
+        { timeout: CALL_TIMEOUT },
+      );
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      if (
+        (code === "MCP_AUTH_REQUIRED" || code === "MCP_AUTH_SCOPE_REQUIRED") &&
+        runtime.client === originalClient &&
+        runtime.connectionEpoch === originalEpoch &&
+        mcpConfigIdentitySource(runtime.config) === originalConfig &&
+        this.oauth.generation(runtime.config.id) === originalAuthEpoch
+      ) {
+        this.oauth.requireLogin(runtime.config.id);
+        runtime.state = "unavailable";
+        throw new KairomesError("MCP_AUTH_REQUIRED", "此 MCP 需要重新登入；原工具呼叫未自動重送。");
+      }
+      throw new KairomesError("MCP_CALL_FAILED", "下游 MCP 工具呼叫未完成，結果可能待確認。");
+    }
     if (!("content" in result) || !Array.isArray(result.content))
       throw new KairomesError("MCP_TASK_UNSUPPORTED", "目前尚不支援下游 MCP task 型工具。");
     const value = this.sanitizeResult(
@@ -953,11 +1211,7 @@ export class McpHostManager {
       allowed_read_tools: [],
       disabled_tools: [],
     });
-    if (this.runtimes.size >= 16)
-      throw new KairomesError("MCP_SERVER_LIMIT", "MCP 掛載數量已達上限。");
-    this.runtimes.set(config.id, { config, state: "disconnected", tools: new Map() });
-    await this.persist();
-    return structuredClone(config);
+    return this.addMount(config);
   }
 
   async addHttp(input: AddHttpMount): Promise<McpMountConfig> {
@@ -972,14 +1226,11 @@ export class McpHostManager {
       allowed_read_tools: [],
       disabled_tools: [],
     });
-    if (this.runtimes.size >= 16)
-      throw new KairomesError("MCP_SERVER_LIMIT", "MCP 掛載數量已達上限。");
-    this.runtimes.set(config.id, { config, state: "disconnected", tools: new Map() });
-    await this.persist();
-    return structuredClone(config);
+    return this.addMount(config);
   }
 
   async remove(id: string) {
+    this.oauth.invalidate(id, true);
     await this.load();
     await this.reloadIfChanged();
     const runtime = this.runtimes.get(id);
@@ -990,6 +1241,7 @@ export class McpHostManager {
   }
 
   async setServerEnabled(serverId: string, enabled: boolean) {
+    if (!enabled) this.oauth.invalidate(serverId, true);
     await this.load();
     await this.reloadIfChanged();
     const runtime = this.runtimes.get(serverId);
@@ -1064,25 +1316,35 @@ export class McpHostManager {
   }
 
   async panelState(): Promise<McpPanelState> {
-    const servers = await this.localState();
+    await this.load();
+    await this.reloadIfChanged();
+    // Capture policy, tools and authentication together; an async digest could cross configurations.
     return {
       catalog_revision: this.revision(),
-      servers: servers.map((server) => ({
-        id: server.id,
-        name: server.name,
-        transport: server.transport.kind,
-        enabled: server.enabled,
-        state: server.state,
-        ...(server.message ? { message: server.message } : {}),
-        tools: server.tools.map(
-          ({ input_schema: _input, output_schema: _output, ...tool }) => tool,
-        ),
-      })),
+      servers: [...this.runtimes.values()].map((runtime) => {
+        const config = runtime.config;
+        const fingerprint = createHash("sha256")
+          .update(mcpConfigIdentitySource(config))
+          .digest("hex");
+        const auth = this.oauth.summary(config.id, fingerprint);
+        return {
+          id: config.id,
+          name: config.name,
+          transport: config.transport.kind,
+          config_fingerprint: fingerprint,
+          enabled: config.enabled,
+          state: runtime.state,
+          ...(runtime.message ? { message: runtime.message } : {}),
+          ...(auth ? { auth } : {}),
+          tools: [...runtime.tools.values()].map((tool) => normalizeTool(runtime, tool)),
+        };
+      }),
     };
   }
 
   async close() {
     this.closed = true;
+    this.oauth.close();
     await this.load().catch(() => undefined);
     await Promise.all([...this.runtimes.values()].map((runtime) => this.disconnect(runtime)));
     this.calls.clear();

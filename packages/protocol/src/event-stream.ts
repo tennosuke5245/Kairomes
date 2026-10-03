@@ -4,6 +4,10 @@ export async function readSnapshots<T>(
   receive: (snapshot: T) => void,
   signal: AbortSignal,
 ) {
+  if (signal.aborted) {
+    await response.body?.cancel().catch(() => {});
+    return;
+  }
   if (!response.ok || !response.headers.get("content-type")?.includes("text/event-stream"))
     throw new Error(response.status === 401 ? "配對已失效，請重新配對。" : "即時連線未就緒。");
   const reader = response.body?.getReader();
@@ -25,12 +29,13 @@ export async function readSnapshots<T>(
     resetDeadline();
     while (!signal.aborted) {
       const chunk = await reader.read();
+      if (signal.aborted) break;
       if (chunk.done) break;
       resetDeadline();
       buffer += decoder.decode(chunk.value, { stream: true });
       if (buffer.length > 2 * 1024 * 1024) throw new Error("即時回應超過保留上限。");
       let end = buffer.indexOf("\n\n");
-      while (end >= 0) {
+      while (end >= 0 && !signal.aborted) {
         const frame = buffer.slice(0, end);
         buffer = buffer.slice(end + 2);
         const data = frame.split("\n").find((line) => line.startsWith("data: "));

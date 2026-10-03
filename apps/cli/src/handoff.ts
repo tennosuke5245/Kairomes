@@ -1,9 +1,5 @@
-import { realpath, stat } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { KairomesError } from "@kairomes/protocol";
-import { CodexSessionSource } from "../../daemon/src/agent-sessions.ts";
-import { CodexRpc } from "../../daemon/src/codex-rpc.ts";
+import { openHandoffSource } from "../../daemon/src/handoff-source.ts";
 import { readHandoffWorkingTree } from "../../daemon/src/handoff-working-tree.ts";
 
 /** Explicit local CLI only. No automatic history discovery by MCP/browser clients. */
@@ -20,21 +16,8 @@ export async function handoff(
     );
   if (action === "snapshot" && !sessionId)
     throw new KairomesError("USAGE", "請從 handoff list 選擇一個工作階段 ID。");
-  const directory = await realpath(
-    sourceHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
-  );
-  if (!(await stat(directory)).isDirectory())
-    throw new KairomesError("SESSION_HOME", "來源 Codex home 必須是已存在的資料夾。");
-  // Do not read auth.json ourselves. The official process handles its own local store.
-  const rpc = new CodexRpc(
-    directory,
-    Bun.which("codex.exe") ?? Bun.which("codex"),
-    20000,
-    ["app-server", "--stdio", "-c", "analytics.enabled=false"],
-    { experimentalApi: true },
-  );
+  const source = await openHandoffSource(workspace, sourceHome);
   try {
-    const source = await CodexSessionSource.open(rpc, workspace);
     let page = await source.list();
     if (action === "list") {
       console.log(
@@ -62,6 +45,6 @@ export async function handoff(
       ),
     );
   } finally {
-    await rpc.close();
+    await source.close();
   }
 }

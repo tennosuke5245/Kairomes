@@ -7,25 +7,37 @@ import {
 import { FileIcon, FilesIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
+import { requireFileChangeResult } from "./result-identity.ts";
+import { ResultError } from "./tool-result.ts";
 
-function useFileChange(bridge: WorkbenchBridge, id: string) {
-  const [result, setResult] = useState<FileChangeResult>();
-  const [error, setError] = useState("");
+function useFileChange(bridge: WorkbenchBridge, id: string, workspaceId: string) {
+  const identity = `${workspaceId}:${id}`;
+  const [state, setState] = useState<{
+    identity: string;
+    result?: FileChangeResult;
+    error: string;
+  }>({ identity, error: "" });
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     let backoff = 1000;
+    setState({ identity, error: "" });
     const poll = async () => {
       try {
-        const next = await bridge.call("file_change_poll", { change_id: id });
-        if (stopped || next.kind !== "file_change") return;
-        setResult(next);
-        setError("");
+        const data = await bridge.call("file_change_poll", { change_id: id });
+        if (stopped) return;
+        const next = requireFileChangeResult(data, { id, workspaceId });
+        setState({ identity, result: next, error: "" });
         backoff = 1000;
         if (fileChangeActive(next.change)) timer = setTimeout(() => void poll(), 1000);
       } catch (cause) {
         if (stopped) return;
-        setError(cause instanceof Error ? cause.message : "無法讀取檔案變更狀態。");
+        setState((previous) => ({
+          identity,
+          result: previous.identity === identity ? previous.result : undefined,
+          error: cause instanceof Error ? cause.message : "無法讀取檔案變更狀態。",
+        }));
+        if (cause instanceof ResultError && cause.code === "FILE_CHANGE_NOT_FOUND") return;
         timer = setTimeout(() => void poll(), backoff);
         backoff = Math.min(5000, backoff * 2);
       }
@@ -35,8 +47,10 @@ function useFileChange(bridge: WorkbenchBridge, id: string) {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [bridge, id]);
-  return { result: result?.change.id === id ? result : undefined, error };
+  }, [bridge, id, workspaceId, identity]);
+  return state.identity === identity
+    ? { result: state.result, error: state.error }
+    : { result: undefined, error: "" };
 }
 
 function StyledDiff({ value }: { value: string }) {
@@ -71,6 +85,13 @@ function StyledDiff({ value }: { value: string }) {
 
 const operationLabel = { edit: "修改", write: "寫入", delete: "刪除" } as const;
 
+export function currentFileChange(selected?: FileChange, result?: FileChangeResult) {
+  if (!selected) return;
+  // Terminal SSE is authoritative even while an older poll response is in flight.
+  if (!fileChangeActive(selected)) return selected;
+  return result?.change.id === selected.id ? result.change : selected;
+}
+
 export function FileChangePanel({
   bridge,
   workspaceId,
@@ -85,8 +106,8 @@ export function FileChangePanel({
   const [listed, setListed] = useState<FileChange[]>([]);
   const [selected, setSelected] = useState(focus?.id ?? "");
   const [listError, setListError] = useState("");
-  const [actionError, setActionError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState({ id: "", message: "" });
+  const [busyId, setBusyId] = useState("");
   useEffect(() => {
     if (focus) setSelected(focus.id);
   }, [focus]);
@@ -117,10 +138,11 @@ export function FileChangePanel({
   const changes = (liveChanges ?? listed)
     .filter((change) => change.workspace_id === workspaceId)
     .sort((a, b) => b.created_at - a.created_at);
-  const selectedChange = changes.find((change) => change.id === selected) ?? changes[0];
+  const selectedChange = selected ? changes.find((change) => change.id === selected) : changes[0];
   const id = selectedChange?.id ?? "";
-  const { result, error } = useFileChange(bridge, id);
-  const current = result?.change ?? selectedChange;
+  const currentActionError = actionError.id === id ? actionError.message : "";
+  const { result, error } = useFileChange(bridge, id, workspaceId);
+  const current = currentFileChange(selectedChange, result);
 
   return (
     <section className="file-change-panel" aria-label="檔案變更">
@@ -131,7 +153,7 @@ export function FileChangePanel({
           disabled={!changes.length}
           onChange={(event) => {
             setSelected(event.target.value);
-            setActionError("");
+            setActionError({ id: event.target.value, message: "" });
           }}
         >
           {!changes.length && <option value="">尚無檔案變更</option>}
@@ -145,36 +167,37 @@ export function FileChangePanel({
           <button
             type="button"
             className="file-change-cancel"
-            disabled={busy}
+            disabled={!!busyId}
             onClick={async () => {
-              setBusy(true);
-              setActionError("");
+              setBusyId(current.id);
+              setActionError({ id: current.id, message: "" });
               try {
                 await bridge.call("file_change_cancel", { change_id: current.id });
               } catch (cause) {
-                setActionError(
-                  cause instanceof Error ? cause.message : "取消結果尚未確認，請等待狀態更新。",
-                );
+                setActionError({
+                  id: current.id,
+                  message:
+                    cause instanceof Error ? cause.message : "取消結果尚未確認，請等待狀態更新。",
+                });
               } finally {
-                setBusy(false);
+                setBusyId("");
               }
             }}
           >
-            <TrashIcon /> {busy ? "取消中…" : "取消"}
+            <TrashIcon /> {busyId === id ? "取消中…" : "取消"}
           </button>
         )}
       </div>
       <div className="file-change-content">
-        {(listError || actionError || error) && (
+        {(listError || currentActionError || error) && (
           <div className="file-change-error" role="alert">
-            <WarningCircleIcon weight="fill" /> {listError || actionError || error}
+            <WarningCircleIcon weight="fill" /> {listError || currentActionError || error}
           </div>
         )}
         {!current ? (
           <div className="file-change-empty">
             <FilesIcon />
-            <h2>尚無檔案變更</h2>
-            <p>ChatGPT 提出變更後會顯示在這裡。</p>
+            <h2>{selected ? "變更詳情已無法取得" : "尚無檔案變更"}</h2>
           </div>
         ) : (
           <>
@@ -194,10 +217,20 @@ export function FileChangePanel({
               <h3>檔案</h3>
               <div className="file-change-files">
                 {current.files.map((file) => (
-                  <div key={file.path}>
+                  <div key={file.path} className="change-file-evidence">
                     <FileIcon />
                     <span>{file.path}</span>
                     <small>{operationLabel[file.operation]}</small>
+                    <span className="change-version">
+                      {current.state === "applied" ? "套用時版本 " : "預期版本 "}
+                      <code title={file.before_version ?? "原先不存在"}>
+                        {file.before_version?.slice(0, 12) ?? "不存在"}
+                      </code>
+                      {" → "}
+                      <code title={file.after_version ?? "不存在"}>
+                        {file.after_version?.slice(0, 12) ?? "不存在"}
+                      </code>
+                    </span>
                   </div>
                 ))}
               </div>
@@ -206,7 +239,7 @@ export function FileChangePanel({
             <section className="file-change-section">
               <h3>差異</h3>
               <StyledDiff value={result?.diff || "正在取得差異…"} />
-              {result?.diff_truncated && <p>顯示內容已達上限；核准卡會標示截斷。</p>}
+              {result?.diff_truncated && <p role="status">差異僅顯示部分。</p>}
             </section>
             {current.state === "pending" && (
               <p className="file-change-footnote">

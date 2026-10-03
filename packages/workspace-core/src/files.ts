@@ -73,6 +73,7 @@ export class WorkspaceFiles {
   private async readText(
     id: string,
     relative: string,
+    byteLimit = LIMITS.fileBytes as number,
   ): Promise<{ text: string; bytes: number; version: string; redacted: boolean }> {
     validateRelativePath(relative);
     const root = this.registry.get(id);
@@ -88,8 +89,11 @@ export class WorkspaceFiles {
       if (!before.isFile()) throw new KairomesError("NOT_FILE", "此路徑不是一般檔案。");
       if (before.nlink > 1n)
         throw new KairomesError("LINK_BLOCKED", "此版本不讀取多重硬連結檔案。");
-      if (before.size > BigInt(LIMITS.fileBytes))
-        throw new KairomesError("FILE_TOO_LARGE", "檔案超過 1 MiB 讀取上限。");
+      if (before.size > BigInt(Math.min(LIMITS.fileBytes, byteLimit)))
+        throw new KairomesError(
+          "FILE_TOO_LARGE",
+          byteLimit < LIMITS.fileBytes ? "檔案超過剩餘核對大小上限。" : "檔案超過 1 MiB 讀取上限。",
+        );
       const buffer = Buffer.alloc(Number(before.size) + 1);
       let bytes = 0;
       while (bytes < buffer.length) {
@@ -163,6 +167,18 @@ export class WorkspaceFiles {
       truncated,
       redacted: file.redacted,
     };
+  }
+
+  /** Local version checks use the exact same bounded, link-safe UTF-8 read as file_read. */
+  async version(
+    id: string,
+    relative: string,
+    byteLimit = LIMITS.fileBytes as number,
+  ): Promise<{ bytes: number; version: string }> {
+    if (!Number.isInteger(byteLimit) || byteLimit < 0)
+      throw new KairomesError("FILE_LIMIT", "檔案核對大小上限不正確。");
+    const file = await this.readText(id, relative, byteLimit);
+    return { bytes: file.bytes, version: file.version };
   }
 
   async search(id: string, query: string, limit = 30): Promise<SearchResult> {

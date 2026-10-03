@@ -18,15 +18,15 @@ export function ArtifactPreview({
   bridge: WorkbenchBridge;
   compact?: boolean;
 }) {
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState("");
+  const identity = `${artifact.workspace_id}:${artifact.path}:${artifact.version}`;
+  const [preview, setPreview] = useState({ identity, url: "", error: "" });
+  const { url, error } = preview.identity === identity ? preview : { url: "", error: "" };
   useEffect(() => {
     let stopped = false;
     let objectUrl = "";
-    setUrl("");
-    setError("");
+    setPreview({ identity, url: "", error: "" });
     if (!bridge.loadArtifact) {
-      setError("圖片內容只能在已配對的本機工作台預覽；檔案資訊仍可在這裡查看。");
+      setPreview({ identity, url: "", error: "請在本機工作台預覽圖片。" });
       return;
     }
     void bridge
@@ -34,16 +34,21 @@ export function ArtifactPreview({
       .then((next) => {
         objectUrl = next;
         if (stopped) URL.revokeObjectURL(next);
-        else setUrl(next);
+        else setPreview({ identity, url: next, error: "" });
       })
       .catch((cause) => {
-        if (!stopped) setError(cause instanceof Error ? cause.message : "無法載入圖片預覽。");
+        if (!stopped)
+          setPreview({
+            identity,
+            url: "",
+            error: cause instanceof Error ? cause.message : "無法載入圖片預覽。",
+          });
       });
     return () => {
       stopped = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [artifact, bridge]);
+  }, [artifact, bridge, identity]);
 
   return (
     <figure className={`artifact-preview ${compact ? "compact" : ""}`}>
@@ -58,7 +63,7 @@ export function ArtifactPreview({
         ) : (
           <div className="artifact-loading" role="status">
             <ImageIcon />
-            <span>正在準備安全預覽…</span>
+            <span>載入圖片…</span>
           </div>
         )}
       </div>
@@ -76,22 +81,37 @@ export function ArtifactPreview({
 export function ArtifactPanel({
   artifact,
   bridge,
+  historical = false,
+  busy = false,
+  onReload,
 }: {
   artifact: Artifact;
   bridge: WorkbenchBridge;
+  historical?: boolean;
+  busy?: boolean;
+  onReload?(): void;
 }) {
   return (
     <section className="signal-artifact-panel" aria-label={`圖片預覽 ${artifact.path}`}>
       <header>
-        <span>WORKSPACE ARTIFACT</span>
         <h1>{artifact.path}</h1>
-        <p>已核對實際格式與檔案版本；這份預覽只從目前掛載的工作區讀取。</p>
+        {onReload && (
+          <button type="button" disabled={busy} onClick={onReload}>
+            重新讀取
+          </button>
+        )}
       </header>
       <ArtifactPreview artifact={artifact} bridge={bridge} />
       <dl className="artifact-details">
         <div>
+          <dt>來源</dt>
+          <dd>{historical ? "執行時預覽" : "目前預覽"}</dd>
+        </div>
+        <div>
           <dt>版本</dt>
-          <dd>{artifact.version.slice(0, 12)}</dd>
+          <dd>
+            <code title={artifact.version}>{artifact.version.slice(0, 12)}</code>
+          </dd>
         </div>
         <div>
           <dt>最後修改</dt>
