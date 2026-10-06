@@ -1,84 +1,157 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { WorkspaceDetail } from "../../../packages/protocol/src/companion.ts";
-import {
-  type DiagnosticCheck,
-  type DiagnosticsReport,
-  diagnosticSummary,
-} from "../../../packages/protocol/src/diagnostics.ts";
+import { diagnosticSummary } from "../../../packages/protocol/src/diagnostics.ts";
 import type { HandoffInput } from "../../../packages/protocol/src/handoff.ts";
 import { VERSION } from "../../../packages/protocol/src/index.ts";
+import {
+  createDemoState,
+  type DemoState,
+  demoDiagnostics,
+  demoMode,
+  demoSnapshot,
+  demoWorkspacePaths,
+} from "./demo.ts";
 import { handoffError } from "./handoff-copy.ts";
-import type { DesktopSnapshot, WorkspaceSummary } from "./model.ts";
+import {
+  type DesktopSnapshot,
+  type DiagnosticsReport,
+  normalizeDesktopSnapshot,
+  type WireDesktopSnapshot,
+  type WorkspacePath,
+  type WorkspaceSummary,
+} from "./model.ts";
 
 /** The pairing link is a one-time credential: show it, never log or persist it. */
-type PairingResult = { pairingUrl?: string; expiresInSeconds?: number };
+export type PairingResult = { pairingUrl?: string; expiresInSeconds?: number };
 
-let mockCredential = false;
-let mockWorkspaces: WorkspaceSummary[] = [
-  {
-    id: "2ff7f6d9-a7ee-46e6-b4c4-2e21602056e4",
-    name: "Athori",
-    capabilities: ["read", "write_request"],
-  },
-];
+/** Companion actions the Rust host accepts from `perform_action`. */
+export type DesktopAction =
+  | "open_workbench"
+  | "open_connectors"
+  | "retry_workbench"
+  | "start_tunnel"
+  | "stop_tunnel"
+  | "restart_tunnel"
+  | "create_pairing"
+  | "restart_runtime";
 
-function mockSnapshot(): DesktopSnapshot {
-  const demo = new URLSearchParams(window.location.search).get("demo") ?? "setup";
-  const credentialConfigured = mockCredential || demo !== "setup";
-  const connectorState = demo === "ready" ? "connected" : "waiting";
-  const tunnelState = demo === "error" ? "error" : credentialConfigured ? "running" : "stopped";
-  return {
-    credentialConfigured,
-    tunnelClientInstalled: true,
-    runtime: {
-      state: demo === "runtime-error" ? "error" : "running",
-      owned: true,
-      message: demo === "runtime-error" ? "本機服務意外停止。" : "本機服務正在背景執行。",
-    },
-    companion: {
-      version: VERSION,
-      overall: { tone: demo === "ready" ? "good" : "busy", label: "Kairomes" },
-      workspaces: mockWorkspaces,
-      workbench: {
-        state: "running",
-        label: "執行中",
-        message: "工作台由 Kairomes Desktop 管理。",
-        meta: `${mockWorkspaces.length} 個專案 · 本機安全連線`,
-      },
-      tunnel: {
-        state: tunnelState,
-        label:
-          tunnelState === "running" ? "執行中" : tunnelState === "error" ? "需要處理" : "已停止",
-        message:
-          tunnelState === "error"
-            ? "Runtime API Key 無法通過驗證，請更新後再試一次。"
-            : tunnelState === "running"
-              ? "官方 Tunnel 正在背景執行。"
-              : "等待安全連線設定。",
-        meta: "Profile · kairomes",
-        logs: demo === "error" ? ["Tunnel authentication failed."] : [],
-      },
-      connector: {
-        state: connectorState,
-        label: connectorState === "connected" ? "最近有連線" : "等待 ChatGPT",
-        message:
-          connectorState === "connected"
-            ? "Kairomes 已收到 ChatGPT 的 MCP 請求。"
-            : "請在 ChatGPT Connector 按重新整理。",
-        meta: connectorState === "connected" ? "最近呼叫 · 剛剛" : "尚未收到 MCP 請求",
-      },
-      extension: { configured: true },
-    },
-  };
+/** Fixed external pages; the Rust host owns the URLs and accepts nothing else. */
+export const EXTERNAL_TARGETS = [
+  "runtime_keys",
+  "chatgpt_connectors",
+  "tunnel_guide",
+  "tunnel_releases",
+  "platform_tunnels",
+  "kairomes_releases",
+] as const;
+export type ExternalTarget = (typeof EXTERNAL_TARGETS)[number];
+
+/** Rust pushes the same JSON as `get_desktop_status` on this event after every collection. */
+export const DESKTOP_STATUS_EVENT = "desktop-status";
+/** Rust asks the UI to confirm a runtime restart requested from the tray menu. */
+export const CONFIRM_RESTART_EVENT = "desktop-confirm-restart";
+/** Browser previews dispatch this DOM event on window to simulate the tray request. */
+export const DEMO_CONFIRM_RESTART_EVENT = "kairomes-demo:confirm-restart";
+/** Polling interval when Tauri events are unavailable (browser preview or fixtures). */
+export const STATUS_POLL_INTERVAL_MS = 2000;
+
+let demo: DemoState | undefined;
+
+function demoState() {
+  demo ??= createDemoState(demoMode(globalThis.location?.search ?? ""));
+  return demo;
 }
 
 function inTauri() {
-  return "__TAURI_INTERNALS__" in window;
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+function asError(caught: unknown, fallback: string) {
+  if (caught instanceof Error) return caught;
+  return new Error(typeof caught === "string" && caught ? caught : fallback);
+}
+
+/** Immediate status read for first paint and right after an action. */
 export async function getDesktopStatus(): Promise<DesktopSnapshot> {
-  return inTauri() ? invoke<DesktopSnapshot>("get_desktop_status") : mockSnapshot();
+  if (!inTauri()) return demoSnapshot(demoState());
+  return normalizeDesktopSnapshot(await invoke<WireDesktopSnapshot>("get_desktop_status"));
+}
+
+/**
+ * Delivers an immediate snapshot, then every pushed `desktop-status` update. Falls back to
+ * polling when Tauri events are unavailable. A snapshot already delivered or older than one
+ * already delivered is skipped; sequence 0 (a fixture without ordering) is always delivered.
+ * Returns an unsubscribe function.
+ */
+export function subscribeDesktopStatus(
+  onSnapshot: (snapshot: DesktopSnapshot) => void,
+  onError: (error: Error) => void = () => undefined,
+): () => void {
+  let active = true;
+  let latest = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let unlisten: (() => void) | undefined;
+  const deliver = (snapshot: DesktopSnapshot) => {
+    if (!active || (snapshot.sequence !== 0 && snapshot.sequence <= latest)) return;
+    latest = Math.max(latest, snapshot.sequence);
+    onSnapshot(snapshot);
+  };
+  const read = () => {
+    getDesktopStatus().then(deliver, (caught: unknown) => {
+      if (active) onError(asError(caught, "無法讀取 Kairomes 狀態。"));
+    });
+  };
+  const poll = () => {
+    if (!active || timer !== undefined) return;
+    timer = setInterval(read, STATUS_POLL_INTERVAL_MS);
+  };
+  read();
+  if (!inTauri()) poll();
+  else
+    listen<WireDesktopSnapshot>(DESKTOP_STATUS_EVENT, (event) =>
+      deliver(normalizeDesktopSnapshot(event.payload)),
+    ).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    }, poll);
+  return () => {
+    active = false;
+    if (timer !== undefined) clearInterval(timer);
+    unlisten?.();
+  };
+}
+
+/**
+ * The tray asked to restart the local runtime. Show a confirmation, then call
+ * `performAction("restart_runtime")` only if the user agrees. Returns an unsubscribe function.
+ */
+export function onConfirmRestart(callback: () => void): () => void {
+  let active = true;
+  if (!inTauri()) {
+    const handler = () => {
+      if (active) callback();
+    };
+    globalThis.addEventListener?.(DEMO_CONFIRM_RESTART_EVENT, handler);
+    return () => {
+      active = false;
+      globalThis.removeEventListener?.(DEMO_CONFIRM_RESTART_EVENT, handler);
+    };
+  }
+  let unlisten: (() => void) | undefined;
+  listen(CONFIRM_RESTART_EVENT, () => {
+    if (active) callback();
+  }).then(
+    (stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    },
+    () => undefined,
+  );
+  return () => {
+    active = false;
+    unlisten?.();
+  };
 }
 
 export async function getLocalMcpCommand(): Promise<string> {
@@ -89,15 +162,15 @@ export async function getLocalMcpCommand(): Promise<string> {
 
 export async function saveRuntimeApiKey(apiKey: string): Promise<void> {
   if (inTauri()) await invoke("save_runtime_api_key", { apiKey });
-  else mockCredential = true;
+  else demoState().credential = true;
 }
 
 export async function forgetRuntimeApiKey(): Promise<void> {
   if (inTauri()) await invoke("forget_runtime_api_key");
-  else mockCredential = false;
+  else demoState().credential = false;
 }
 
-export async function performAction(action: string): Promise<PairingResult> {
+export async function performAction(action: DesktopAction): Promise<PairingResult> {
   if (inTauri()) return invoke<PairingResult>("perform_action", { action });
   return action === "create_pairing"
     ? { pairingUrl: "http://127.0.0.1/pair#code=preview-only", expiresInSeconds: 120 }
@@ -109,7 +182,7 @@ export async function configureExtension(extensionId: string): Promise<PairingRe
   return { pairingUrl: "http://127.0.0.1/pair#code=preview-only", expiresInSeconds: 120 };
 }
 
-export async function openExternal(target: "runtime_keys" | "chatgpt_connectors"): Promise<void> {
+export async function openExternal(target: ExternalTarget): Promise<void> {
   if (inTauri()) await invoke("open_external", { target });
 }
 
@@ -125,13 +198,14 @@ export async function chooseWorkspaceFolder(): Promise<string | null> {
 
 export async function addWorkspace(path: string, name?: string): Promise<WorkspaceSummary> {
   if (inTauri()) return invoke<WorkspaceSummary>("add_workspace", { path, name });
+  const state = demoState();
   const label = name?.trim() || (path.split(/[\\/]/).filter(Boolean).at(-1) ?? "新專案");
-  const workspace = {
+  const workspace: WorkspaceSummary = {
     id: crypto.randomUUID(),
     name: label,
     capabilities: ["read", "write_request"],
   };
-  mockWorkspaces = [...mockWorkspaces, workspace];
+  state.workspaces = [...state.workspaces, workspace];
   return workspace;
 }
 
@@ -140,54 +214,51 @@ export async function renameWorkspace(
   name: string,
 ): Promise<WorkspaceSummary> {
   if (inTauri()) return invoke<WorkspaceSummary>("rename_workspace", { workspaceId, name });
+  const state = demoState();
   const label = name.trim();
   if (!label || label.length > 80) throw new Error("工作區名稱須為 1～80 個可見字元。");
-  const current = mockWorkspaces.find((workspace) => workspace.id === workspaceId);
+  const current = state.workspaces.find((workspace) => workspace.id === workspaceId);
   if (!current) throw new Error("找不到已掛載的工作區。");
   const renamed = { ...current, name: label };
-  mockWorkspaces = mockWorkspaces.map((workspace) =>
+  state.workspaces = state.workspaces.map((workspace) =>
     workspace.id === workspaceId ? renamed : workspace,
   );
   return renamed;
 }
 
-/** Desktop only: absolute roots for display and reveal. Never send them to the widget or model. */
-export async function getWorkspaceDetails(): Promise<WorkspaceDetail[]> {
-  if (inTauri()) return invoke<WorkspaceDetail[]>("workspace_details");
-  return mockWorkspaces.map(({ id, name }) => ({
-    id,
-    name,
-    root: `C:\\Users\\you\\Projects\\${name}`,
-  }));
+/**
+ * Desktop only: absolute roots for display. Never send them to the widget, the Extension,
+ * the model or logs.
+ */
+export async function getWorkspacePaths(): Promise<WorkspacePath[]> {
+  if (inTauri()) return invoke<WorkspacePath[]>("get_workspace_paths");
+  return demoWorkspacePaths(demoState());
 }
 
+/** Shows the project folder in the OS file manager; the host resolves the root from the id. */
+export async function revealWorkspace(workspaceId: string): Promise<void> {
+  if (inTauri()) {
+    await invoke("reveal_workspace", { workspaceId });
+    return;
+  }
+  if (!demoState().workspaces.some((workspace) => workspace.id === workspaceId))
+    throw new Error("找不到這個專案。");
+}
+
+/** Fixed-id checks plus a copyable summary that holds only enums, counts and versions. */
 export async function getDiagnostics(): Promise<DiagnosticsReport> {
   if (inTauri()) return invoke<DiagnosticsReport>("get_diagnostics");
-  const tunnelFailed = new URLSearchParams(window.location.search).get("demo") === "error";
-  const checks: DiagnosticCheck[] = [
-    { id: "data_dir", state: "ok", code: "data_dir_ok" },
-    { id: "companion", state: "ok", code: "companion_running", version: VERSION },
-    { id: "workbench", state: "ok", code: "workbench_running", version: VERSION },
-    { id: "tunnel_client", state: "ok", code: "tunnel_client_found" },
-    tunnelFailed
-      ? {
-          id: "tunnel",
-          state: "error",
-          code: "tunnel_failed",
-          reason: "auth",
-          fix: "configure_key",
-        }
-      : { id: "tunnel", state: "ok", code: "tunnel_running" },
-    { id: "codex_cli", state: "warn", code: "codex_cli_missing", fix: "show_codex_help" },
-    { id: "mcp_config", state: "ok", code: "mcp_config_absent", count: 0 },
-    { id: "workspaces", state: "ok", code: "workspaces_ok", count: mockWorkspaces.length },
-  ];
+  const checks = demoDiagnostics(demoState());
   return { checks, summary: diagnosticSummary(checks, VERSION) };
 }
 
 export async function removeWorkspace(workspaceId: string): Promise<void> {
-  if (inTauri()) await invoke("remove_workspace", { workspaceId });
-  else mockWorkspaces = mockWorkspaces.filter((workspace) => workspace.id !== workspaceId);
+  if (inTauri()) {
+    await invoke("remove_workspace", { workspaceId });
+    return;
+  }
+  const state = demoState();
+  state.workspaces = state.workspaces.filter((workspace) => workspace.id !== workspaceId);
 }
 
 export async function handoffRequest<T>(input: HandoffInput): Promise<T> {

@@ -18,7 +18,7 @@
     "desktop": "bun run --cwd apps/desktop tauri dev",
     "desktop:web": "bun run --cwd apps/desktop dev",
     "desktop:prepare": "bun run scripts/build-desktop-sidecar.ts",
-    "desktop:check": "bun run check:release-metadata && bun run build && bun run desktop:prepare && bun run --cwd apps/desktop build && cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check && cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "desktop:check": "bun run check:release-metadata && bun run build && bun run desktop:prepare && bun run --cwd apps/desktop build && cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check && cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
     "build:desktop": "bun run --cwd apps/desktop tauri build",
     "kairomes": "bun run apps/cli/src/main.ts",
     "start": "bun run apps/cli/src/main.ts serve",

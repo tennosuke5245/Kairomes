@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { copyHandoffContent } from "./handoff-copy.ts";
 import { HandoffRequestGuard, handoffInvalidReason } from "./handoff-session.ts";
-import type { DesktopSnapshot } from "./model.ts";
+import { type DesktopSnapshot, normalizeDesktopSnapshot } from "./model.ts";
 
 function localSnapshot(): DesktopSnapshot {
-  return {
+  return normalizeDesktopSnapshot({
     credentialConfigured: false,
     tunnelClientInstalled: false,
     runtime: { state: "running", owned: true, message: "合成本機服務" },
@@ -17,7 +17,7 @@ function localSnapshot(): DesktopSnapshot {
       connector: { state: "waiting", label: "等待", message: "", meta: "" },
       extension: { configured: false },
     },
-  };
+  });
 }
 
 test("known unmount and unavailable local status immediately disqualify a draft; Tunnel is not an H1 gate", () => {
