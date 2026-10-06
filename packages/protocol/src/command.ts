@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DenialReasonSchema } from "./approval.ts";
 
 const CommandStateSchema = z.enum([
   "pending",
@@ -22,10 +23,13 @@ const CommandSchema = z.object({
   created_at: z.number(),
   started_at: z.number().nullable(),
   ended_at: z.number().nullable(),
+  /** Epoch milliseconds; the approval deadline while pending, then the run deadline. */
   expires_at: z.number(),
   exit_code: z.number().int().nullable(),
   signal: z.string().nullable(),
   message: z.string().nullable(),
+  /** Present only on a denied command whose local user typed a reason. */
+  denial_reason: DenialReasonSchema.optional(),
 });
 export type Command = z.infer<typeof CommandSchema>;
 export interface CommandApproval extends Command {

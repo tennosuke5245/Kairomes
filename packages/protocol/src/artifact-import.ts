@@ -47,8 +47,11 @@ export type ArtifactImport = {
     | "failed";
   created_at: number;
   applied_at: number | null;
+  /** Epoch milliseconds; while pending, the approval deadline. */
   expires_at: number;
   message: string | null;
+  /** Present only on a denied import whose local user typed a reason. */
+  denial_reason?: string;
   artifact: Artifact | null;
 };
 

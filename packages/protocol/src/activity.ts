@@ -47,6 +47,14 @@ export interface ApprovalSession extends TerminalSession {
   command: string[];
   workspace_name: string;
 }
+/**
+ * Trusted state for the paired Extension (`/api/panel/stream` frames and the responses of
+ * `/api/panel/approvals` and `/api/panel/access`). Every item carries `expires_at` in epoch
+ * milliseconds (the approval deadline while pending) and every grant carries `expires_at`
+ * (null when kept until revoked), so the panel can show countdowns from its own clock. File
+ * changes include review diffs only while pending or applying (`diff_available`). Frames are
+ * not sent for terminal or command output alone.
+ */
 export interface PanelSnapshot {
   instanceId: string;
   sessions: ApprovalSession[];

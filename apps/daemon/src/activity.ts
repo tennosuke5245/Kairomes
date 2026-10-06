@@ -44,31 +44,44 @@ const titles = {
   git_log: "查看 Git 紀錄",
 };
 
+export type ActivitySubscription = {
+  /**
+   * False skips notifications caused only by terminal input/output or command output. Those
+   * change activity entries but never a job's reviewed state, so the trusted panel snapshot
+   * stays identical and needs no new frame.
+   */
+  processIo?: boolean;
+};
+
 /** Instance-local, bounded observation. Reading never creates another activity. */
 export class ActivityStore {
   seq = 0;
   private entries = new Map<string, ActivityEntry>();
   private results = new Map<string, { value: ToolData; size: number; expires: number }>();
   private resultBytes = 0;
-  private listeners = new Set<() => void>();
+  private listeners = new Set<{ notify: () => void; processIo: boolean }>();
   constructor(private readonly now = Date.now) {}
 
-  subscribe(listener: () => void) {
+  subscribe(notify: () => void, options: ActivitySubscription = {}) {
+    const listener = { notify, processIo: options.processIo ?? true };
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  private emit(processIo: boolean) {
+    for (const listener of this.listeners) if (!processIo || listener.processIo) listener.notify();
+  }
   changed() {
     this.seq++;
-    for (const listener of this.listeners) listener();
+    this.emit(false);
   }
-  private publish(entry: ActivityEntry) {
+  private publish(entry: ActivityEntry, processIo = false) {
     this.entries.delete(entry.id);
     this.entries.set(entry.id, entry);
     while (this.entries.size > 200) {
       const first = this.entries.keys().next().value;
       if (first) this.entries.delete(first);
     }
-    for (const listener of this.listeners) listener();
+    this.emit(processIo);
   }
   private retainResult(id: string, value: ToolData) {
     const size = Buffer.byteLength(JSON.stringify(value));
@@ -138,20 +151,23 @@ export class ActivityStore {
     const prior = this.entries.get(id);
     const seq = ++this.seq;
     const focus = source === "mcp" && ((!prior && session.state === "pending") || kind === "input");
-    this.publish({
-      id,
-      seq,
-      focusSeq: focus ? seq : (prior?.focusSeq ?? 0),
-      // xterm can send protocol replies via local-ui input too. Local typing or
-      // terminal replies must not erase an existing MCP session's follow target.
-      source: source === "mcp" || prior?.source === "mcp" ? "mcp" : (prior?.source ?? source),
-      kind: "terminal",
-      workspaceId: session.workspace_id,
-      sessionId: session.id,
-      title: `${session.shell} · ${terminalLabels[session.state]}`,
-      state: session.state,
-      updatedAt: this.now(),
-    });
+    this.publish(
+      {
+        id,
+        seq,
+        focusSeq: focus ? seq : (prior?.focusSeq ?? 0),
+        // xterm can send protocol replies via local-ui input too. Local typing or
+        // terminal replies must not erase an existing MCP session's follow target.
+        source: source === "mcp" || prior?.source === "mcp" ? "mcp" : (prior?.source ?? source),
+        kind: "terminal",
+        workspaceId: session.workspace_id,
+        sessionId: session.id,
+        title: `${session.shell} · ${terminalLabels[session.state]}`,
+        state: session.state,
+        updatedAt: this.now(),
+      },
+      kind !== "state",
+    );
   }
   private trimResults() {
     for (const [id, result] of this.results) {
@@ -165,23 +181,26 @@ export class ActivityStore {
       }
     }
   }
-  command(command: Command, source: ActivitySource) {
+  command(command: Command, source: ActivitySource, kind: "state" | "output" = "state") {
     const id = `command:${command.id}`;
     const prior = this.entries.get(id);
     const seq = ++this.seq;
-    this.publish({
-      id,
-      seq,
-      focusSeq: prior?.focusSeq ?? (source === "mcp" ? seq : 0),
-      source,
-      kind: "command",
-      workspaceId: command.workspace_id,
-      commandId: command.id,
-      title: `${command.argv[0] ?? "命令"} · ${commandLabels[command.state]}`,
-      state: command.state,
-      updatedAt: this.now(),
-      message: command.message ?? undefined,
-    });
+    this.publish(
+      {
+        id,
+        seq,
+        focusSeq: prior?.focusSeq ?? (source === "mcp" ? seq : 0),
+        source,
+        kind: "command",
+        workspaceId: command.workspace_id,
+        commandId: command.id,
+        title: `${command.argv[0] ?? "命令"} · ${commandLabels[command.state]}`,
+        state: command.state,
+        updatedAt: this.now(),
+        message: command.message ?? undefined,
+      },
+      kind === "output",
+    );
   }
   fileChange(change: FileChange, source: ActivitySource) {
     const id = `file-change:${change.id}`;

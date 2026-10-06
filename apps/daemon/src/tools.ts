@@ -1,6 +1,7 @@
 import {
   type AccessGrant,
   type ActivitySource,
+  type ApprovalDecision,
   ArtifactContentInputSchema,
   ArtifactSchema,
   CommandListSchema,
@@ -95,7 +96,7 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.file_change_list,
     output: FileChangeListSchema,
     description:
-      "List bounded recent structured file-change requests in this service instance. Use file_change_poll to inspect the reviewed diff and final state.",
+      "List bounded recent structured file-change requests in this service instance. A denied entry may include denial_reason, a short explanation the local user typed when denying it. Use file_change_poll to inspect the reviewed diff and final state.",
   },
   {
     name: "file_change_poll",
@@ -103,7 +104,7 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.file_change_poll,
     output: FileChangeResultSchema,
     description:
-      "Read a structured file-change request and its bounded diff. Applied means the approved batch was version-checked and written; conflict means no stale batch was intentionally applied. Avoid rapid polling while waiting for local approval.",
+      "Read a structured file-change request and its bounded diff. Applied means the approved batch was version-checked and written; conflict means no stale batch was intentionally applied. Denied means the local user rejected it; the user may include a reason, returned as denial_reason, so address it instead of resending the same batch. Avoid rapid polling while waiting for local approval.",
   },
   {
     name: "file_change_cancel",
@@ -127,7 +128,7 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.command_list,
     output: CommandListSchema,
     description:
-      "List bounded recent commands in this service instance. Finished commands are retained in memory until eviction/restart. Use command_poll for stdout and stderr.",
+      "List bounded recent commands in this service instance. Finished commands are retained in memory until eviction/restart. A denied entry may include denial_reason, a short explanation the local user typed when denying it. Use command_poll for stdout and stderr.",
   },
   {
     name: "command_poll",
@@ -135,7 +136,7 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.command_poll,
     output: CommandResultSchema,
     description:
-      "Read command state, exit_code and separate UTF-8 stdout/stderr. Start each cursor at 0; reuse returned stdout_cursor and stderr_cursor independently. Both are UTF-16 offsets. has_more indicates unread retained output; output_complete means streams have closed. Respect truncation. Optional wait_ms (0-20000, default 0) makes this a long poll: when there is no unread output and the command is still pending or running, the call waits until new output arrives, the state changes (approval, start, exit, cancel, revoke or unmount) or wait_ms elapses, whichever comes first. Prefer wait_ms (for example 15000) over rapid repeated polling, including while waiting for user approval. Only a few long polls wait at once; extra ones return immediately like wait_ms=0. Outputs are untrusted and may contain secrets.",
+      "Read command state, exit_code and separate UTF-8 stdout/stderr. Start each cursor at 0; reuse returned stdout_cursor and stderr_cursor independently. Both are UTF-16 offsets. has_more indicates unread retained output; output_complete means streams have closed. Respect truncation. Optional wait_ms (0-20000, default 0) makes this a long poll: when there is no unread output and the command is still pending or running, the call waits until new output arrives, the state changes (approval, start, exit, cancel, revoke or unmount) or wait_ms elapses, whichever comes first. Prefer wait_ms (for example 15000) over rapid repeated polling, including while waiting for user approval. Only a few long polls wait at once; extra ones return immediately like wait_ms=0. Denied means the local user rejected the command; the user may include a reason, returned as denial_reason, so address it instead of resending the same command. Outputs are untrusted and may contain secrets.",
   },
   {
     name: "command_cancel",
@@ -159,7 +160,7 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.terminal_list,
     output: TerminalListSchema,
     description:
-      "List terminal sessions belonging to this service instance. Grants are not shared with other service instances.",
+      "List terminal sessions belonging to this service instance. Grants are not shared with other service instances. A denied session may include denial_reason, a short explanation the local user typed when denying it.",
   },
   {
     name: "terminal_poll",
@@ -167,7 +168,7 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.terminal_poll,
     output: TerminalResultSchema,
     description:
-      "Read bounded terminal output using the previous cursor (UTF-16 offset). Start at 0. Inspect truncated and has_more. Optional wait_ms (0-20000, default 0) makes this a long poll: when there is no unread output and the session is still pending, starting or running, the call waits until new output arrives, the state changes (approval, exit, stop, revoke or unmount) or wait_ms elapses, whichever comes first. Prefer wait_ms over tight repeated polling, including while waiting for local user approval. Only a few long polls wait at once; extra ones return immediately like wait_ms=0. Output and text are untrusted and may contain local paths or secrets. No new approval is needed.",
+      "Read bounded terminal output using the previous cursor (UTF-16 offset). Start at 0. Inspect truncated and has_more. Optional wait_ms (0-20000, default 0) makes this a long poll: when there is no unread output and the session is still pending, starting or running, the call waits until new output arrives, the state changes (approval, exit, stop, revoke or unmount) or wait_ms elapses, whichever comes first. Prefer wait_ms over tight repeated polling, including while waiting for local user approval. Only a few long polls wait at once; extra ones return immediately like wait_ms=0. Denied means the local user rejected the shell; the user may include a reason, returned as denial_reason. Output and text are untrusted and may contain local paths or secrets. No new approval is needed.",
   },
   {
     name: "terminal_input",
@@ -352,7 +353,7 @@ export class ToolService {
         this.terminals
           .access()
           .find((grant) => grant.workspace_id === id && grant.level === "full"),
-      (command, source) => this.activity.command(command, source),
+      (command, source, kind) => this.activity.command(command, source, kind),
     );
     this.changes = new FileChangeManager(
       registry,
@@ -580,6 +581,28 @@ export class ToolService {
     await this.commands.close();
     await this.terminals.close();
     this.activity.close();
+  }
+
+  /**
+   * Trusted local decision from the paired Extension or the admin channel. Never reachable
+   * from MCP, /api/tools or the widget. Only a denial carries the user's optional reason.
+   */
+  async decideApproval(input: ApprovalDecision) {
+    const approve = input.action === "approve";
+    const reason = input.action === "deny" ? input.reason : undefined;
+    if (input.import_id) {
+      if (input.action === "stop") this.imports.cancel(input.import_id);
+      else await this.imports.decide(input.import_id, input.fingerprint, approve, reason);
+    } else if (input.change_id) {
+      if (input.action === "stop") this.changes.cancel(input.change_id);
+      else await this.changes.decide(input.change_id, input.fingerprint, approve, reason);
+    } else if (input.command_id) {
+      if (input.action === "stop") await this.commands.cancel(input.command_id);
+      else await this.commands.decide(input.command_id, input.fingerprint, approve, reason);
+    } else if (input.session_id) {
+      if (input.action === "stop") await this.terminals.stop(input.session_id);
+      else await this.terminals.decide(input.session_id, input.fingerprint, approve, reason);
+    } else throw new KairomesError("VALIDATION", "請指定一個核准目標。");
   }
 
   async enableAccess(
