@@ -174,7 +174,7 @@ test("real stdio attach relay and sidebar share pending terminals, resources and
   try {
     const c = await readWorkbenchConnection(f.state);
     await client.connect(transport, { timeout: 7000 });
-    expect((await client.listTools()).tools).toHaveLength(25);
+    expect((await client.listTools()).tools).toHaveLength(28);
     expect((await client.readResource({ uri: WIDGET_URI })).contents[0]).toHaveProperty(
       "text",
       html,

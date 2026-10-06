@@ -14,6 +14,9 @@ const observedTools = new Set([
   "workspace_snapshot",
   "mcp_tool_call",
   "mcp_read_call",
+  "git_status",
+  "git_diff",
+  "git_log",
   "artifact_import_request",
 ]);
 

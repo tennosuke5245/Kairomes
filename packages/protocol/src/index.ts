@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ArtifactInputs, ArtifactSchema } from "./artifact.ts";
 import { CommandInputs, CommandListSchema, CommandResultSchema } from "./command.ts";
 import { FileChangeInputs, FileChangeListSchema, FileChangeResultSchema } from "./file-change.ts";
+import { GitDiffSchema, GitInputs, GitLogSchema, GitStatusSchema } from "./git.ts";
 import {
   McpCallSchema,
   McpCatalogSchema,
@@ -15,6 +16,7 @@ export * from "./artifact-import.ts";
 export * from "./command.ts";
 export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
+export * from "./git.ts";
 export * from "./handoff.ts";
 export * from "./mcp-auth.ts";
 export * from "./mcp-host.ts";
@@ -150,6 +152,9 @@ export const ToolDataSchema = z.discriminatedUnion("kind", [
   McpCatalogSchema,
   McpToolDescriptionSchema,
   McpCallSchema,
+  GitStatusSchema,
+  GitDiffSchema,
+  GitLogSchema,
 ]);
 export type ToolData = z.infer<typeof ToolDataSchema>;
 export const WorkspaceId = z.string().uuid();
@@ -163,6 +168,7 @@ export const Inputs = {
   ...ArtifactInputs,
   ...CommandInputs,
   ...FileChangeInputs,
+  ...GitInputs,
   ...McpInputs,
   terminal_start: z
     .object({

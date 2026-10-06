@@ -1,53 +1,40 @@
-import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
-import path from "node:path";
+import { type GitOutcome, openGitRepository } from "./git.ts";
 
-type GitResult = { ok: boolean; output: string };
-function git(cwd: string, args: string[]): Promise<GitResult> {
-  return new Promise((resolve) => {
-    execFile(
-      "git",
-      ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", ...args],
-      {
-        cwd,
-        windowsHide: true,
-        timeout: 5000,
-        maxBuffer: 256 * 1024,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-      },
-      (error, stdout) => resolve({ ok: !error, output: error ? "" : stdout }),
-    );
-  });
+function text(outcome: GitOutcome) {
+  return outcome.kind === "ok" ? outcome.stdout.toString("utf8") : "";
 }
 
 export async function readHandoffWorkingTree(cwd: string) {
   const capturedAt = new Date().toISOString();
-  const root = await git(cwd, ["rev-parse", "--show-toplevel"]);
-  if (!root.ok)
+  const opened = await openGitRepository(cwd);
+  if (opened.state === "unavailable")
     return {
       state: "unavailable" as const,
       capturedAt,
-      reason: "Git 不可用或此資料夾不是儲存庫；不推測版本狀態。",
+      reason:
+        opened.reason === "root_mismatch"
+          ? "Git 根目錄與交接工作區不同，未讀取外部專案的狀態。"
+          : "Git 不可用或此資料夾不是儲存庫；不推測版本狀態。",
     };
-  const canonicalRoot = await realpath(root.output.trim()).catch(() => null);
-  if (!canonicalRoot || path.relative(cwd, canonicalRoot) !== "")
-    return {
-      state: "unavailable" as const,
-      capturedAt,
-      reason: "Git 根目錄與交接工作區不同，未讀取外部專案的狀態。",
-    };
+  const git = opened.repository;
   const [status, branch, head] = await Promise.all([
-    git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"]),
-    git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"]),
-    git(cwd, ["rev-parse", "--verify", "HEAD"]),
+    git.run([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=normal",
+      "--ignore-submodules=dirty",
+    ]),
+    git.run(["symbolic-ref", "--short", "-q", "HEAD"]),
+    git.run(["rev-parse", "--verify", "HEAD"]),
   ]);
-  if (!status.ok)
+  if (status.kind !== "ok")
     return {
       state: "unavailable" as const,
       capturedAt,
       reason: "Git 狀態逾時、輸出過大或讀取失敗。",
     };
-  const records = status.output.split("\0");
+  const records = text(status).split("\0");
   const files: { status: string; path: string; previousPath?: string }[] = [];
   let truncated = false;
   for (let i = 0; i < records.length; i++) {
@@ -67,8 +54,8 @@ export async function readHandoffWorkingTree(cwd: string) {
   return {
     state: "available" as const,
     capturedAt,
-    branch: branch.ok ? branch.output.trim() : null,
-    head: head.ok ? head.output.trim() : null,
+    branch: branch.kind === "ok" ? text(branch).trim() : null,
+    head: head.kind === "ok" ? text(head).trim() : null,
     files,
     truncated,
     note: "目前檔案狀態不是來源 Agent 的修改清單；未追蹤資料夾可被彙整。沒有 commit 是有效狀態，不能據此宣稱工作已保存。",

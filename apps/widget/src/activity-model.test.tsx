@@ -76,6 +76,24 @@ test("workspace browsing does not infer unknown ownership; output updates do not
   expect(latestFocus(snapshot)?.id).toBe("unknown");
 });
 
+test("read-only Git calls appear in the timeline without taking the follow focus", () => {
+  const git: ActivityEntry = {
+    ...entry,
+    id: "git",
+    tool: "git_diff",
+    title: "查看 Git 差異",
+    seq: 20,
+    focusSeq: 20,
+  };
+  const observed: ActivitySnapshot = { ...snapshot, seq: 20, entries: [...snapshot.entries, git] };
+  expect(visibleActivity(observed, one).map((item) => item.id)).toEqual([
+    "git",
+    "command-new",
+    "file",
+  ]);
+  expect(latestFocus(observed, one)?.id).toBe("command-new");
+});
+
 test("trust boundary accepts only the workspace navigation envelope, never added privileges", () => {
   const message = { type: "kairomes:workspace-filter", version: 1, workspaceId: one };
   expect(workspaceFilterMessage(message)).toEqual({ workspaceId: one });

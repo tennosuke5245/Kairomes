@@ -11,7 +11,7 @@ test("relay check sees the full attached tool surface without invoking a tool", 
   try {
     const result = await relayCheck(f.state);
     expect(result.ok).toBe(true);
-    expect(result.tools).toHaveLength(25);
+    expect(result.tools).toHaveLength(28);
     expect(result.tools).toContain("command_request");
     expect(result.tools).toContain("file_change_request");
     expect(result.tools).toContain("artifact_preview");
@@ -19,6 +19,7 @@ test("relay check sees the full attached tool surface without invoking a tool", 
     expect(result.tools).toContain("mcp_tool_describe");
     expect(result.tools).toContain("mcp_read_call");
     expect(result.tools).toContain("mcp_tool_call");
+    for (const name of ["git_status", "git_diff", "git_log"]) expect(result.tools).toContain(name);
     expect(result.tools.some((name) => name.startsWith("artifact_import_"))).toBe(false);
     expect(result.missing).toEqual([]);
     expect(result.unexpected).toEqual([]);

@@ -23,6 +23,9 @@ const tracked = new Set<ToolName>([
   "workspace_list",
   "mcp_tool_call",
   "mcp_read_call",
+  "git_status",
+  "git_diff",
+  "git_log",
 ]);
 const titles = {
   artifact_preview: "預覽圖片",
@@ -32,6 +35,9 @@ const titles = {
   workspace_list: "列出工作區",
   mcp_tool_call: "呼叫 MCP 工具",
   mcp_read_call: "呼叫 MCP 工具",
+  git_status: "查看 Git 狀態",
+  git_diff: "查看 Git 差異",
+  git_log: "查看 Git 紀錄",
 };
 
 /** Instance-local, bounded observation. Reading never creates another activity. */
