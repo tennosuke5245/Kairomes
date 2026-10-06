@@ -1,14 +1,19 @@
+/*
+ * Legacy aliases (temporary): the shell palette points at @kairomes/ui-tokens, so the
+ * loading and error shells follow the token theme (the host's data-theme, else the OS)
+ * instead of a fixed dark palette. .signal-workbench and .chatgpt-workbench still define
+ * their own light palettes below; migrate them to role tokens, then delete this block.
+ */
 :root {
-  color-scheme: dark;
-  --bg: #151817;
-  --panel: #191c1b;
-  --raised: #202421;
-  --line: #303631;
-  --text: #e9ede8;
-  --muted: #a0aaa1;
-  --faint: #758078;
-  --accent: #c7e9ae;
-  --error: #efb2a6;
+  --bg: var(--k-bg);
+  --panel: var(--k-surface);
+  --raised: var(--k-surface-2);
+  --line: var(--k-line);
+  --text: var(--k-ink-1);
+  --muted: var(--k-ink-2);
+  --faint: var(--k-ink-3);
+  --accent: var(--k-ink-1);
+  --error: var(--k-danger-on);
   font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif;
   font-size: 13px;
 }
@@ -57,18 +62,6 @@
   padding: 8px;
   color: var(--accent);
   background: var(--raised);
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #fafbf8;
-  --panel: #f0f2ed;
-  --raised: #e6ebe2;
-  --line: #d5dbd0;
-  --text: #252d25;
-  --muted: #5c695b;
-  --faint: #6b796a;
-  --accent: #386326;
-  --error: #a73223;
 }
 * {
   box-sizing: border-box;
@@ -124,9 +117,8 @@ textarea:focus-visible,
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-button:hover:not(:disabled) {
-  color: var(--accent);
-}
+/* X6: no global hover recolour. It painted the lime --accent onto the light workbench
+   paper (1.18:1); .chatgpt-workbench keeps its own scoped rule below. */
 .workbench {
   min-width: 320px;
   height: 100vh;
@@ -700,6 +692,8 @@ h1 > span {
 
 /* Signal Workbench ------------------------------------------------------- */
 .signal-workbench {
+  /* This palette is light-only, so its accent must not follow the root (token) theme. */
+  --accent: var(--signal-ink);
   --signal-bg: #f5f0e7;
   --signal-paper: #fffdf8;
   --signal-ink: #242123;

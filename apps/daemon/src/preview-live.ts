@@ -56,6 +56,12 @@ const settingsBundle = await Bun.build({
 if (!settingsBundle.success) throw new Error("Settings preview build failed");
 const settingsPreviewJs = await settingsBundle.outputs[0]?.text();
 const css = await Bun.file(new URL("../../extension/sidepanel.css", import.meta.url)).text();
+const tokensCss = await Bun.file(
+  new URL("../../../packages/ui-tokens/tokens.css", import.meta.url),
+).text();
+const componentsCss = await Bun.file(
+  new URL("../../../packages/ui-tokens/components.css", import.meta.url),
+).text();
 const previewLogo = Buffer.from(
   await Bun.file(
     new URL("../../extension/assets/kairomes-k-128.png", import.meta.url),
@@ -64,6 +70,8 @@ const previewLogo = Buffer.from(
 const setupPreviewHtml = (
   await Bun.file(new URL("../../extension/sidepanel.html", import.meta.url)).text()
 )
+  .replace('<link rel="stylesheet" href="tokens.css">', () => `<style>${tokensCss}</style>`)
+  .replace('<link rel="stylesheet" href="components.css">', () => `<style>${componentsCss}</style>`)
   .replace('<link rel="stylesheet" href="sidepanel.css">', `<style>${css}</style>`)
   .replaceAll("assets/kairomes-k-128.png", `data:image/png;base64,${previewLogo}`)
   .replace(
