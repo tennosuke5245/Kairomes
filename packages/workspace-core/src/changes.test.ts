@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
+import { parseUnifiedDiff } from "@kairomes/protocol";
 import { fixture } from "../../../tests/fixtures.ts";
 import { WorkspaceChanges } from "./changes.ts";
 import { WorkspaceFiles } from "./files.ts";
@@ -156,6 +157,74 @@ test("a batch is rejected when the trusted UI could not show its complete diff",
       ]),
     ).rejects.toMatchObject({ code: "CHANGE_REVIEW_TOO_LARGE" });
     expect(await Bun.file(`${f.root}/large-delete.txt`).exists()).toBe(true);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("review diffs keep context next to a rewrite and parse into numbered lines", async () => {
+  const f = await fixture();
+  try {
+    const lines = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`);
+    await writeFile(`${f.root}/long.txt`, `${lines.join("\n")}\n`);
+    const files = new WorkspaceFiles(f.registry);
+    const long = await files.read(f.workspace.id, "long.txt");
+    const readme = await files.read(f.workspace.id, "README.md");
+    const main = await files.read(f.workspace.id, "src/main.ts");
+    const prepared = await new WorkspaceChanges(f.registry).prepare(f.workspace.id, [
+      {
+        operation: "write",
+        path: "long.txt",
+        expected_version: long.version,
+        content: `${lines.map((line) => (line === "line 5" ? "line five" : line)).join("\n")}\n`,
+      },
+      {
+        operation: "edit",
+        path: "README.md",
+        expected_version: readme.version,
+        replacements: [{ old_text: "Hello Kairomes", new_text: "Hello Meow", replace_all: false }],
+      },
+      { operation: "write", path: "src/new.ts", expected_version: null, content: "export {};\n" },
+      { operation: "delete", path: "src/main.ts", expected_version: main.version },
+    ]);
+    // The two unchanged lines after the edit are lines 6 and 7, not the end of the file.
+    expect(prepared.files[0]?.diff.split("\n").slice(2)).toEqual([
+      "@@ 5 @@",
+      " line 3",
+      " line 4",
+      "-line 5",
+      "+line five",
+      " line 6",
+      " line 7",
+    ]);
+    const parsed = parseUnifiedDiff(prepared.diff, { truncated: prepared.diffTruncated });
+    expect(
+      parsed.files.map(({ path, status, additions, deletions }) => [
+        path,
+        status,
+        additions,
+        deletions,
+      ]),
+    ).toEqual([
+      ["long.txt", "modified", 1, 1],
+      ["README.md", "modified", 1, 1],
+      ["src/new.ts", "added", 2, 0],
+      ["src/main.ts", "deleted", 0, 2],
+    ]);
+    expect(
+      parsed.files[0]?.lines
+        .filter((line) => line.kind !== "hunk")
+        .map((line) => [line.kind, line.text, line.oldLine ?? null, line.newLine ?? null]),
+    ).toEqual([
+      ["context", "line 3", 3, 3],
+      ["context", "line 4", 4, 4],
+      ["del", "line 5", 5, null],
+      ["add", "line five", null, 5],
+      ["context", "line 6", 6, 6],
+      ["context", "line 7", 7, 7],
+    ]);
+    expect(parsed.files[1]?.lines[0]).toMatchObject({ kind: "hunk", label: "替換 1" });
+    expect(parsed.truncated).toBe(false);
   } finally {
     await f.dispose();
   }

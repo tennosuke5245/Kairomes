@@ -1,24 +1,30 @@
+/*
+ * Legacy aliases (temporary): the old names point at @kairomes/ui-tokens values of the
+ * same meaning so existing rules keep rendering. Re-point each rule to a role token
+ * (--k-primary-*, --k-danger*, --k-running*; --k-brand* only for the logo, nav marker
+ * and 需確認), then delete this block. index.html pins data-theme="light" until then.
+ */
 :root {
   color-scheme: light;
   font-family: "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --canvas: #f7f3ec;
-  --surface: #fffdf9;
-  --surface-subtle: #eee8df;
-  --ink: #19171b;
-  --ink-soft: #565057;
-  --ink-faint: #817a80;
-  --line: #cfc7c0;
-  --line-soft: #e5ddd4;
-  --signal: #b5474b;
-  --signal-deep: #7e303a;
-  --signal-soft: #f0d7d5;
-  --good: #4f7661;
-  --good-soft: #e5eee7;
-  --warning: #9b682f;
-  --warning-soft: #f5e8d4;
-  --danger-soft: #f8e6e4;
+  --canvas: var(--k-bg);
+  --surface: var(--k-surface);
+  --surface-subtle: var(--k-surface-2);
+  --ink: var(--k-ink-1);
+  --ink-soft: var(--k-ink-2);
+  --ink-faint: var(--k-ink-3);
+  --line: var(--k-line-strong);
+  --line-soft: var(--k-line);
+  --signal: var(--k-brand);
+  --signal-deep: var(--k-brand-on);
+  --signal-soft: var(--k-brand-soft);
+  --good: var(--k-success);
+  --good-soft: var(--k-success-soft);
+  --warning: var(--k-warning);
+  --warning-soft: var(--k-warning-soft);
+  --danger-soft: var(--k-danger-soft);
 }
 
 * {

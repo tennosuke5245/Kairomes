@@ -36,6 +36,8 @@
       "name": "@kairomes/desktop",
       "version": "0.2.0",
       "dependencies": {
+        "@kairomes/protocol": "workspace:*",
+        "@kairomes/ui-tokens": "workspace:*",
         "@phosphor-icons/react": "2.1.10",
         "@tauri-apps/api": "2.12.0",
         "@tauri-apps/plugin-dialog": "2.8.1",
@@ -75,6 +77,10 @@
       "dependencies": {
         "zod": "4.6.5",
       },
+    },
+    "packages/ui-tokens": {
+      "name": "@kairomes/ui-tokens",
+      "version": "0.2.0",
     },
     "packages/workspace-core": {
       "name": "@kairomes/workspace-core",
@@ -166,6 +172,8 @@
     "@kairomes/extension": ["@kairomes/extension@workspace:apps/extension"],
 
     "@kairomes/protocol": ["@kairomes/protocol@workspace:packages/protocol"],
+
+    "@kairomes/ui-tokens": ["@kairomes/ui-tokens@workspace:packages/ui-tokens"],
 
     "@kairomes/widget": ["@kairomes/widget@workspace:apps/widget"],
 

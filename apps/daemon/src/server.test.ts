@@ -289,10 +289,14 @@ describe("MCP contracts", () => {
           MCP_RESULT_URI,
         );
       }
+      // The shared ui-tokens layer changed both resources incompatibly (0.3.0 visual wave).
+      expect(WIDGET_URI).toBe("ui://kairomes/workbench/v7.html");
+      expect(MCP_RESULT_URI).toBe("ui://kairomes/mcp-result/v3.html");
       const resource = await c.client.readResource({ uri: WIDGET_URI });
       expect(resource.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
       const first = resource.contents[0];
       expect(first && "text" in first ? first.text : "").toContain('id="root"');
+      expect(first && "text" in first ? first.text : "").toContain("--k-bg:");
       expect(first?._meta).toMatchObject({
         ui: {
           prefersBorder: false,
@@ -304,6 +308,9 @@ describe("MCP contracts", () => {
       const mcpResultFirst = mcpResultResource.contents[0];
       expect(mcpResultFirst && "text" in mcpResultFirst ? mcpResultFirst.text : "").toContain(
         'id="root"',
+      );
+      expect(mcpResultFirst && "text" in mcpResultFirst ? mcpResultFirst.text : "").toContain(
+        "--k-bg:",
       );
       expect(mcpResultFirst?._meta).toMatchObject({
         ui: {

@@ -20,6 +20,7 @@ export * from "./activity.ts";
 export * from "./artifact.ts";
 export * from "./artifact-import.ts";
 export * from "./command.ts";
+export * from "./diff-lines.ts";
 export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
 export * from "./git.ts";
@@ -27,10 +28,11 @@ export * from "./handoff.ts";
 export * from "./mcp-auth.ts";
 export * from "./mcp-host.ts";
 export * from "./panel-access.ts";
+export * from "./ui-state.ts";
 export { z };
 export const VERSION = "0.2.0";
-export const WIDGET_URI = "ui://kairomes/workbench/v6.html";
-export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v2.html";
+export const WIDGET_URI = "ui://kairomes/workbench/v7.html";
+export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v3.html";
 export const LIMITS = {
   concurrentCalls: 4,
   fileBytes: 1024 * 1024,
