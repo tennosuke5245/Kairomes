@@ -32,10 +32,51 @@ export const LIMITS = {
   artifactPixels: 80 * 1024 * 1024,
   responseBytes: 48 * 1024,
   directoryEntries: 200,
+  /** Directory entries read by one workspace_snapshot call. */
   scanEntries: 1000,
+  /** Directory entries visited by one file_search or file_find walk. */
+  walkEntries: 4000,
   scanBytes: 8 * 1024 * 1024,
   scanMilliseconds: 3000,
+  readManyFiles: 8,
+  searchIncludePatterns: 8,
+  searchContextLines: 3,
+  findResults: 200,
+  patternLength: 200,
 } as const;
+
+function hasUnsafeCharacters(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return (
+      code < 32 ||
+      code === 127 ||
+      code === 0xfffd ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    );
+  });
+}
+
+/** file_find treats a query with *, ? or { as a glob; anything else is a literal substring. */
+export function isGlobQuery(value: string): boolean {
+  return /[*?{]/.test(value);
+}
+
+/**
+ * Glob patterns are only matched against workspace-relative strings, never used to open
+ * paths, but still must look relative: no root, parent segments, backslashes or negation.
+ */
+export function isSafeGlobPattern(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !value.startsWith("/") &&
+    !value.startsWith("!") &&
+    !value.includes("..") &&
+    !value.includes("\\") &&
+    !hasUnsafeCharacters(value)
+  );
+}
 
 const WorkspaceSchema = z.object({
   id: z.string(),
@@ -73,16 +114,80 @@ export const FileSchema = z.object({
   redacted: z.boolean(),
 });
 export type FileResult = z.infer<typeof FileSchema>;
+const ContextLines = z.array(z.string()).max(LIMITS.searchContextLines);
 export const SearchSchema = z.object({
   kind: z.literal("search"),
   workspace_id: z.string(),
   query: z.string(),
-  matches: z.array(z.object({ path: z.string(), line: z.number().int(), text: z.string() })),
+  /** Relative directory scope; "" is the workspace root. Absent in results from older services. */
+  path: z.string().optional(),
+  case_sensitive: z.boolean().optional(),
+  include: z.array(z.string()).max(LIMITS.searchIncludePatterns).optional(),
+  context_lines: z.number().int().min(0).max(LIMITS.searchContextLines).optional(),
+  matches: z.array(
+    z.object({
+      path: z.string(),
+      line: z.number().int(),
+      text: z.string(),
+      /** Present only when context_lines > 0. */
+      before: ContextLines.optional(),
+      after: ContextLines.optional(),
+    }),
+  ),
   truncated: z.boolean(),
   scanned_files: z.number().int(),
   skipped_files: z.number().int(),
 });
 export type SearchResult = z.infer<typeof SearchSchema>;
+const FileReadManyEntrySchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("ok"),
+      path: z.string(),
+      content: z.string(),
+      version: z.string(),
+      start_line: z.number().int(),
+      total_lines: z.number().int(),
+      next_line: z.number().int().nullable(),
+      truncated: z.boolean(),
+      redacted: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("error"),
+      path: z.string(),
+      start_line: z.number().int(),
+      error: z.object({ code: z.string().max(64), message: z.string().max(500) }).strict(),
+    })
+    .strict(),
+]);
+export type FileReadManyEntry = z.infer<typeof FileReadManyEntrySchema>;
+export const FileReadManySchema = z
+  .object({
+    kind: z.literal("file_read_many"),
+    workspace_id: z.string(),
+    files: z.array(FileReadManyEntrySchema).min(1).max(LIMITS.readManyFiles),
+    /** True when any file has unread lines, including lines cut by the shared budget. */
+    truncated: z.boolean(),
+  })
+  .strict();
+export type FileReadManyResult = z.infer<typeof FileReadManySchema>;
+export const FileFindSchema = z
+  .object({
+    kind: z.literal("file_find"),
+    workspace_id: z.string(),
+    query: z.string(),
+    mode: z.enum(["substring", "glob"]),
+    path: z.string(),
+    entries: z
+      .array(z.object({ path: z.string(), type: z.enum(["file", "directory"]) }).strict())
+      .max(LIMITS.findResults),
+    truncated: z.boolean(),
+    scanned_entries: z.number().int().nonnegative(),
+  })
+  .strict();
+export type FileFindResult = z.infer<typeof FileFindSchema>;
 export const StatusSchema = z.object({
   kind: z.literal("status"),
   version: z.string(),
@@ -140,7 +245,9 @@ export const ToolDataSchema = z.discriminatedUnion("kind", [
   WorkspaceListSchema,
   SnapshotSchema,
   FileSchema,
+  FileReadManySchema,
   SearchSchema,
+  FileFindSchema,
   StatusSchema,
   TerminalResultSchema,
   TerminalListSchema,
@@ -159,6 +266,17 @@ export const ToolDataSchema = z.discriminatedUnion("kind", [
 export type ToolData = z.infer<typeof ToolDataSchema>;
 export const WorkspaceId = z.string().uuid();
 const RelativePath = z.string().max(1024);
+const FileLines = {
+  start_line: z.number().int().min(1).default(1),
+  max_lines: z.number().int().min(1).max(300).default(150),
+};
+const SearchText = z
+  .string()
+  .min(1)
+  .max(LIMITS.patternLength)
+  .refine((value) => !value.includes("\uFFFD"), {
+    message: "搜尋內容包含無法辨識的字元，請重新輸入搜尋文字。",
+  });
 const TerminalId = z.string().uuid();
 const TerminalSize = {
   cols: z.number().int().min(20).max(240),
@@ -209,21 +327,45 @@ export const Inputs = {
     .object({
       workspace_id: WorkspaceId,
       path: RelativePath.min(1),
-      start_line: z.number().int().min(1).default(1),
-      max_lines: z.number().int().min(1).max(300).default(150),
+      ...FileLines,
+    })
+    .strict(),
+  file_read_many: z
+    .object({
+      workspace_id: WorkspaceId,
+      files: z
+        .array(z.object({ path: RelativePath.min(1), ...FileLines }).strict())
+        .min(1)
+        .max(LIMITS.readManyFiles),
     })
     .strict(),
   file_search: z
     .object({
       workspace_id: WorkspaceId,
-      query: z
-        .string()
-        .min(1)
-        .max(200)
-        .refine((value) => !value.includes("\uFFFD"), {
-          message: "搜尋內容包含無法辨識的字元，請重新輸入搜尋文字。",
-        }),
+      query: SearchText,
       limit: z.number().int().min(1).max(50).default(30),
+      path: RelativePath.default(""),
+      case_sensitive: z.boolean().default(false),
+      include: z
+        .array(
+          z.string().max(LIMITS.patternLength).refine(isSafeGlobPattern, {
+            message: "檔案樣式必須是工作區內的相對樣式，不能包含 ..、開頭的 / 或 !。",
+          }),
+        )
+        .max(LIMITS.searchIncludePatterns)
+        .optional(),
+      context_lines: z.number().int().min(0).max(LIMITS.searchContextLines).default(0),
+    })
+    .strict(),
+  file_find: z
+    .object({
+      workspace_id: WorkspaceId,
+      query: SearchText.refine(
+        (value) => !hasUnsafeCharacters(value) && (!isGlobQuery(value) || isSafeGlobPattern(value)),
+        { message: "檔名樣式必須是工作區內的相對樣式，不能包含 ..、開頭的 / 或 !。" },
+      ),
+      path: RelativePath.default(""),
+      limit: z.number().int().min(1).max(LIMITS.findResults).default(50),
     })
     .strict(),
 } as const;

@@ -94,6 +94,35 @@ test("read-only Git calls appear in the timeline without taking the follow focus
   expect(latestFocus(observed, one)?.id).toBe("command-new");
 });
 
+test("batch reads and name lookups appear in the timeline with their own titles", () => {
+  const many: ActivityEntry = {
+    ...entry,
+    id: "many",
+    tool: "file_read_many",
+    title: "讀取 3 個檔案",
+    seq: 21,
+    focusSeq: 21,
+  };
+  const find: ActivityEntry = {
+    ...entry,
+    id: "find",
+    tool: "file_find",
+    title: "尋找檔案",
+    path: "src",
+    seq: 22,
+    focusSeq: 22,
+  };
+  const observed: ActivitySnapshot = {
+    ...snapshot,
+    seq: 22,
+    entries: [...snapshot.entries, many, find],
+  };
+  const visible = visibleActivity(observed, one);
+  expect(visible.map((item) => item.id)).toEqual(["find", "many", "command-new", "file"]);
+  expect(visible.slice(0, 2).map(activityTitle)).toEqual(["尋找檔案", "讀取 3 個檔案"]);
+  expect(latestFocus(observed, one)?.id).toBe("command-new");
+});
+
 test("trust boundary accepts only the workspace navigation envelope, never added privileges", () => {
   const message = { type: "kairomes:workspace-filter", version: 1, workspaceId: one };
   expect(workspaceFilterMessage(message)).toEqual({ workspaceId: one });

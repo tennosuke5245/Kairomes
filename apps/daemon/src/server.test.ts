@@ -4,9 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ArtifactSchema,
+  FileFindSchema,
+  FileReadManySchema,
   FileSchema,
   GitStatusSchema,
   MCP_RESULT_URI,
+  SearchSchema,
   StatusSchema,
   TerminalResultSchema,
   VERSION,
@@ -159,7 +162,7 @@ describe("MCP contracts", () => {
     const c = await connect();
     try {
       const { tools } = await c.client.listTools();
-      expect(tools.length).toBe(28);
+      expect(tools.length).toBe(30);
       expect(
         tools
           .filter(
@@ -180,7 +183,14 @@ describe("MCP contracts", () => {
         destructiveHint: true,
         openWorldHint: true,
       });
-      for (const name of ["git_status", "git_diff", "git_log"]) {
+      for (const name of [
+        "git_status",
+        "git_diff",
+        "git_log",
+        "file_read_many",
+        "file_search",
+        "file_find",
+      ]) {
         expect(tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
           readOnlyHint: true,
           destructiveHint: false,
@@ -197,6 +207,44 @@ describe("MCP contracts", () => {
         reason: "not_repository",
       });
       expect(JSON.stringify(gitStatus)).not.toContain(f.root);
+      // The SDK client validates structuredContent against each advertised output schema.
+      const many = await c.client.callTool({
+        name: "file_read_many",
+        arguments: {
+          workspace_id: f.workspace.id,
+          files: [{ path: "README.md", max_lines: 1 }, { path: "../outside.txt" }],
+        },
+      });
+      expect(many.isError).not.toBe(true);
+      expect(
+        FileReadManySchema.parse(many.structuredContent).files.map((entry) => entry.status),
+      ).toEqual(["ok", "error"]);
+      const search = await c.client.callTool({
+        name: "file_search",
+        arguments: {
+          workspace_id: f.workspace.id,
+          query: "kairomes",
+          include: ["src/**"],
+          context_lines: 1,
+        },
+      });
+      expect(SearchSchema.parse(search.structuredContent).matches).toEqual([
+        {
+          path: "src/main.ts",
+          line: 1,
+          text: 'export const message = "Kairomes";',
+          before: [],
+          after: [],
+        },
+      ]);
+      const find = await c.client.callTool({
+        name: "file_find",
+        arguments: { workspace_id: f.workspace.id, query: "*.ts" },
+      });
+      expect(FileFindSchema.parse(find.structuredContent).entries).toEqual([
+        { path: "src/main.ts", type: "file" },
+      ]);
+      expect(JSON.stringify([many, search, find])).not.toContain(f.root);
       expect(tools.some((tool) => tool.name.includes("approve"))).toBe(false);
       expect(tools.some((tool) => tool.name.startsWith("artifact_import_"))).toBe(false);
       expect(
@@ -316,7 +364,7 @@ describe("MCP contracts", () => {
     transport.stderr?.on("data", () => undefined);
     try {
       await client.connect(transport, { timeout: 5000 });
-      expect((await client.listTools()).tools.length).toBe(28);
+      expect((await client.listTools()).tools.length).toBe(30);
       const result = await client.callTool({ name: "kairomes_status", arguments: {} });
       expect(result.isError).not.toBe(true);
       expect(StatusSchema.parse(result.structuredContent).mounted_workspaces).toBe(1);

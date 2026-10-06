@@ -18,7 +18,9 @@ import {
 const tracked = new Set<ToolName>([
   "artifact_preview",
   "file_read",
+  "file_read_many",
   "file_search",
+  "file_find",
   "workspace_snapshot",
   "workspace_list",
   "mcp_tool_call",
@@ -30,7 +32,9 @@ const tracked = new Set<ToolName>([
 const titles = {
   artifact_preview: "預覽圖片",
   file_read: "讀取檔案",
+  file_read_many: "讀取多個檔案",
   file_search: "搜尋內容",
+  file_find: "尋找檔案",
   workspace_snapshot: "瀏覽資料夾",
   workspace_list: "列出工作區",
   mcp_tool_call: "呼叫 MCP 工具",
