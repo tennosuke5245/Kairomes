@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { ArtifactInputs, ArtifactSchema } from "./artifact.ts";
-import { CommandInputs, CommandListSchema, CommandResultSchema } from "./command.ts";
+import {
+  CommandInputs,
+  CommandListSchema,
+  CommandResultSchema,
+  POLL_WAIT_MAX_MS,
+  PollWaitMs,
+} from "./command.ts";
 import { FileChangeInputs, FileChangeListSchema, FileChangeResultSchema } from "./file-change.ts";
 import { GitDiffSchema, GitInputs, GitLogSchema, GitStatusSchema } from "./git.ts";
 import {
@@ -43,6 +49,15 @@ export const LIMITS = {
   searchContextLines: 3,
   findResults: 200,
   patternLength: 200,
+  /**
+   * HTTP request body cap of the local workbench. The stdio relay applies the same cap before
+   * forwarding to /api/mcp, so a batch the daemon accepts is never rejected on the way there.
+   */
+  requestBodyBytes: 320 * 1024,
+  /** Longest wait_ms accepted by command_poll and terminal_poll. */
+  pollWaitMs: POLL_WAIT_MAX_MS,
+  /** Long polls that may wait at once per service; extra polls return immediately. */
+  pollWaiters: 2,
 } as const;
 
 function hasUnsafeCharacters(value: string): boolean {
@@ -84,9 +99,27 @@ const WorkspaceSchema = z.object({
   capabilities: z.array(z.enum(["read", "write_request"])),
 });
 export type Workspace = z.infer<typeof WorkspaceSchema>;
+/**
+ * Model-facing approval mode of one workspace, derived from the in-memory autonomy grant.
+ * It never carries grant ids, owners, pairing tokens or receipts.
+ */
+export const WorkspaceApprovalSchema = z
+  .object({
+    /** per_request: every change, command and terminal waits for the local user. */
+    mode: z.enum(["per_request", "files", "full"]),
+    /** ISO 8601 grant expiry; null for per_request or a grant kept until manually revoked. */
+    expires_at: z.string().datetime().nullable(),
+  })
+  .strict();
+export type WorkspaceApproval = z.infer<typeof WorkspaceApprovalSchema>;
 export const WorkspaceListSchema = z.object({
   kind: z.literal("workspaces"),
-  workspaces: z.array(WorkspaceSchema),
+  workspaces: z.array(
+    WorkspaceSchema.extend({
+      /** Always present from this service; optional for results from older services. */
+      approval: WorkspaceApprovalSchema.optional(),
+    }),
+  ),
 });
 const EntrySchema = z.object({
   name: z.string(),
@@ -302,6 +335,7 @@ export const Inputs = {
     .object({
       session_id: TerminalId,
       cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+      wait_ms: PollWaitMs,
     })
     .strict(),
   terminal_input: z

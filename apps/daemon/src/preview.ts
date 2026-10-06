@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   KairomesError,
+  LIMITS,
   McpAuthInputSchema,
   McpPanelInputSchema,
   PanelAccessInputSchema,
@@ -179,7 +180,8 @@ function startLocalServer(
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port,
-    maxRequestBodySize: 320 * 1024,
+    // The stdio relay enforces the same cap before forwarding to /api/mcp.
+    maxRequestBodySize: LIMITS.requestBodyBytes,
     async fetch(request, bunServer) {
       const url = new URL(request.url);
       const host = `127.0.0.1:${bunServer.port}`;

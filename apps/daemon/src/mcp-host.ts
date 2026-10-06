@@ -56,6 +56,10 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_CACHED_MEDIA_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_CALLS = 40;
+const CACHED_CALL_MS = 5 * 60_000;
+/** request_id records outlive cached results so a late retry is still never re-sent. */
+const MAX_CALL_RECORDS = 4096;
+const CALL_RECORD_MS = 24 * 60 * 60_000;
 const MAX_TOOL_TITLE = 120;
 const MAX_TOOL_DESCRIPTION = 500;
 const MAX_RESOURCE_NAME = 200;
@@ -101,9 +105,25 @@ export type McpCallExecution = {
 };
 
 type CachedCall = {
-  fingerprint: string;
   value: McpCallExecution;
   mediaBytes: number;
+  expires: number;
+};
+
+type CallOutcome =
+  | { kind: "done"; value: McpCallExecution }
+  | { kind: "unknown" }
+  | { kind: "rejected"; error: unknown };
+
+/**
+ * At-most-once bookkeeping for one request_id. It keeps a fingerprint of the route, tool_ref and
+ * arguments, never the argument values; results live only in the bounded result cache.
+ */
+type CallRecord = {
+  fingerprint: string;
+  state: "in_flight" | "done" | "unknown";
+  /** Present only while in flight, so identical concurrent calls await the first attempt. */
+  settled?: Promise<CallOutcome>;
   expires: number;
 };
 
@@ -399,6 +419,8 @@ export class McpHostManager {
   private readonly configPath: string;
   private readonly validator = new AjvJsonSchemaValidator();
   private readonly calls = new Map<string, CachedCall>();
+  /** Insertion order is least recently used first. */
+  private readonly records = new Map<string, CallRecord>();
   private cachedMediaBytes = 0;
   private runtimes = new Map<string, Runtime>();
   private loaded?: Promise<void>;
@@ -904,6 +926,40 @@ export class McpHostManager {
     }
   }
 
+  private trimRecords() {
+    const now = Date.now();
+    for (const [id, record] of this.records) {
+      if (record.state !== "in_flight" && now >= record.expires) this.forgetCall(id);
+    }
+    for (const [id, record] of this.records) {
+      if (this.records.size <= MAX_CALL_RECORDS) break;
+      // An attempt still in flight is never forgotten, or its retry could be sent again.
+      if (record.state !== "in_flight") this.forgetCall(id);
+    }
+  }
+
+  private forgetCall(id: string) {
+    this.records.delete(id);
+    this.deleteCachedCall(id);
+  }
+
+  private async replayCall(requestId: string, record: CallRecord): Promise<McpCallExecution> {
+    const outcome = record.settled ? await record.settled : undefined;
+    if (outcome?.kind === "rejected") throw outcome.error;
+    if (outcome?.kind === "done") return structuredClone(outcome.value);
+    if (outcome?.kind === "unknown" || record.state === "unknown")
+      throw new KairomesError(
+        "MCP_CALL_UNKNOWN",
+        "這個 request_id 的下游 MCP 呼叫先前可能已送出，但結果不明；Kairomes 不會重送。請先確認下游狀態，再決定是否以新的 request_id 呼叫。",
+      );
+    const cached = this.calls.get(requestId);
+    if (cached) return structuredClone(cached.value);
+    throw new KairomesError(
+      "MCP_RESULT_EXPIRED",
+      "這個 request_id 的下游 MCP 呼叫已完成，但結果已超過暫存期限；Kairomes 不會重送，請勿當成失敗而重做。",
+    );
+  }
+
   private deleteCachedCall(id: string) {
     const prior = this.calls.get(id);
     if (!prior) return;
@@ -1060,18 +1116,82 @@ export class McpHostManager {
     },
     readOnlyOnly = false,
   ): Promise<McpCallExecution> {
-    await this.discover();
     this.trimCalls();
-    const callFingerprint = digest({ input, readOnlyOnly });
-    const prior = this.calls.get(input.request_id);
+    this.trimRecords();
+    // catalog_revision is left out: a retry after a catalog refresh is still the same call.
+    const fingerprint = digest({
+      route: readOnlyOnly ? "read" : "action",
+      tool_ref: input.tool_ref,
+      arguments: input.arguments,
+    });
+    const prior = this.records.get(input.request_id);
     if (prior) {
-      if (prior.fingerprint !== callFingerprint)
+      if (prior.fingerprint !== fingerprint)
         throw new KairomesError(
           "MCP_REQUEST_ID_CONFLICT",
           "相同 request_id 已用於不同的下游 MCP 呼叫。",
         );
-      return structuredClone(prior.value);
+      this.records.delete(input.request_id);
+      this.records.set(input.request_id, prior);
+      return this.replayCall(input.request_id, prior);
     }
+    // Claim the request_id before any await, so a concurrent identical call finds this attempt.
+    let settle: (outcome: CallOutcome) => void = () => {};
+    const record: CallRecord = {
+      fingerprint,
+      state: "in_flight",
+      settled: new Promise<CallOutcome>((resolve) => {
+        settle = resolve;
+      }),
+      expires: Date.now() + CALL_RECORD_MS,
+    };
+    this.records.set(input.request_id, record);
+    let sent = false;
+    try {
+      const value = await this.sendCall(input, readOnlyOnly, () => {
+        sent = true;
+      });
+      record.state = "done";
+      this.calls.set(input.request_id, {
+        value: structuredClone(value),
+        mediaBytes: value.images.reduce(
+          (total, image) => total + Buffer.byteLength(image.data, "base64"),
+          0,
+        ),
+        expires: Date.now() + CACHED_CALL_MS,
+      });
+      this.cachedMediaBytes += this.calls.get(input.request_id)?.mediaBytes ?? 0;
+      this.trimCalls();
+      settle({ kind: "done", value });
+      return structuredClone(value);
+    } catch (error) {
+      if (sent) {
+        // The downstream server may have run it; never send this request_id again.
+        record.state = "unknown";
+        settle({ kind: "unknown" });
+      } else {
+        // Rejected before sending: the same request_id may be retried after fixing the cause.
+        if (this.records.get(input.request_id) === record) this.records.delete(input.request_id);
+        settle({ kind: "rejected", error });
+      }
+      throw error;
+    } finally {
+      record.settled = undefined;
+      this.trimRecords();
+    }
+  }
+
+  private async sendCall(
+    input: {
+      tool_ref: string;
+      catalog_revision: string;
+      arguments: Record<string, unknown>;
+      request_id: string;
+    },
+    readOnlyOnly: boolean,
+    markSent: () => void,
+  ): Promise<McpCallExecution> {
+    await this.discover();
     const currentRevision = this.revision();
     if (input.catalog_revision !== currentRevision)
       throw new KairomesError(
@@ -1124,6 +1244,7 @@ export class McpHostManager {
       throw new KairomesError("MCP_CATALOG_STALE", "MCP 目錄已變更；請重新確認工具。");
     let result: Awaited<ReturnType<Client["callTool"]>>;
     try {
+      markSent();
       result = await originalClient.callTool(
         { name: discovered.tool.name, arguments: input.arguments },
         undefined,
@@ -1146,7 +1267,7 @@ export class McpHostManager {
     }
     if (!("content" in result) || !Array.isArray(result.content))
       throw new KairomesError("MCP_TASK_UNSUPPORTED", "目前尚不支援下游 MCP task 型工具。");
-    const value = this.sanitizeResult(
+    return this.sanitizeResult(
       input.request_id,
       currentRevision,
       summary,
@@ -1154,18 +1275,6 @@ export class McpHostManager {
       argumentPreview(input.arguments),
       Math.max(0, Date.now() - startedAt),
     );
-    this.calls.set(input.request_id, {
-      fingerprint: callFingerprint,
-      value: structuredClone(value),
-      mediaBytes: value.images.reduce(
-        (total, image) => total + Buffer.byteLength(image.data, "base64"),
-        0,
-      ),
-      expires: Date.now() + 5 * 60_000,
-    });
-    this.cachedMediaBytes += this.calls.get(input.request_id)?.mediaBytes ?? 0;
-    this.trimCalls();
-    return structuredClone(value);
   }
 
   activityTitle(ref: string): string | undefined {
@@ -1348,6 +1457,7 @@ export class McpHostManager {
     await this.load().catch(() => undefined);
     await Promise.all([...this.runtimes.values()].map((runtime) => this.disconnect(runtime)));
     this.calls.clear();
+    this.records.clear();
     this.cachedMediaBytes = 0;
   }
 }

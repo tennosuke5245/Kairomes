@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Inputs } from "./index.ts";
+import { Inputs, LIMITS, WorkspaceListSchema } from "./index.ts";
 
 describe("tool input validation", () => {
   test("file search rejects the Unicode replacement character", () => {
@@ -93,5 +93,53 @@ describe("tool input validation", () => {
   test("MCP catalog keeps lifecycle refresh on the trusted local control plane", () => {
     expect(() => Inputs.mcp_catalog_search.parse({ refresh: true })).toThrow();
     expect(Inputs.mcp_catalog_search.parse({})).toEqual({ query: "", limit: 30 });
+  });
+
+  test("command and terminal polls accept an optional bounded long-poll wait", () => {
+    const command_id = "00000000-0000-4000-8000-000000000000";
+    expect(Inputs.command_poll.parse({ command_id })).toEqual({
+      command_id,
+      stdout_cursor: 0,
+      stderr_cursor: 0,
+      wait_ms: 0,
+    });
+    expect(Inputs.terminal_poll.parse({ session_id: command_id })).toEqual({
+      session_id: command_id,
+      cursor: 0,
+      wait_ms: 0,
+    });
+    expect(Inputs.command_poll.parse({ command_id, wait_ms: LIMITS.pollWaitMs }).wait_ms).toBe(
+      20_000,
+    );
+    // The longest wait must stay below the relay's 30 s request timeout.
+    expect(LIMITS.pollWaitMs).toBeLessThan(30_000);
+    for (const invalid of [
+      () => Inputs.command_poll.parse({ command_id, wait_ms: -1 }),
+      () => Inputs.command_poll.parse({ command_id, wait_ms: 20_001 }),
+      () => Inputs.command_poll.parse({ command_id, wait_ms: 1.5 }),
+      () => Inputs.terminal_poll.parse({ session_id: command_id, wait_ms: 20_001 }),
+      () => Inputs.terminal_poll.parse({ session_id: command_id, wait_ms: "1000" }),
+    ])
+      expect(invalid).toThrow();
+  });
+
+  test("workspace approval mode is a closed enum without grant identity", () => {
+    const workspace = { id: "00000000-0000-4000-8000-000000000000", name: "w", capabilities: [] };
+    const listing = (approval: unknown) =>
+      WorkspaceListSchema.safeParse({
+        kind: "workspaces",
+        workspaces: [{ ...workspace, approval }],
+      });
+    expect(listing({ mode: "per_request", expires_at: null }).success).toBe(true);
+    expect(listing({ mode: "full", expires_at: "2026-10-06T12:00:00.000Z" }).success).toBe(true);
+    expect(listing({ mode: "files", expires_at: null }).success).toBe(true);
+    expect(listing({ mode: "admin", expires_at: null }).success).toBe(false);
+    expect(listing({ mode: "full", expires_at: 1_700_000_000_000 }).success).toBe(false);
+    expect(listing({ mode: "full", expires_at: null, id: "grant" }).success).toBe(false);
+    expect(listing({ mode: "full", expires_at: null, owner: "panel" }).success).toBe(false);
+    // Results from older services without approval still parse.
+    expect(
+      WorkspaceListSchema.safeParse({ kind: "workspaces", workspaces: [workspace] }).success,
+    ).toBe(true);
   });
 });

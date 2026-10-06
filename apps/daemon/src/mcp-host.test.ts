@@ -614,14 +614,16 @@ describe("downstream MCP broker", () => {
       state: "ready",
       auth: { auth_phase: "authenticated", tools_status: "current" },
     });
-    await expect(
-      manager.call({
-        tool_ref: required(catalog.tools[0]).ref,
-        catalog_revision: catalog.catalog_revision,
-        arguments: {},
-        request_id: crypto.randomUUID(),
-      }),
-    ).rejects.toMatchObject({ code: "MCP_AUTH_REQUIRED" });
+    const unauthorized = {
+      tool_ref: required(catalog.tools[0]).ref,
+      catalog_revision: catalog.catalog_revision,
+      arguments: {},
+      request_id: crypto.randomUUID(),
+    };
+    await expect(manager.call(unauthorized)).rejects.toMatchObject({ code: "MCP_AUTH_REQUIRED" });
+    expect(toolCalls).toBe(1);
+    // The rejected request reached the server, so its request_id is never sent again.
+    await expect(manager.call(unauthorized)).rejects.toMatchObject({ code: "MCP_CALL_UNKNOWN" });
     expect(toolCalls).toBe(1);
     expect(registrations).toBe(1);
     expect(browsers).toHaveLength(1);
@@ -1048,6 +1050,148 @@ describe("downstream MCP broker", () => {
       }),
     ).rejects.toThrow("本機使用者停用");
   });
+
+  test("each request_id reaches the downstream server at most once", async () => {
+    const { manager } = await configured();
+    const catalog = await manager.catalog({ query: "", limit: 10, refresh: false });
+    const lookup = required(catalog.tools.find((tool) => tool.name === "lookup"));
+    const originalCallTool = Client.prototype.callTool;
+    const call = spyOn(Client.prototype, "callTool");
+    const input = (request_id: string, query = "once") => ({
+      tool_ref: lookup.ref,
+      catalog_revision: catalog.catalog_revision,
+      arguments: { query },
+      request_id,
+    });
+    const settled = (promise: Promise<unknown>) =>
+      promise.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+    try {
+      // Identical concurrent calls await the first attempt instead of sending again.
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      call.mockImplementationOnce(async function (this: Client, ...args) {
+        await gate;
+        return originalCallTool.apply(this, args);
+      });
+      const first = crypto.randomUUID();
+      const leader = manager.call(input(first));
+      for (let index = 0; index < 200 && call.mock.calls.length === 0; index++) await Bun.sleep(1);
+      expect(call).toHaveBeenCalledTimes(1);
+      const follower = manager.call(input(first));
+      await expect(manager.call(input(first, "different"))).rejects.toMatchObject({
+        code: "MCP_REQUEST_ID_CONFLICT",
+      });
+      await expect(manager.callWithMedia(input(first), true)).rejects.toMatchObject({
+        code: "MCP_REQUEST_ID_CONFLICT",
+      });
+      release();
+      const [leaderResult, followerResult] = await Promise.all([leader, follower]);
+      expect(leaderResult).toMatchObject({
+        request_id: first,
+        content: [{ text: "fixture:once" }],
+      });
+      expect(followerResult).toEqual(leaderResult);
+      // A retry after a catalog refresh is still the same call and is answered locally.
+      expect(await manager.call({ ...input(first), catalog_revision: "later-revision" })).toEqual(
+        leaderResult,
+      );
+      expect(call).toHaveBeenCalledTimes(1);
+
+      // A failure after sending makes every retry of that request_id uncertain, never re-sent.
+      let fail: (error: Error) => void = () => {};
+      call.mockImplementationOnce(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            fail = reject;
+          }),
+      );
+      const uncertain = crypto.randomUUID();
+      const attempt = settled(manager.call(input(uncertain)));
+      for (let index = 0; index < 200 && call.mock.calls.length === 1; index++) await Bun.sleep(1);
+      expect(call).toHaveBeenCalledTimes(2);
+      const waiting = settled(manager.call(input(uncertain)));
+      fail(new Error("synthetic-private-transport-failure"));
+      const [attemptOutcome, waitingOutcome] = await Promise.all([attempt, waiting]);
+      expect(attemptOutcome).toMatchObject({ error: { code: "MCP_CALL_FAILED" } });
+      expect(waitingOutcome).toMatchObject({ error: { code: "MCP_CALL_UNKNOWN" } });
+      const retry = await settled(manager.call(input(uncertain)));
+      expect(retry).toMatchObject({ error: { code: "MCP_CALL_UNKNOWN" } });
+      expect(JSON.stringify([attemptOutcome, waitingOutcome, retry])).not.toContain(
+        "synthetic-private",
+      );
+      await expect(manager.call(input(uncertain, "different"))).rejects.toMatchObject({
+        code: "MCP_REQUEST_ID_CONFLICT",
+      });
+      expect(call).toHaveBeenCalledTimes(2);
+
+      // A call rejected before sending leaves its request_id free for the corrected retry.
+      const stale = crypto.randomUUID();
+      await expect(
+        manager.call({ ...input(stale), catalog_revision: "stale" }),
+      ).rejects.toMatchObject({ code: "MCP_CATALOG_STALE" });
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(await manager.call(input(stale))).toMatchObject({ request_id: stale });
+      expect(call).toHaveBeenCalledTimes(3);
+
+      // Once the bounded result cache drops a completed call, retries still are not re-sent.
+      const later = Date.now() + 6 * 60_000;
+      const clock = spyOn(Date, "now").mockImplementation(() => later);
+      try {
+        await expect(manager.call(input(first))).rejects.toMatchObject({
+          code: "MCP_RESULT_EXPIRED",
+        });
+      } finally {
+        clock.mockRestore();
+      }
+      expect(call).toHaveBeenCalledTimes(3);
+    } finally {
+      call.mockRestore();
+    }
+  });
+
+  test("request_id records stay bounded and evict the least recently used first", async () => {
+    const { manager } = await configured();
+    const catalog = await manager.catalog({ query: "", limit: 10, refresh: false });
+    const lookup = required(catalog.tools.find((tool) => tool.name === "lookup"));
+    const call = spyOn(Client.prototype, "callTool").mockImplementation(async () => ({
+      content: [{ type: "text", text: "synthetic" }],
+      structuredContent: { echoed: "synthetic" },
+    }));
+    const input = (request_id: string) => ({
+      tool_ref: lookup.ref,
+      catalog_revision: catalog.catalog_revision,
+      arguments: { query: "bounded" },
+      request_id,
+    });
+    try {
+      const oldest = crypto.randomUUID();
+      const touched = crypto.randomUUID();
+      await manager.call(input(oldest));
+      await manager.call(input(touched));
+      for (let index = 0; index < 4094; index++) await manager.call(input(crypto.randomUUID()));
+      expect(call).toHaveBeenCalledTimes(4096);
+      // Touching a record makes it most recently used; one more call evicts only the oldest.
+      await expect(manager.call(input(touched))).rejects.toMatchObject({
+        code: "MCP_RESULT_EXPIRED",
+      });
+      await manager.call(input(crypto.randomUUID()));
+      expect(call).toHaveBeenCalledTimes(4097);
+      await expect(manager.call(input(touched))).rejects.toMatchObject({
+        code: "MCP_RESULT_EXPIRED",
+      });
+      expect(call).toHaveBeenCalledTimes(4097);
+      // The evicted record is the documented bound: that request_id is no longer remembered.
+      await manager.call(input(oldest));
+      expect(call).toHaveBeenCalledTimes(4098);
+    } finally {
+      call.mockRestore();
+    }
+  }, 30000);
 
   test("validates arguments and stale revisions, then persists tool and server switches", async () => {
     const { manager, config } = await configured();

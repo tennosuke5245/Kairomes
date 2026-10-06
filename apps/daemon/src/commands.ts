@@ -15,6 +15,7 @@ import {
 } from "@kairomes/protocol";
 import { resolveChecked, type WorkspaceRegistry } from "@kairomes/workspace-core";
 import { commandRunner } from "./command-runner.ts";
+import { ChangeWatchers, type PollWait } from "./poll-wait.ts";
 import { createProcessGuard } from "./process-guard.ts";
 import { OutputBuffer, shellEnvironment } from "./terminal.ts";
 
@@ -49,6 +50,7 @@ export class CommandManager {
   private closed = false;
   private sweep?: ReturnType<typeof setInterval>;
   private maintenance?: Promise<void>;
+  private readonly watchers = new ChangeWatchers();
   constructor(
     private readonly registry: WorkspaceRegistry,
     private readonly access: (workspaceId: string) => AccessGrant | undefined,
@@ -58,6 +60,7 @@ export class CommandManager {
 
   private notify(job: Job) {
     this.changed(structuredClone(job.view), job.source);
+    this.watchers.wake(job.view.id);
   }
   private get(id: string) {
     const job = this.jobs.get(id);
@@ -454,8 +457,17 @@ export class CommandManager {
       output_complete: !commandActive(job.view),
     };
   }
-  async poll(id: string, out: number, err: number) {
+  /**
+   * With `wait`, a poll that finds no unread output while the command is still active waits for
+   * the next output or state change (cancel, revoke and unmount all finish the job).
+   */
+  async poll(id: string, out: number, err: number, wait?: PollWait) {
     const job = this.get(id);
+    await this.validate(job);
+    const result = this.result(job, out, err);
+    if (!wait || this.closed || !commandActive(job.view) || result.stdout || result.stderr)
+      return result;
+    if (!(await wait(this.watchers.subscribe(id)))) return result;
     await this.validate(job);
     return this.result(job, out, err);
   }
@@ -474,6 +486,7 @@ export class CommandManager {
   async close() {
     this.closed = true;
     clearInterval(this.sweep);
+    this.watchers.wakeAll();
     await Promise.all([...this.jobs.keys()].map((id) => this.cancel(id)));
   }
 }

@@ -52,6 +52,10 @@ export const CommandListSchema = z.object({
 });
 export type CommandResult = z.infer<typeof CommandResultSchema>;
 const Cursor = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0);
+/** Longest long poll for command_poll and terminal_poll; stays below the relay's 30 s timeout. */
+export const POLL_WAIT_MAX_MS = 20_000;
+/** Optional long-poll wait shared by command_poll and terminal_poll; 0 keeps a plain poll. */
+export const PollWaitMs = z.number().int().min(0).max(POLL_WAIT_MAX_MS).default(0);
 export const CommandInputs = {
   command_request: z
     .object({
@@ -72,7 +76,12 @@ export const CommandInputs = {
     .strict(),
   command_list: z.object({}).strict(),
   command_poll: z
-    .object({ command_id: z.string().uuid(), stdout_cursor: Cursor, stderr_cursor: Cursor })
+    .object({
+      command_id: z.string().uuid(),
+      stdout_cursor: Cursor,
+      stderr_cursor: Cursor,
+      wait_ms: PollWaitMs,
+    })
     .strict(),
   command_cancel: z.object({ command_id: z.string().uuid() }).strict(),
 };
