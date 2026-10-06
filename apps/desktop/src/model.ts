@@ -372,7 +372,7 @@ export function deriveDesktopView(snapshot: DesktopSnapshot): DesktopView {
   return {
     tone: "ready",
     title: "已連上 ChatGPT",
-    description: "Kairomes 會在背景守著連線；只有需要你決定的事情，才會把視窗叫回來。",
+    description: "Kairomes 會在背景守著連線；有事需要你決定時，系統匣圖示會出現紅點。",
     action: "open_workbench",
     actionLabel: "開啟工作台",
     localState: "done",

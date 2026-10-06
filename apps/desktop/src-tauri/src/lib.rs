@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{
+    image::Image,
     menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, UserAttentionType, WindowEvent, Wry,
@@ -84,7 +85,125 @@ struct PublishedStatus {
     /// Last known pending approval count; an unknown count keeps the previous value.
     pending: u64,
     tray: Option<TrayStatus>,
+    /// Whether the tray icon carries the pending badge.
+    badge: Option<bool>,
     workbench_ready: Option<bool>,
+}
+
+/// What one snapshot changes on the tray; `None` fields are already current.
+#[derive(Debug, Default, PartialEq)]
+struct TrayUpdate {
+    tooltip: Option<TrayStatus>,
+    badge: Option<bool>,
+    workbench_enabled: Option<bool>,
+    attention: bool,
+}
+
+impl PublishedStatus {
+    /// Records a snapshot and returns what to change, or `None` when a newer snapshot was
+    /// already published and this one must be dropped.
+    fn advance(
+        &mut self,
+        sequence: u64,
+        next_pending: Option<u64>,
+        tray: TrayStatus,
+        ready: bool,
+        attended: bool,
+    ) -> Option<TrayUpdate> {
+        if sequence < self.sequence {
+            return None;
+        }
+        self.sequence = sequence;
+        let attention = should_request_attention(self.pending, next_pending, attended);
+        if let Some(count) = next_pending {
+            self.pending = count;
+        }
+        let badge = tray_badged(tray);
+        Some(TrayUpdate {
+            tooltip: (self.tray.replace(tray) != Some(tray)).then_some(tray),
+            badge: (self.badge.replace(badge) != Some(badge)).then_some(badge),
+            workbench_enabled: (self.workbench_ready.replace(ready) != Some(ready))
+                .then_some(ready),
+            attention,
+        })
+    }
+}
+
+/// Decides and applies a tray update under one lock, so updates are applied in the order they
+/// were decided: a snapshot that took the lock first can never overwrite a newer tooltip, icon
+/// or menu state afterwards. `apply` runs while the lock is held; it may wait for the main
+/// thread, which therefore must never take this lock. Returns whether to request attention,
+/// or `None` when the snapshot is older than one already published.
+fn publish_tray(
+    published: &Mutex<PublishedStatus>,
+    sequence: u64,
+    next_pending: Option<u64>,
+    tray: TrayStatus,
+    ready: bool,
+    attended: bool,
+    apply: impl FnOnce(&TrayUpdate),
+) -> Option<bool> {
+    let mut published = published.lock().ok()?;
+    let update = published.advance(sequence, next_pending, tray, ready, attended)?;
+    apply(&update);
+    Some(update.attention)
+}
+
+/// The tray icon with and without the pending badge. A window hidden to the tray has no
+/// taskbar button to flash, so the badge is the signal that always shows.
+struct TrayIcons {
+    normal: Image<'static>,
+    pending: Image<'static>,
+}
+
+const BADGE_COLOR: [u8; 3] = [0xd9, 0x30, 0x25];
+const BADGE_RING: [u8; 3] = [0xff, 0xff, 0xff];
+
+/// Blends a colour with coverage `alpha` over one non-premultiplied RGBA pixel.
+fn blend_over(pixel: &mut [u8], color: [u8; 3], alpha: f32) {
+    let source = alpha.clamp(0.0, 1.0);
+    let destination = f32::from(pixel[3]) / 255.0;
+    let out = source + destination * (1.0 - source);
+    if out <= 0.0 {
+        return;
+    }
+    for (channel, value) in pixel.iter_mut().zip(color) {
+        let mixed =
+            (f32::from(value) * source + f32::from(*channel) * destination * (1.0 - source)) / out;
+        *channel = mixed.round().clamp(0.0, 255.0) as u8;
+    }
+    pixel[3] = (out * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
+/// Draws the pending badge, a red dot with a white ring, into the top-right corner of an RGBA
+/// image. Pure pixel work, so no extra image asset ships. A malformed buffer is returned as is.
+fn badged_rgba(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut out = rgba.to_vec();
+    let (columns, rows) = (width as usize, height as usize);
+    if columns == 0 || rows == 0 || out.len() != columns * rows * 4 {
+        return out;
+    }
+    let size = width.min(height) as f32;
+    let radius = size * 0.22;
+    let ring = (size * 0.06).max(1.0);
+    let center_x = width as f32 - radius - ring;
+    let center_y = radius + ring;
+    for (index, pixel) in out.chunks_exact_mut(4).enumerate() {
+        let dx = (index % columns) as f32 + 0.5 - center_x;
+        let dy = (index / columns) as f32 + 0.5 - center_y;
+        let distance = (dx * dx + dy * dy).sqrt();
+        let outer = radius + ring + 0.5 - distance;
+        if outer <= 0.0 {
+            continue;
+        }
+        blend_over(pixel, BADGE_RING, outer);
+        blend_over(pixel, BADGE_COLOR, radius + 0.5 - distance);
+    }
+    out
+}
+
+fn tray_badged(status: TrayStatus) -> bool {
+    matches!(status, TrayStatus::Pending(_))
 }
 
 #[derive(Default)]
@@ -722,40 +841,41 @@ async fn collect_status(app: &AppHandle) -> Result<DesktopSnapshot, String> {
     })
 }
 
+/// Applies one decided update. Called with the `published` lock held; the tray and menu calls
+/// wait for the main thread, which never takes that lock.
+fn apply_tray_update(app: &AppHandle, update: &TrayUpdate) {
+    if let Some(icon) = app.tray_by_id(TRAY_ID) {
+        if let Some(status) = update.tooltip {
+            let _ = icon.set_tooltip(Some(tray_tooltip(status)));
+        }
+        if let (Some(badge), Some(icons)) = (update.badge, app.try_state::<TrayIcons>()) {
+            let image = if badge { &icons.pending } else { &icons.normal };
+            let _ = icon.set_icon(Some(image.clone()));
+        }
+    }
+    if let (Some(ready), Some(menu)) = (update.workbench_enabled, app.try_state::<TrayMenu>()) {
+        let _ = menu.workbench.set_enabled(ready);
+    }
+}
+
 /// Updates the tray, raises attention on a 0→n pending transition and pushes the snapshot.
-/// A collection that finished after a newer one was published is dropped here.
+/// A collection that finished after a newer one was published is dropped here. Pending
+/// approvals badge the tray icon, which shows even while the window is hidden to the tray; a
+/// minimized window also flashes its taskbar button.
 fn publish_status(app: &AppHandle, snapshot: &DesktopSnapshot) {
     let attended = window_attended(app);
-    let next_pending = pending_total(snapshot);
-    let tray = tray_status(snapshot);
-    let ready = workbench_ready(snapshot);
-    let (attention, tray_changed, menu_changed) = {
-        let state = status_state(app);
-        let Ok(mut published) = state.published.lock() else {
-            return;
-        };
-        if snapshot.sequence < published.sequence {
-            return;
-        }
-        published.sequence = snapshot.sequence;
-        let attention = should_request_attention(published.pending, next_pending, attended);
-        if let Some(count) = next_pending {
-            published.pending = count;
-        }
-        let tray_changed = published.tray.replace(tray) != Some(tray);
-        let menu_changed = published.workbench_ready.replace(ready) != Some(ready);
-        (attention, tray_changed, menu_changed)
+    let state = status_state(app);
+    let Some(attention) = publish_tray(
+        &state.published,
+        snapshot.sequence,
+        pending_total(snapshot),
+        tray_status(snapshot),
+        workbench_ready(snapshot),
+        attended,
+        |update| apply_tray_update(app, update),
+    ) else {
+        return;
     };
-    if tray_changed {
-        if let Some(icon) = app.tray_by_id(TRAY_ID) {
-            let _ = icon.set_tooltip(Some(tray_tooltip(tray)));
-        }
-    }
-    if menu_changed {
-        if let Some(menu) = app.try_state::<TrayMenu>() {
-            let _ = menu.workbench.set_enabled(ready);
-        }
-    }
     if attention {
         if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
             let _ = window.request_user_attention(Some(UserAttentionType::Informational));
@@ -993,11 +1113,17 @@ async fn reveal_workspace(app: AppHandle, workspace_id: String) -> Result<(), St
         .map_err(|_| "無法在檔案總管中顯示專案資料夾。".to_string())
 }
 
+/// Asks the Companion to compare itself and its workbench with this Desktop, so a runtime left
+/// from another version is reported (with `restart_runtime`) exactly when the tray says so.
+fn diagnostics_request() -> Value {
+    json!({ "action": "diagnostics", "expectedVersion": DESKTOP_VERSION })
+}
+
 /// Fixed-id checks plus a copyable summary that holds only enums, counts and versions.
 #[tauri::command]
 async fn get_diagnostics(app: AppHandle) -> Result<Value, String> {
     forget_tunnel_client_check(&app);
-    let response = companion_request("/api/action", json!({ "action": "diagnostics" })).await?;
+    let response = companion_request("/api/action", diagnostics_request()).await?;
     match (response.get("checks"), response.get("summary")) {
         (Some(checks), Some(summary)) if checks.is_array() && summary.is_string() => {
             Ok(json!({ "checks": checks, "summary": summary }))
@@ -1142,7 +1268,14 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
             }
         });
     if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+        let normal = icon.clone().to_owned();
+        let pending = Image::new_owned(
+            badged_rgba(normal.rgba(), normal.width(), normal.height()),
+            normal.width(),
+            normal.height(),
+        );
+        tray = tray.icon(normal.clone());
+        app.manage(TrayIcons { normal, pending });
     }
     tray.build(app)?;
     Ok(())
@@ -1545,6 +1678,166 @@ mod tests {
         assert!(!should_request_attention(0, None, false));
         assert_eq!(status_interval(true), Duration::from_secs(2));
         assert_eq!(status_interval(false), Duration::from_secs(6));
+    }
+
+    #[test]
+    fn tray_updates_follow_the_newest_snapshot_and_change_only_what_moved() {
+        let mut published = PublishedStatus::default();
+        assert_eq!(
+            published.advance(1, Some(0), TrayStatus::Starting, false, true),
+            Some(TrayUpdate {
+                tooltip: Some(TrayStatus::Starting),
+                badge: Some(false),
+                workbench_enabled: Some(false),
+                attention: false,
+            })
+        );
+        assert_eq!(
+            published.advance(2, Some(0), TrayStatus::Starting, false, true),
+            Some(TrayUpdate::default())
+        );
+        // Pending approvals appear while the window is hidden: badge, tooltip and attention.
+        assert_eq!(
+            published.advance(3, Some(2), TrayStatus::Pending(2), true, false),
+            Some(TrayUpdate {
+                tooltip: Some(TrayStatus::Pending(2)),
+                badge: Some(true),
+                workbench_enabled: Some(true),
+                attention: true,
+            })
+        );
+        // A new count keeps the badge and asks for no second attention.
+        assert_eq!(
+            published.advance(4, Some(3), TrayStatus::Pending(3), true, false),
+            Some(TrayUpdate {
+                tooltip: Some(TrayStatus::Pending(3)),
+                ..TrayUpdate::default()
+            })
+        );
+        // An older snapshot is dropped without touching the published state.
+        assert_eq!(
+            published.advance(3, Some(0), TrayStatus::Ready, true, false),
+            None
+        );
+        assert_eq!(published.tray, Some(TrayStatus::Pending(3)));
+        assert_eq!(
+            published.advance(5, Some(0), TrayStatus::Ready, true, false),
+            Some(TrayUpdate {
+                tooltip: Some(TrayStatus::Ready),
+                badge: Some(false),
+                ..TrayUpdate::default()
+            })
+        );
+    }
+
+    #[test]
+    fn concurrent_publishes_apply_in_the_order_they_were_decided() {
+        use std::sync::{mpsc, Arc};
+        let published = Arc::new(Mutex::new(PublishedStatus::default()));
+        let applied = Arc::new(Mutex::new(Vec::new()));
+        let (entered, wait_entered) = mpsc::channel();
+        // Snapshot N takes the lock first and is preempted while applying.
+        let older = {
+            let (published, applied) = (published.clone(), applied.clone());
+            std::thread::spawn(move || {
+                publish_tray(
+                    &published,
+                    1,
+                    Some(0),
+                    TrayStatus::Starting,
+                    false,
+                    true,
+                    |update| {
+                        entered.send(()).unwrap();
+                        std::thread::sleep(Duration::from_millis(100));
+                        applied.lock().unwrap().push(update.tooltip);
+                    },
+                )
+            })
+        };
+        wait_entered.recv().unwrap();
+        let newer = publish_tray(
+            &published,
+            2,
+            Some(0),
+            TrayStatus::Ready,
+            true,
+            true,
+            |update| applied.lock().unwrap().push(update.tooltip),
+        );
+        assert_eq!(older.join().unwrap(), Some(false));
+        assert_eq!(newer, Some(false));
+        // N+1 is applied last, so the tray shows the state recorded as published.
+        assert_eq!(
+            *applied.lock().unwrap(),
+            [Some(TrayStatus::Starting), Some(TrayStatus::Ready)]
+        );
+        let mut calls = 0;
+        let repeat = publish_tray(
+            &published,
+            3,
+            Some(0),
+            TrayStatus::Ready,
+            true,
+            true,
+            |update| {
+                calls += 1;
+                assert_eq!(*update, TrayUpdate::default());
+            },
+        );
+        assert_eq!(repeat, Some(false));
+        let stale = publish_tray(
+            &published,
+            1,
+            Some(0),
+            TrayStatus::Starting,
+            false,
+            true,
+            |_| calls += 10,
+        );
+        assert_eq!(stale, None);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn pending_badge_marks_only_the_top_right_corner() {
+        let (width, height) = (32u32, 32u32);
+        let transparent = vec![0u8; (width * height * 4) as usize];
+        let badged = badged_rgba(&transparent, width, height);
+        assert_eq!(badged.len(), transparent.len());
+        let pixel = |image: &[u8], x: u32, y: u32| {
+            let index = ((y * width + x) * 4) as usize;
+            image[index..index + 4].to_vec()
+        };
+        assert_eq!(pixel(&badged, 23, 8), [0xd9, 0x30, 0x25, 0xff]);
+        let ring = pixel(&badged, 23, 0);
+        assert_eq!(ring[..3], [0xff, 0xff, 0xff]);
+        assert!(ring[3] > 0xf0);
+        for (x, y) in [(0, 0), (0, 31), (31, 31), (8, 16)] {
+            assert_eq!(pixel(&badged, x, y), [0, 0, 0, 0]);
+        }
+
+        // The real tray icon keeps its pixels outside the badge.
+        let icon = Image::from_bytes(include_bytes!("../icons/32x32.png")).unwrap();
+        let marked = badged_rgba(icon.rgba(), icon.width(), icon.height());
+        assert_eq!(marked.len(), icon.rgba().len());
+        assert_ne!(marked, icon.rgba());
+        assert_eq!(pixel(&marked, 23, 8), [0xd9, 0x30, 0x25, 0xff]);
+        assert_eq!(pixel(&marked, 4, 28), pixel(icon.rgba(), 4, 28));
+
+        // A malformed buffer is returned unchanged.
+        assert_eq!(badged_rgba(&[1, 2, 3], 2, 2), [1, 2, 3]);
+        assert!(badged_rgba(&[], 0, 0).is_empty());
+        assert!(tray_badged(TrayStatus::Pending(1)));
+        assert!(!tray_badged(TrayStatus::Problem));
+    }
+
+    #[test]
+    fn diagnostics_compare_the_runtime_with_this_desktop() {
+        assert_eq!(
+            diagnostics_request(),
+            json!({ "action": "diagnostics", "expectedVersion": DESKTOP_VERSION })
+        );
     }
 
     #[test]
