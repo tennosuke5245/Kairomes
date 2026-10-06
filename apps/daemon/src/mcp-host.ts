@@ -634,6 +634,9 @@ export class McpHostManager {
       requestInit: { headers: headersFromEnvironment(config.transport.header_env) },
       ...(oauth ? { authProvider: oauth.authProvider } : {}),
       fetch: oauth?.fetch ?? fetchWithoutRedirects,
+      // The SDK's default "same-origin" policy follows redirects itself; "follow" hands them
+      // back to our fetch, which never follows any redirect.
+      redirectPolicy: "follow",
       reconnectionOptions: {
         maxReconnectionDelay: 5000,
         initialReconnectionDelay: 500,
