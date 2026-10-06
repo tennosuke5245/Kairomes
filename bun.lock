@@ -76,6 +76,10 @@
         "zod": "4.6.5",
       },
     },
+    "packages/ui-tokens": {
+      "name": "@kairomes/ui-tokens",
+      "version": "0.2.0",
+    },
     "packages/workspace-core": {
       "name": "@kairomes/workspace-core",
       "version": "0.2.0",
@@ -166,6 +170,8 @@
     "@kairomes/extension": ["@kairomes/extension@workspace:apps/extension"],
 
     "@kairomes/protocol": ["@kairomes/protocol@workspace:packages/protocol"],
+
+    "@kairomes/ui-tokens": ["@kairomes/ui-tokens@workspace:packages/ui-tokens"],
 
     "@kairomes/widget": ["@kairomes/widget@workspace:apps/widget"],
 
