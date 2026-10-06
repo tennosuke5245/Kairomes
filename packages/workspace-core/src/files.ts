@@ -18,12 +18,31 @@ import {
 import { isPrivateName, type RootIdentity, resolveChecked, validateRelativePath } from "./paths.ts";
 import type { WorkspaceRegistry } from "./registry.ts";
 
+const privateKeyBegin = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const privateKeyEnd = /-----END [A-Z ]*PRIVATE KEY-----/g;
+
+/**
+ * Replaces each BEGIN … END PRIVATE KEY block in one linear pass. A lazy regular expression
+ * rescans the rest of the text for every BEGIN without an END, which is quadratic; once one
+ * BEGIN has no END after it, no later BEGIN can have one either.
+ */
+function redactPrivateKeys(value: string) {
+  let result = "";
+  let copied = 0;
+  privateKeyBegin.lastIndex = 0;
+  for (let begin = privateKeyBegin.exec(value); begin; begin = privateKeyBegin.exec(value)) {
+    privateKeyEnd.lastIndex = begin.index + begin[0].length;
+    const end = privateKeyEnd.exec(value);
+    if (!end) break;
+    result += `${value.slice(copied, begin.index)}[PRIVATE KEY REDACTED]`;
+    copied = end.index + end[0].length;
+    privateKeyBegin.lastIndex = copied;
+  }
+  return copied === 0 ? value : result + value.slice(copied);
+}
+
 export function redactKnownSecrets(value: string): string {
-  return value
-    .replace(
-      /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-      "[PRIVATE KEY REDACTED]",
-    )
+  return redactPrivateKeys(value)
     .replace(/\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}\b/g, "[OPENAI KEY REDACTED]")
     .replace(
       /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g,

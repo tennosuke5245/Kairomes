@@ -9,10 +9,12 @@ export const GIT_LIMITS = {
   subjectLength: 300,
   nameLength: 200,
   refLength: 255,
+  /** Longer repository paths are omitted like private names instead of failing the whole view. */
+  pathLength: 1024,
 } as const;
 
 const WorkspaceId = z.string().uuid();
-const GitPath = z.string().min(1).max(1024);
+const GitPath = z.string().min(1).max(GIT_LIMITS.pathLength);
 const Sha = z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/);
 const ShortSha = z.string().regex(/^[0-9a-f]{4,64}$/);
 const RefName = z.string().min(1).max(GIT_LIMITS.refLength);

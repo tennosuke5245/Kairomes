@@ -4,7 +4,7 @@ import { link, mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { FileFindSchema, FileReadManySchema, LIMITS, SearchSchema } from "@kairomes/protocol";
 import { fixture } from "../../../tests/fixtures.ts";
-import { WorkspaceFiles } from "./files.ts";
+import { redactKnownSecrets, WorkspaceFiles } from "./files.ts";
 
 let f: Awaited<ReturnType<typeof fixture>>;
 let files: WorkspaceFiles;
@@ -52,6 +52,28 @@ async function hostileTree() {
 
 const leaked =
   /OUTSIDE_SECRET|PRIVATE_|HARDLINKED_SECRET|\.env|\.git|node_modules|dist\/|\.pem|id_rsa|\.sqlite|external|internal|needle-link/;
+
+describe("secret redaction", () => {
+  test("private key blocks are redacted in linear time, including unterminated BEGIN markers", () => {
+    const key = (label: string) =>
+      `-----BEGIN ${label}PRIVATE KEY-----\nSECRET_${label.trim() || "PKCS8"}\n-----END ${label}PRIVATE KEY-----`;
+    expect(redactKnownSecrets(`a\n${key("")}\nb\n${key("RSA ")}\nc`)).toBe(
+      "a\n[PRIVATE KEY REDACTED]\nb\n[PRIVATE KEY REDACTED]\nc",
+    );
+    // The first END after each BEGIN closes it; a trailing BEGIN without END stays as text.
+    expect(
+      redactKnownSecrets(
+        "-----BEGIN PRIVATE KEY-----\nx\n-----BEGIN PRIVATE KEY-----\ny\n-----END PRIVATE KEY-----\nz\n-----BEGIN PRIVATE KEY-----\nw",
+      ),
+    ).toBe("[PRIVATE KEY REDACTED]\nz\n-----BEGIN PRIVATE KEY-----\nw");
+    expect(redactKnownSecrets("-----END PRIVATE KEY-----")).toBe("-----END PRIVATE KEY-----");
+    // A lazy regular expression rescans the tail for every BEGIN without END (quadratic).
+    const markers = "-----BEGIN RSA PRIVATE KEY-----\n".repeat(32 * 1024);
+    const started = performance.now();
+    expect(redactKnownSecrets(markers)).toBe(markers);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+});
 
 describe("file_read_many", () => {
   test("pages several files with the same versions, redaction and inline public errors", async () => {

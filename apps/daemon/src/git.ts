@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { lstat, opendir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import {
   GIT_LIMITS,
@@ -27,8 +27,8 @@ export const GIT_DIFF_BYTES = 1024 * 1024;
 const NULL_HOOKS = process.platform === "win32" ? "NUL" : "/dev/null";
 /**
  * Repository configuration is untrusted. Every invocation disables configured programs
- * (fsmonitor, hooks, external diff, signature verification, transports), pagers, colour,
- * path quoting and optional index writes before any per-command arguments.
+ * (fsmonitor, hooks, external diff, signature verification, transports), submodule recursion,
+ * pagers, colour, path quoting and optional index writes before any per-command arguments.
  */
 const GLOBAL_ARGS = [
   "-c",
@@ -53,13 +53,32 @@ const GLOBAL_ARGS = [
   "log.follow=false",
   "-c",
   "status.submoduleSummary=false",
+  "-c",
+  "submodule.recurse=false",
   "--no-pager",
   "--no-optional-locks",
 ] as const;
 const ENVIRONMENT_ALLOWLIST = /^(path|home|userprofile|systemroot|windir|temp|tmp|lang)$/i;
+/**
+ * GIT_ALLOW_PROTOCOL overrides every protocol.*.allow key, including per-protocol keys in the
+ * repository config that outrank `-c protocol.allow=never`. Only this name is allowed; `<` and
+ * `>` cannot appear in a URL scheme or in a Windows file name, so no transport or helper matches.
+ */
+const NO_PROTOCOL = "<none>";
 /** Filter driver names are passed back through -c; anything unusual fails closed. */
 const FILTER_DRIVER = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 const MAX_FILTER_DRIVERS = 32;
+/**
+ * Config keys that decide which programs Git may start: filter drivers, Git LFS extensions (run by
+ * the LFS clean filter) and partial-clone promisor remotes (lazy fetches start a transport).
+ */
+const PROGRAM_CONFIG =
+  "^(filter\\.|lfs\\.extension\\.|extensions\\.partialclone$|remote\\..*\\.promisor$)";
+/** Scopes the local user controls. Repository, worktree and command scopes are untrusted. */
+const TRUSTED_SCOPES = new Set(["system", "global"]);
+/** Git directory entries these views never read through, or that only hold loose objects. */
+const UNREAD_GIT_ENTRIES = new Set(["hooks", "lfs", "logs", "modules", "rr-cache", "worktrees"]);
+const MAX_GIT_DIRECTORY_ENTRIES = 50_000;
 const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const SHORT_SHA = /^[0-9a-f]{4,64}$/;
 const MAX_PATCH_FILES = 1000;
@@ -78,7 +97,8 @@ const unavailableMessages: Record<GitUnavailableReason, string> = {
   git_missing: "找不到 Git；請先在本機安裝 Git。",
   timeout: "Git 讀取逾時。",
   too_large: "Git 輸出超過上限；請用 path 縮小範圍。",
-  unsupported_config: "此儲存庫的 filter 設定無法安全停用，未執行 Git。",
+  unsupported_config:
+    "此儲存庫的設定無法安全停用（例如 filter 名稱、partial clone、替代物件庫或 .git 內的連結），未執行 Git。",
   failed: "Git 讀取失敗。",
 };
 
@@ -96,6 +116,8 @@ type RunOptions = {
   config?: readonly string[];
   /** Directory that Git must not search above; defaults to the parent of cwd. */
   ceiling?: string;
+  /** Replaces the minimal environment; tests use it to emulate other hosts. */
+  environment?: Record<string, string>;
 };
 
 /** Minimal environment: no inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG_* or pager. */
@@ -112,6 +134,7 @@ export function gitEnvironment(
     GIT_OPTIONAL_LOCKS: "0",
     GIT_TERMINAL_PROMPT: "0",
     GIT_NO_LAZY_FETCH: "1",
+    GIT_ALLOW_PROTOCOL: NO_PROTOCOL,
     GIT_PAGER: "cat",
     GIT_CEILING_DIRECTORIES: ceiling,
   };
@@ -137,7 +160,7 @@ export function runGit(
     try {
       child = spawn("git", [...GLOBAL_ARGS, ...(options.config ?? []), ...args], {
         cwd,
-        env: gitEnvironment(options.ceiling ?? path.dirname(cwd)),
+        env: options.environment ?? gitEnvironment(options.ceiling ?? path.dirname(cwd)),
         shell: false,
         windowsHide: true,
         stdio: ["ignore", "pipe", "ignore"],
@@ -196,58 +219,199 @@ export type GitRepository = {
 export type GitAvailability =
   | { state: "available"; repository: GitRepository }
   | { state: "unavailable"; reason: GitUnavailableReason };
+type Runner = (args: readonly string[], options?: RunOptions) => Promise<GitOutcome>;
+
+function firstLine(outcome: GitOutcome) {
+  return outcome.kind === "ok" ? outcome.stdout.toString("utf8").replace(/\r?\n$/, "") : "";
+}
 
 /**
- * Opens a repository only when `git rev-parse --show-toplevel` resolves to exactly the given
- * directory. Configured filter drivers are neutralised for every later command, because a clean
- * or process filter would otherwise run whenever status or diff rehashes a working-tree file.
+ * The repository must be this checkout's own: a real `.git` directory that is both the Git
+ * directory and the common directory, or a `.git` file of a linked worktree or submodule whose
+ * Git directory points back at this checkout. A crafted gitfile, `commondir`, alternates file or
+ * symbolic link would otherwise let the views read another repository on the computer.
  */
-export async function openGitRepository(directory: string): Promise<GitAvailability> {
+async function repositoryLayoutReason(
+  root: string,
+  gitDir: string,
+  commonDir: string,
+  run: Runner,
+): Promise<GitUnavailableReason | undefined> {
+  const dotGit = path.join(root, ".git");
+  const [entry, own, git, common] = await Promise.all([
+    lstat(dotGit).catch(() => null),
+    realpath(dotGit).catch(() => null),
+    realpath(path.resolve(root, gitDir)).catch(() => null),
+    realpath(path.resolve(root, commonDir)).catch(() => null),
+  ]);
+  if (!entry || !own || !git || !common) return "root_mismatch";
+  if (entry.isDirectory()) {
+    if (git !== own || common !== own) return "root_mismatch";
+  } else if (!entry.isFile()) {
+    return "root_mismatch";
+  } else if (git !== common) {
+    // Linked worktree: <common>/worktrees/<name>/gitdir names this checkout's .git file.
+    if (path.dirname(git) !== path.join(common, "worktrees")) return "root_mismatch";
+    const back = await readFile(path.join(git, "gitdir"), "utf8").catch(() => "");
+    const target = back.replace(/\r?\n$/, "");
+    if (!target || (await realpath(path.resolve(git, target)).catch(() => null)) !== own)
+      return "root_mismatch";
+  } else {
+    // Submodule: its own Git directory sets core.worktree to this checkout.
+    const target = firstLine(
+      await run(["config", "--file", path.join(git, "config"), "--get", "core.worktree"]),
+    );
+    if (!target || (await realpath(path.resolve(git, target)).catch(() => null)) !== root)
+      return "root_mismatch";
+  }
+  const state = { entries: 0 };
+  for (const directory of git === common ? [git] : [common, git]) {
+    const reason = await gitDirectoryLinkReason(directory, state);
+    if (reason) return reason;
+  }
+  return undefined;
+}
+
+function missingEntry(error: unknown) {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+/**
+ * Git follows symbolic links and junctions inside its directory (for example `refs` or
+ * `objects/pack`), and alternates add another object store, so either one could pull in another
+ * repository's history. Loose object fan-out directories are checked themselves, not walked.
+ */
+async function gitDirectoryLinkReason(
+  top: string,
+  state: { entries: number },
+): Promise<GitUnavailableReason | undefined> {
+  const pending = [""];
+  while (pending.length > 0) {
+    const relative = pending.pop() ?? "";
+    const directory = relative ? path.join(top, relative) : top;
+    let handle: Awaited<ReturnType<typeof opendir>>;
+    try {
+      handle = await opendir(directory);
+    } catch (error) {
+      // Git may remove lock files and emptied directories while the walk runs.
+      if (relative && missingEntry(error)) continue;
+      return "failed";
+    }
+    for await (const entry of handle) {
+      if (++state.entries > MAX_GIT_DIRECTORY_ENTRIES) return "too_large";
+      const child = relative ? `${relative}/${entry.name}` : entry.name;
+      if (child === "objects/info/alternates") return "unsupported_config";
+      let directoryEntry = entry.isDirectory();
+      if (!directoryEntry && !entry.isFile()) {
+        // Links, junctions, other reparse points and unknown types: inspect without following.
+        const info = await lstat(path.join(directory, entry.name)).catch((error) =>
+          missingEntry(error) ? undefined : null,
+        );
+        if (info === undefined) continue;
+        if (!info || info.isSymbolicLink()) return "unsupported_config";
+        directoryEntry = info.isDirectory();
+      }
+      if (!directoryEntry) continue;
+      if (!relative && UNREAD_GIT_ENTRIES.has(entry.name)) continue;
+      if (relative === "objects" && /^[0-9a-f]{2}$/.test(entry.name)) continue;
+      pending.push(child);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Filter drivers defined only in system or global config belong to the local user (for example
+ * Git LFS) and keep working, so status and diff match plain Git. A driver with any key from the
+ * repository, a worktree or the command line is neutralised, because its clean or process filter
+ * would run whenever status or diff rehashes a working-tree file. LFS extensions configured by
+ * the repository run inside the LFS clean filter, so they neutralise every driver. Partial clones
+ * and promisor remotes are refused: a missing object would start a lazy fetch through a transport.
+ */
+async function filterPolicy(run: Runner): Promise<{ config: string[] } | GitUnavailableReason> {
+  let scoped = true;
+  let listing = await run(["config", "-z", "--show-scope", "--get-regexp", PROGRAM_CONFIG]);
+  if (listing.kind === "failed" && listing.exitCode === 129) {
+    // Git before 2.26 has no --show-scope; every driver then counts as repository-defined.
+    scoped = false;
+    listing = await run(["config", "-z", "--get-regexp", PROGRAM_CONFIG]);
+  }
+  // Exit code 1 only means that no matching key exists.
+  if (listing.kind === "failed" && listing.exitCode === 1) return { config: [] };
+  if (listing.kind !== "ok") return outcomeReason(listing, "failed");
+  const tokens = records(listing.stdout);
+  const drivers = new Set<string>();
+  const repositoryDrivers = new Set<string>();
+  let distrustAll = !scoped;
+  for (let index = 0; index < tokens.length; index++) {
+    const scope = scoped ? tokens[index++] : undefined;
+    const key = (tokens[index] ?? "").split("\n", 1)[0] ?? "";
+    const trusted = scope !== undefined && TRUSTED_SCOPES.has(scope);
+    if (key === "extensions.partialclone" || /^remote\..*\.promisor$/s.test(key))
+      return "unsupported_config";
+    if (key.startsWith("lfs.extension.")) {
+      if (!trusted) distrustAll = true;
+      continue;
+    }
+    const rest = key.startsWith("filter.") ? key.slice("filter.".length) : "";
+    const end = rest.lastIndexOf(".");
+    if (end <= 0) continue;
+    const name = rest.slice(0, end);
+    if (!FILTER_DRIVER.test(name)) return "unsupported_config";
+    drivers.add(name);
+    if (!trusted) repositoryDrivers.add(name);
+  }
+  if (drivers.size > MAX_FILTER_DRIVERS) return "unsupported_config";
+  return {
+    config: [...(distrustAll ? drivers : repositoryDrivers)].flatMap((name) => [
+      "-c",
+      `filter.${name}.clean=`,
+      "-c",
+      `filter.${name}.smudge=`,
+      "-c",
+      `filter.${name}.process=`,
+      "-c",
+      `filter.${name}.required=false`,
+    ]),
+  };
+}
+
+/**
+ * Opens a repository only when Git resolves exactly the given directory as the work tree, the
+ * repository data belongs to that checkout, and no repository-configured program can run.
+ */
+export async function openGitRepository(
+  directory: string,
+  options: { environment?: Record<string, string> } = {},
+): Promise<GitAvailability> {
   const root = await realpath(directory).catch(() => null);
   if (!root) return { state: "unavailable", reason: "not_repository" };
-  const ceiling = path.dirname(root);
-  const toplevel = await runGit(root, ["rev-parse", "--show-toplevel"], { ceiling });
-  if (toplevel.kind !== "ok")
-    return { state: "unavailable", reason: outcomeReason(toplevel, "not_repository") };
-  const reported = toplevel.stdout.toString("utf8").replace(/\r?\n$/, "");
-  const canonical = reported ? await realpath(reported).catch(() => null) : null;
+  const base = { ceiling: path.dirname(root), environment: options.environment };
+  const run: Runner = (args, extra = {}) => runGit(root, args, { ...base, ...extra });
+  const probe = await run([
+    "rev-parse",
+    "--show-toplevel",
+    "--absolute-git-dir",
+    "--git-common-dir",
+  ]);
+  if (probe.kind !== "ok")
+    return { state: "unavailable", reason: outcomeReason(probe, "not_repository") };
+  const lines = probe.stdout.toString("utf8").split(/\r?\n/);
+  const [reported, gitDir, commonDir] = lines;
+  if (lines.length !== 4 || lines[3] !== "" || !reported || !gitDir || !commonDir)
+    return { state: "unavailable", reason: "root_mismatch" };
+  const canonical = await realpath(reported).catch(() => null);
   if (!canonical || path.relative(root, canonical) !== "")
     return { state: "unavailable", reason: "root_mismatch" };
-  const filters = await runGit(root, ["config", "-z", "--get-regexp", "^filter\\."], { ceiling });
-  const drivers = new Set<string>();
-  if (filters.kind === "ok") {
-    for (const record of filters.stdout.toString("utf8").split("\0")) {
-      const key = record.split("\n", 1)[0] ?? "";
-      if (!key.startsWith("filter.")) continue;
-      const rest = key.slice("filter.".length);
-      const end = rest.lastIndexOf(".");
-      if (end <= 0) continue;
-      const name = rest.slice(0, end);
-      if (!FILTER_DRIVER.test(name)) return { state: "unavailable", reason: "unsupported_config" };
-      drivers.add(name);
-    }
-  } else if (!(filters.kind === "failed" && filters.exitCode === 1)) {
-    // Exit code 1 only means that no filter key exists.
-    return { state: "unavailable", reason: outcomeReason(filters, "failed") };
-  }
-  if (drivers.size > MAX_FILTER_DRIVERS)
-    return { state: "unavailable", reason: "unsupported_config" };
-  const config = [...drivers].flatMap((name) => [
-    "-c",
-    `filter.${name}.clean=`,
-    "-c",
-    `filter.${name}.smudge=`,
-    "-c",
-    `filter.${name}.process=`,
-    "-c",
-    `filter.${name}.required=false`,
-  ]);
+  const layout = await repositoryLayoutReason(root, gitDir, commonDir, run);
+  if (layout) return { state: "unavailable", reason: layout };
+  const policy = await filterPolicy(run);
+  if (typeof policy === "string") return { state: "unavailable", reason: policy };
   return {
     state: "available",
     repository: {
       root,
-      run: (args, options = {}) =>
-        runGit(root, args, { config, ceiling, maxBuffer: options.maxBuffer }),
+      run: (args, extra = {}) => run(args, { config: policy.config, maxBuffer: extra.maxBuffer }),
     },
   };
 }
@@ -261,7 +425,7 @@ function records(stdout: Buffer) {
 
 /** Same policy as file_read: relative, no traversal, no private or unsupported names. */
 function publicPath(value: string | undefined) {
-  if (!value || value.includes("\uFFFD")) return undefined;
+  if (!value || value.length > GIT_LIMITS.pathLength || value.includes("\uFFFD")) return undefined;
   try {
     validateRelativePath(value);
     return value;
@@ -284,6 +448,96 @@ function jsonBytes(value: unknown) {
 
 function literal(relative: string) {
   return `:(literal)${relative}`;
+}
+
+/**
+ * Patch sections are matched by their exact header line. Git quotes names containing `"`, and a
+ * name containing " b/" could make `diff --git a/X b/Y` read as another pair, so such names are
+ * omitted from git_diff instead.
+ */
+function patchable(relative: string) {
+  return !relative.includes('"') && !relative.includes(" b/");
+}
+
+/** Lines that start one file's section in `git diff` / `git diff-files` patch output. */
+const SECTION_HEADER = /^(?:diff --git |diff --cc |diff --combined |\* Unmerged path )/;
+
+/** Every header Git may print for one listed file. */
+function patchHeaders(file: GitDiffFile) {
+  const headers = [`diff --git a/${file.previous_path ?? file.path} b/${file.path}`];
+  if (file.status === "U")
+    headers.push(
+      `diff --cc ${file.path}`,
+      `diff --combined ${file.path}`,
+      `* Unmerged path ${file.path}`,
+    );
+  return headers;
+}
+
+/**
+ * Splits patch output into per-file sections at complete header lines. A literal pathspec also
+ * matches everything below a directory of the same name (a file replaced by a directory, or the
+ * reverse), so callers keep a section only when its header names an allowed file exactly. Text
+ * before the first header belongs to no section and is dropped.
+ */
+export function patchSections(text: string) {
+  const sections: { header: string; start: number; end: number }[] = [];
+  let offset = 0;
+  while (offset < text.length) {
+    const newline = text.indexOf("\n", offset);
+    if (newline === -1) break;
+    const line = text.slice(offset, newline);
+    if (SECTION_HEADER.test(line)) {
+      const previous = sections.at(-1);
+      if (previous) previous.end = offset;
+      sections.push({ header: line, start: offset, end: text.length });
+    }
+    offset = newline + 1;
+  }
+  return sections;
+}
+
+/** A BEGIN or END line of a PEM private key; hunks may show key lines without either marker. */
+const PRIVATE_KEY_MARKER = "PRIVATE KEY-----";
+const WITHHELD_HUNKS = "[PRIVATE KEY REDACTED]\n";
+
+/** Keeps a section's headers and replaces all of its hunks with one redaction line. */
+function withholdHunks(section: string) {
+  const hunk = section.search(/^@@/m);
+  return hunk === -1 ? section : section.slice(0, hunk) + WITHHELD_HUNKS;
+}
+
+/**
+ * Paths whose old or new content contains a private-key marker anywhere, searched with
+ * `git grep` in each compared source (`HEAD`, `--cached` for the index, none for the working
+ * tree). A diff fragment can show key lines between markers that fall outside the hunk.
+ */
+async function privateKeyPaths(
+  repository: GitRepository,
+  sources: readonly (readonly string[])[],
+  pathspecs: readonly string[],
+): Promise<Set<string> | GitOutcome> {
+  const found = new Set<string>();
+  for (const source of sources) {
+    const outcome = await repository.run([
+      "grep",
+      "--no-recurse-submodules",
+      "--no-textconv",
+      "-l",
+      "-z",
+      "-F",
+      "-e",
+      PRIVATE_KEY_MARKER,
+      ...source,
+      "--",
+      ...pathspecs,
+    ]);
+    if (outcome.kind === "failed" && outcome.exitCode === 1) continue;
+    if (outcome.kind !== "ok") return outcome;
+    for (const name of records(outcome.stdout))
+      found.add(source[0] === "HEAD" ? name.replace(/^HEAD:/, "") : name);
+  }
+  return found;
 }
 
 /** Page text by JSON-encoded bytes, ending on a line boundary unless one line exceeds the page. */
@@ -636,10 +890,12 @@ export class WorkspaceGit {
     const allowed: (GitDiffFile & { pathspecs: string[] })[] = [];
     for (const file of listed) {
       const current = publicPath(file.path);
+      const previous = file.previous === undefined ? undefined : publicPath(file.previous);
       if (
         file.link ||
         !current ||
-        (file.previous !== undefined && !publicPath(file.previous)) ||
+        !patchable(current) ||
+        (file.previous !== undefined && (!previous || !patchable(previous))) ||
         !DIFF_STATUSES.has(file.status)
       ) {
         omitted++;
@@ -647,15 +903,12 @@ export class WorkspaceGit {
       }
       allowed.push({
         path: current,
-        ...(file.previous !== undefined ? { previous_path: file.previous } : {}),
+        ...(previous !== undefined ? { previous_path: previous } : {}),
         status: file.status as GitDiffFile["status"],
         additions: file.additions,
         deletions: file.deletions,
         binary: file.binary,
-        pathspecs: [
-          literal(current),
-          ...(file.previous !== undefined ? [literal(file.previous)] : []),
-        ],
+        pathspecs: [literal(current), ...(previous !== undefined ? [literal(previous)] : [])],
       });
     }
     const patchArgs = [
@@ -666,8 +919,22 @@ export class WorkspaceGit {
       "--",
     ];
     const candidates = allowed.slice(0, MAX_PATCH_FILES);
+    const headers = new Map<string, number>();
+    candidates.forEach((file, position) => {
+      for (const header of patchHeaders(file)) headers.set(header, position);
+    });
+    // Old and new content of each side: index and working tree, or HEAD (once born) and index.
+    let sources: string[][] = [["--cached"], []];
+    if (input.staged && candidates.length > 0) {
+      const head = await repository.run(["rev-parse", "--verify", "-q", "HEAD^{commit}"]);
+      if (head.kind !== "ok" && !(head.kind === "failed" && head.exitCode === 1))
+        return { ...base, ...unavailable(outcomeReason(head, "failed")) };
+      sources = head.kind === "ok" ? [["HEAD"], ["--cached"]] : [["--cached"]];
+    }
     let truncated = allowed.length > candidates.length;
-    const chunks: Buffer[] = [];
+    const emitted = new Set<number>();
+    const kept: string[] = [];
+    let withheld = false;
     let bytes = 0;
     let batches = 0;
     let index = 0;
@@ -688,20 +955,35 @@ export class WorkspaceGit {
         index++;
       }
       batches++;
-      const patch = await repository.run([...patchArgs, ...pathspecs], {
-        maxBuffer: GIT_DIFF_BYTES - bytes,
-      });
-      if (patch.kind === "ok" || patch.kind === "overflow") {
-        chunks.push(patch.stdout);
-        bytes += patch.stdout.length;
+      const [patch, keyed] = await Promise.all([
+        repository.run([...patchArgs, ...pathspecs], { maxBuffer: GIT_DIFF_BYTES - bytes }),
+        privateKeyPaths(repository, sources, pathspecs),
+      ]);
+      if (patch.kind !== "ok" && patch.kind !== "overflow")
+        return { ...base, ...unavailable(outcomeReason(patch, "failed")) };
+      if (!(keyed instanceof Set))
+        return { ...base, ...unavailable(outcomeReason(keyed, "failed")) };
+      bytes += patch.stdout.length;
+      const output = new TextDecoder("utf-8").decode(patch.stdout);
+      for (const section of patchSections(output)) {
+        const position = headers.get(section.header);
+        const file = position === undefined ? undefined : candidates[position];
+        if (position === undefined || !file || emitted.has(position)) continue;
+        emitted.add(position);
+        const body = output.slice(section.start, section.end);
+        const keyBearing =
+          keyed.has(file.path) ||
+          (file.previous_path !== undefined && keyed.has(file.previous_path));
+        const shown = keyBearing ? withholdHunks(body) : body;
+        if (shown !== body) withheld = true;
+        kept.push(shown);
       }
       if (patch.kind === "overflow") {
         truncated = true;
         break;
       }
-      if (patch.kind !== "ok") return { ...base, ...unavailable(outcomeReason(patch, "failed")) };
     }
-    const text = new TextDecoder("utf-8").decode(Buffer.concat(chunks, bytes));
+    const text = kept.join("");
     const safe = redactKnownSecrets(text);
     const digest = createHash("sha256")
       .update(JSON.stringify([input.staged, input.path ?? null, input.context_lines]))
@@ -739,7 +1021,7 @@ export class WorkspaceGit {
       files_truncated: filesTruncated,
       omitted_private: omitted,
       truncated,
-      redacted: safe !== text,
+      redacted: withheld || safe !== text,
     };
     const envelope = jsonBytes({ ...response, next_cursor: `99999999.${digest}`, has_more: true });
     const page = pageText(safe, offset, GIT_LIMITS.diffPageBytes - envelope - 64);
