@@ -241,9 +241,14 @@ async function main() {
     console.log(
       values.json
         ? JSON.stringify(report, null, 2)
-        : report.checks
-            .map((check) => `[${check.status.toUpperCase()}] ${check.name}: ${check.detail}`)
-            .join("\n"),
+        : [
+            ...report.checks.map(
+              (check) => `[${check.status.toUpperCase()}] ${check.name}: ${check.detail}`,
+            ),
+            "",
+            "可分享的診斷摘要（只含狀態代碼、數量與版本）：",
+            report.summary,
+          ].join("\n"),
     );
     process.exitCode = report.ok ? 0 : 1;
     return;
@@ -255,6 +260,11 @@ async function main() {
         ? JSON.stringify(report, null, 2)
         : [
             `[${report.ok ? "PASS" : "FAIL"}] attach relay: ${report.tools.length}/${report.expected.length} 個預期工具`,
+            ...(report.versionMismatch
+              ? [
+                  `版本不符：本機工作台 ${report.workbenchVersion ?? "版本未知"}，此 CLI ${VERSION}。請重新啟動 Kairomes 工作台與 Tunnel，再執行一次檢查。`,
+                ]
+              : []),
             `本機工作台：${report.origin}`,
             `工具：${report.tools.join(", ")}`,
             ...(report.missing.length ? [`缺少：${report.missing.join(", ")}`] : []),

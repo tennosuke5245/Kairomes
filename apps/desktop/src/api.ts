@@ -1,11 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import type { WorkspaceDetail } from "../../../packages/protocol/src/companion.ts";
+import {
+  type DiagnosticCheck,
+  type DiagnosticsReport,
+  diagnosticSummary,
+} from "../../../packages/protocol/src/diagnostics.ts";
 import type { HandoffInput } from "../../../packages/protocol/src/handoff.ts";
 import { VERSION } from "../../../packages/protocol/src/index.ts";
 import { handoffError } from "./handoff-copy.ts";
 import type { DesktopSnapshot, WorkspaceSummary } from "./model.ts";
 
-type PairingResult = { pairingUrl?: string };
+/** The pairing link is a one-time credential: show it, never log or persist it. */
+type PairingResult = { pairingUrl?: string; expiresInSeconds?: number };
 
 let mockCredential = false;
 let mockWorkspaces: WorkspaceSummary[] = [
@@ -93,13 +100,13 @@ export async function forgetRuntimeApiKey(): Promise<void> {
 export async function performAction(action: string): Promise<PairingResult> {
   if (inTauri()) return invoke<PairingResult>("perform_action", { action });
   return action === "create_pairing"
-    ? { pairingUrl: "http://127.0.0.1/pair#code=preview-only" }
+    ? { pairingUrl: "http://127.0.0.1/pair#code=preview-only", expiresInSeconds: 120 }
     : {};
 }
 
 export async function configureExtension(extensionId: string): Promise<PairingResult> {
   if (inTauri()) return invoke<PairingResult>("configure_extension", { extensionId });
-  return { pairingUrl: "http://127.0.0.1/pair#code=preview-only" };
+  return { pairingUrl: "http://127.0.0.1/pair#code=preview-only", expiresInSeconds: 120 };
 }
 
 export async function openExternal(target: "runtime_keys" | "chatgpt_connectors"): Promise<void> {
@@ -116,16 +123,66 @@ export async function chooseWorkspaceFolder(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
-export async function addWorkspace(path: string): Promise<WorkspaceSummary> {
-  if (inTauri()) return invoke<WorkspaceSummary>("add_workspace", { path });
-  const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? "新專案";
+export async function addWorkspace(path: string, name?: string): Promise<WorkspaceSummary> {
+  if (inTauri()) return invoke<WorkspaceSummary>("add_workspace", { path, name });
+  const label = name?.trim() || (path.split(/[\\/]/).filter(Boolean).at(-1) ?? "新專案");
   const workspace = {
     id: crypto.randomUUID(),
-    name,
+    name: label,
     capabilities: ["read", "write_request"],
   };
   mockWorkspaces = [...mockWorkspaces, workspace];
   return workspace;
+}
+
+export async function renameWorkspace(
+  workspaceId: string,
+  name: string,
+): Promise<WorkspaceSummary> {
+  if (inTauri()) return invoke<WorkspaceSummary>("rename_workspace", { workspaceId, name });
+  const label = name.trim();
+  if (!label || label.length > 80) throw new Error("工作區名稱須為 1～80 個可見字元。");
+  const current = mockWorkspaces.find((workspace) => workspace.id === workspaceId);
+  if (!current) throw new Error("找不到已掛載的工作區。");
+  const renamed = { ...current, name: label };
+  mockWorkspaces = mockWorkspaces.map((workspace) =>
+    workspace.id === workspaceId ? renamed : workspace,
+  );
+  return renamed;
+}
+
+/** Desktop only: absolute roots for display and reveal. Never send them to the widget or model. */
+export async function getWorkspaceDetails(): Promise<WorkspaceDetail[]> {
+  if (inTauri()) return invoke<WorkspaceDetail[]>("workspace_details");
+  return mockWorkspaces.map(({ id, name }) => ({
+    id,
+    name,
+    root: `C:\\Users\\you\\Projects\\${name}`,
+  }));
+}
+
+export async function getDiagnostics(): Promise<DiagnosticsReport> {
+  if (inTauri()) return invoke<DiagnosticsReport>("get_diagnostics");
+  const tunnelFailed = new URLSearchParams(window.location.search).get("demo") === "error";
+  const checks: DiagnosticCheck[] = [
+    { id: "data_dir", state: "ok", code: "data_dir_ok" },
+    { id: "companion", state: "ok", code: "companion_running", version: VERSION },
+    { id: "workbench", state: "ok", code: "workbench_running", version: VERSION },
+    { id: "tunnel_client", state: "ok", code: "tunnel_client_found" },
+    tunnelFailed
+      ? {
+          id: "tunnel",
+          state: "error",
+          code: "tunnel_failed",
+          reason: "auth",
+          fix: "configure_key",
+        }
+      : { id: "tunnel", state: "ok", code: "tunnel_running" },
+    { id: "codex_cli", state: "warn", code: "codex_cli_missing", fix: "show_codex_help" },
+    { id: "mcp_config", state: "ok", code: "mcp_config_absent", count: 0 },
+    { id: "workspaces", state: "ok", code: "workspaces_ok", count: mockWorkspaces.length },
+  ];
+  return { checks, summary: diagnosticSummary(checks, VERSION) };
 }
 
 export async function removeWorkspace(workspaceId: string): Promise<void> {

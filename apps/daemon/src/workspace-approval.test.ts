@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { WorkspaceListSchema } from "@kairomes/protocol";
+import { type AccessGrant, WorkspaceListSchema } from "@kairomes/protocol";
 import { fixture } from "../../../tests/fixtures.ts";
+import { grantSummary } from "./preview.ts";
 import { approvalMode, ToolService } from "./tools.ts";
 
 let f: Awaited<ReturnType<typeof fixture>>;
@@ -40,6 +41,25 @@ test("approval mode maps only level and expiry, never grant identity", () => {
     expires_at: null,
   });
   expect(JSON.stringify(approvalMode(grant))).not.toContain(grant.id);
+});
+
+test("Companion grant summary carries level and ISO expiry, never grant identity", async () => {
+  const owner = "panel-owner-secret";
+  await service.enableAccess(f.workspace.id, "files", 15, owner, () => true);
+  const [grant] = service.terminals.access();
+  const summary = grantSummary(service.terminals.access());
+  expect(summary).toEqual([
+    {
+      workspace_id: f.workspace.id,
+      level: "files",
+      expires_at: new Date(grant?.expires_at ?? 0).toISOString(),
+    },
+  ]);
+  expect(grantSummary([{ ...(grant as AccessGrant), level: "full", expires_at: null }])).toEqual([
+    { workspace_id: f.workspace.id, level: "full", expires_at: null },
+  ]);
+  for (const secret of [grant?.id ?? "missing", owner, grant?.workspace_name ?? "missing"])
+    expect(JSON.stringify(summary)).not.toContain(secret);
 });
 
 test("workspace_list and workbench_open report each workspace's live approval mode", async () => {

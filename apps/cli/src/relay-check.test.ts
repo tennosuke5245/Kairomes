@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { startWorkbench } from "@kairomes/daemon";
+import { VERSION } from "@kairomes/protocol";
 import { fixture } from "../../../tests/fixtures.ts";
 import { relayCheck } from "./relay-check.ts";
 
@@ -24,8 +25,17 @@ test("relay check sees the full attached tool surface without invoking a tool", 
     expect(result.tools.some((name) => name.startsWith("artifact_import_"))).toBe(false);
     expect(result.missing).toEqual([]);
     expect(result.unexpected).toEqual([]);
+    expect(result.workbenchVersion).toBe(VERSION);
+    expect(result.versionMismatch).toBe(false);
+
+    // A workbench from another release is reported even when its tool list matches.
+    const skewed = await relayCheck(f.state, "9.9.9");
+    expect(skewed.workbenchVersion).toBe(VERSION);
+    expect(skewed.versionMismatch).toBe(true);
+    expect(skewed.missing).toEqual([]);
+    expect(skewed.ok).toBe(false);
   } finally {
     await app.close();
     await f.dispose();
   }
-}, 15000);
+}, 25000);

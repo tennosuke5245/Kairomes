@@ -22,6 +22,8 @@ export * from "./approval.ts";
 export * from "./artifact.ts";
 export * from "./artifact-import.ts";
 export * from "./command.ts";
+export * from "./companion.ts";
+export * from "./diagnostics.ts";
 export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
 export * from "./git.ts";

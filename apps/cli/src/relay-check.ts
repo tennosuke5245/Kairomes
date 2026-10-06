@@ -6,6 +6,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 type RelayCheck = {
   origin: string;
+  /** Version the attached workbench reports; null for an older workbench without one. */
+  workbenchVersion: string | null;
+  /** True when the workbench is not this CLI's version; its tool list may be stale. */
+  versionMismatch: boolean;
   expected: string[];
   tools: string[];
   missing: string[];
@@ -31,9 +35,13 @@ function relayEnvironment(): Record<string, string> {
  * Verifies the exact stdio attach path used by tunnel-client. This only calls
  * MCP initialize and tools/list; it never invokes a Kairomes tool.
  */
-export async function relayCheck(dataDirectory: string): Promise<RelayCheck> {
+export async function relayCheck(
+  dataDirectory: string,
+  expectedVersion = VERSION,
+): Promise<RelayCheck> {
   const connection = await readWorkbenchConnection(dataDirectory);
-  await verifyWorkbenchConnection(connection);
+  const health = await verifyWorkbenchConnection(connection);
+  const versionMismatch = health.version !== expectedVersion;
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [
@@ -58,11 +66,13 @@ export async function relayCheck(dataDirectory: string): Promise<RelayCheck> {
     const unexpected = tools.filter((name) => !expected.includes(name));
     return {
       origin: connection.origin,
+      workbenchVersion: health.version,
+      versionMismatch,
       expected,
       tools,
       missing,
       unexpected,
-      ok: missing.length === 0 && unexpected.length === 0,
+      ok: missing.length === 0 && unexpected.length === 0 && !versionMismatch,
     };
   } finally {
     await client.close().catch(() => undefined);

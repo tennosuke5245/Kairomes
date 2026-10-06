@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
+  type AccessGrant,
   ApprovalInputSchema,
+  type CompanionGrantSummary,
   KairomesError,
   LIMITS,
   McpAuthInputSchema,
@@ -9,6 +11,7 @@ import {
   type PanelSnapshot,
   publicError,
   type ToolName,
+  VERSION,
   z,
 } from "@kairomes/protocol";
 import type { WorkspaceRegistry } from "@kairomes/workspace-core";
@@ -42,6 +45,15 @@ function panelSnapshot(
     changes: service.changes.approvals(),
     imports: service.imports.approvals(),
   };
+}
+
+/** Trusted local summary of live autonomy grants: level and expiry only, never id or owner. */
+export function grantSummary(grants: readonly AccessGrant[]): CompanionGrantSummary[] {
+  return grants.map(({ workspace_id, level, expires_at }) => ({
+    workspace_id,
+    level,
+    expires_at: expires_at === null ? null : new Date(expires_at).toISOString(),
+  }));
 }
 
 export function startPreview(registry: WorkspaceRegistry, widgetHtml: string, port = 4318) {
@@ -107,6 +119,11 @@ export async function startWorkbench(
     });
     return {
       ...app,
+      /**
+       * In-process, read-only view for the owning Companion. It adds no HTTP route, and an
+       * external workbench cannot be read this way.
+       */
+      accessSummary: () => grantSummary(service.terminals.access()),
       async close() {
         await unpublish();
         await app.close();
@@ -175,7 +192,10 @@ function startLocalServer(
         return new Response("Invalid host", { status: 403, headers });
       }
       if (request.method === "GET" && url.pathname === "/healthz") {
-        return Response.json({ status: "ok", instanceId: workbench?.instanceId }, { headers });
+        return Response.json(
+          { status: "ok", instanceId: workbench?.instanceId, version: VERSION },
+          { headers },
+        );
       }
       const panel = [
         "/api/panel/pair",
@@ -522,7 +542,12 @@ function startLocalServer(
         }
         if (connection)
           return Response.json(
-            { mode: "workbench", instanceId: workbench?.instanceId, lastMcpRequestAt },
+            {
+              mode: "workbench",
+              instanceId: workbench?.instanceId,
+              lastMcpRequestAt,
+              pairedPanels: pairing.activeCount(),
+            },
             { headers },
           );
         if (mcp && workbench) {

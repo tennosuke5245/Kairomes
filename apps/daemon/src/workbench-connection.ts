@@ -1,6 +1,6 @@
 import { lstat, open, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
-import { KairomesError, z } from "@kairomes/protocol";
+import { KairomesError, parseVersion, z } from "@kairomes/protocol";
 
 const ConnectionSchema = z
   .object({
@@ -36,7 +36,13 @@ export async function readWorkbenchConnection(directory: string): Promise<Workbe
   }
 }
 
-export async function verifyWorkbenchConnection(connection: WorkbenchConnection) {
+/**
+ * Proves the descriptor's loopback server still owns its instance ID. Returns the version the
+ * workbench reports; null for an older workbench without one or an unparseable value.
+ */
+export async function verifyWorkbenchConnection(
+  connection: WorkbenchConnection,
+): Promise<{ version: string | null }> {
   try {
     const response = await fetch(`${connection.origin}/healthz`, {
       redirect: "error",
@@ -45,6 +51,7 @@ export async function verifyWorkbenchConnection(connection: WorkbenchConnection)
     const status = await response.json();
     if (!response.ok || status.instanceId !== connection.instanceId)
       throw new Error("instance mismatch");
+    return { version: parseVersion(status.version) };
   } catch {
     throw new KairomesError(
       "WORKBENCH_UNAVAILABLE",

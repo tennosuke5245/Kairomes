@@ -1,11 +1,34 @@
 import { fileURLToPath } from "node:url";
-import { Inputs, VERSION, WIDGET_URI } from "@kairomes/protocol";
+import { collectDiagnostics } from "@kairomes/daemon";
+import {
+  type DiagnosticCheck,
+  diagnosticSummary,
+  Inputs,
+  VERSION,
+  WIDGET_URI,
+} from "@kairomes/protocol";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { probeCompanion } from "./companion.ts";
 
 type Check = { name: string; status: "pass" | "warn" | "fail"; detail: string };
 
-export async function doctor(dataDirectory: string): Promise<{ checks: Check[]; ok: boolean }> {
+export type DoctorReport = {
+  checks: Check[];
+  /** Shared fixed-id checks (enums, counts and versions only), as Companion reports them. */
+  diagnostics: DiagnosticCheck[];
+  /** Copyable plain-text summary of diagnostics; safe to share. */
+  summary: string;
+  ok: boolean;
+};
+
+export async function doctor(dataDirectory: string): Promise<DoctorReport> {
+  // Collected first, so the serve handshake below cannot create the data directory beforehand.
+  // Only Companion supervises the Tunnel, so this CLI reports its state as unknown.
+  const diagnostics = await collectDiagnostics({
+    dataDirectory,
+    companion: await probeCompanion(dataDirectory),
+  });
   const checks: Check[] = [
     { name: "runtime", status: "pass", detail: `Bun ${Bun.version} / ${process.platform}` },
   ];
@@ -105,5 +128,12 @@ export async function doctor(dataDirectory: string): Promise<{ checks: Check[]; 
     await client.close().catch(() => undefined);
     await transport.close().catch(() => undefined);
   }
-  return { checks, ok: !checks.some((check) => check.status === "fail") };
+  return {
+    checks,
+    diagnostics,
+    summary: diagnosticSummary(diagnostics, VERSION),
+    ok:
+      !checks.some((check) => check.status === "fail") &&
+      !diagnostics.some((check) => check.state === "error"),
+  };
 }

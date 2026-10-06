@@ -81,6 +81,8 @@ struct DesktopRuntime {
 struct ActionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pairing_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_in_seconds: Option<u64>,
 }
 
 fn runtime_state(app: &AppHandle) -> State<'_, RuntimeState> {
@@ -463,6 +465,34 @@ fn pairing_url(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn pairing_result(value: &Value) -> ActionResult {
+    ActionResult {
+        pairing_url: pairing_url(value),
+        expires_in_seconds: value
+            .get("expiresInSeconds")
+            .and_then(Value::as_u64)
+            .filter(|seconds| (1..=3600).contains(seconds)),
+    }
+}
+
+#[cfg(test)]
+mod pairing_result_tests {
+    use super::pairing_result;
+    use serde_json::json;
+
+    #[test]
+    fn passes_the_pairing_lifetime_through_only_when_bounded() {
+        let result = pairing_result(&json!({ "pairingUrl": "u", "expiresInSeconds": 120 }));
+        assert_eq!(result.pairing_url.as_deref(), Some("u"));
+        assert_eq!(result.expires_in_seconds, Some(120));
+        for invalid in [json!(0), json!(-1), json!(3601), json!("120"), json!(1.5)] {
+            let result = pairing_result(&json!({ "pairingUrl": "u", "expiresInSeconds": invalid }));
+            assert_eq!(result.expires_in_seconds, None);
+        }
+        assert_eq!(pairing_result(&json!({})).pairing_url, None);
+    }
+}
+
 #[tauri::command]
 async fn perform_action(app: AppHandle, action: String) -> Result<ActionResult, String> {
     if action == "restart_runtime" {
@@ -482,9 +512,7 @@ async fn perform_action(app: AppHandle, action: String) -> Result<ActionResult, 
         return Err("不支援的 Kairomes 操作。".to_string());
     }
     let value = companion_request("/api/action", json!({ "action": action })).await?;
-    Ok(ActionResult {
-        pairing_url: pairing_url(&value),
-    })
+    Ok(pairing_result(&value))
 }
 
 #[tauri::command]
@@ -498,25 +526,71 @@ async fn configure_extension(extension_id: String) -> Result<ActionResult, Strin
         json!({ "action": "configure_extension", "extensionId": value }),
     )
     .await?;
-    Ok(ActionResult {
-        pairing_url: pairing_url(&response),
-    })
+    Ok(pairing_result(&response))
 }
 
 #[tauri::command]
-async fn add_workspace(path: String) -> Result<Value, String> {
+async fn add_workspace(path: String, name: Option<String>) -> Result<Value, String> {
     if path.trim().is_empty() || path.len() > 32767 {
         return Err("請選擇有效的專案資料夾。".to_string());
     }
+    let mut body = json!({ "action": "workspace_add", "path": path });
+    if let Some(name) = name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        if name.len() > 1024 {
+            return Err("專案名稱須為 1～80 個字元。".to_string());
+        }
+        body["name"] = json!(name);
+    }
+    let response = companion_request("/api/action", body).await?;
+    response
+        .get("workspace")
+        .cloned()
+        .ok_or_else(|| "Kairomes 沒有回傳新增的專案。".to_string())
+}
+
+#[tauri::command]
+async fn rename_workspace(workspace_id: String, name: String) -> Result<Value, String> {
+    // The Companion validates the id and name strictly; this only bounds the request size.
+    let name = name.trim();
+    if workspace_id.len() != 36 || name.is_empty() || name.len() > 1024 {
+        return Err("專案名稱須為 1～80 個字元。".to_string());
+    }
     let response = companion_request(
         "/api/action",
-        json!({ "action": "workspace_add", "path": path }),
+        json!({ "action": "workspace_rename", "workspace_id": workspace_id, "name": name }),
     )
     .await?;
     response
         .get("workspace")
         .cloned()
-        .ok_or_else(|| "Kairomes 沒有回傳新增的專案。".to_string())
+        .ok_or_else(|| "Kairomes 沒有回傳重新命名的專案。".to_string())
+}
+
+/// Desktop-only project list with absolute roots. It is never forwarded to MCP or the widget.
+#[tauri::command]
+async fn workspace_details() -> Result<Value, String> {
+    let response =
+        companion_request("/api/action", json!({ "action": "workspace_details" })).await?;
+    response
+        .get("workspaces")
+        .cloned()
+        .ok_or_else(|| "Kairomes 沒有回傳專案資料。".to_string())
+}
+
+/// Fixed-id checks plus a copyable summary that holds only enums, counts and versions.
+#[tauri::command]
+async fn get_diagnostics() -> Result<Value, String> {
+    let response = companion_request("/api/action", json!({ "action": "diagnostics" })).await?;
+    match (response.get("checks"), response.get("summary")) {
+        (Some(checks), Some(summary)) if checks.is_array() && summary.is_string() => {
+            Ok(json!({ "checks": checks, "summary": summary }))
+        }
+        _ => Err("Kairomes 沒有回傳診斷結果。".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -683,7 +757,10 @@ pub fn run() {
             perform_action,
             configure_extension,
             add_workspace,
+            rename_workspace,
+            workspace_details,
             remove_workspace,
+            get_diagnostics,
             handoff_request,
             open_external
         ])
