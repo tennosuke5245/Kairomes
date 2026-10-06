@@ -17,6 +17,7 @@ import {
   WorkspaceChanges,
   type WorkspaceRegistry,
 } from "@kairomes/workspace-core";
+import { denialReason } from "./approval-decision.ts";
 
 type Input = z.infer<typeof FileChangeInputs.file_change_request>;
 type Job = {
@@ -168,20 +169,33 @@ export class FileChangeManager {
     return [...this.jobs.values()].map((job) => structuredClone(job.view));
   }
 
+  /**
+   * Trusted review data. Only pending and applying changes (at most four) carry their review
+   * diff; finished ones keep metadata only, so up to 24 retained diffs of 192 KiB each can
+   * never push a panel snapshot past the 2 MiB stream frame limit.
+   */
   approvals(): FileChangeApproval[] {
-    return [...this.jobs.values()].map((job) => ({
-      ...structuredClone(job.view),
-      fingerprint: job.fingerprint,
-      workspace_name:
-        this.registry.list().find((workspace) => workspace.id === job.view.workspace_id)?.name ??
-        "已解除掛載",
-      diff: job.prepared.diff,
-      diff_truncated: job.prepared.diffTruncated,
-    }));
+    return [...this.jobs.values()].map((job) => {
+      const available = fileChangeActive(job.view);
+      return {
+        ...structuredClone(job.view),
+        fingerprint: job.fingerprint,
+        workspace_name:
+          this.registry.list().find((workspace) => workspace.id === job.view.workspace_id)?.name ??
+          "已解除掛載",
+        diff: available ? job.prepared.diff : "",
+        diff_truncated: job.prepared.diffTruncated,
+        diff_available: available,
+      };
+    });
   }
 
-  /** Administrative method. Only the trusted Extension or local approval page calls it. */
-  async decide(id: string, fingerprint: string, approve: boolean) {
+  /**
+   * Administrative method. Only the trusted Extension or local approval page calls it. A denial
+   * may carry the user's reason, which the model reads back as denial_reason.
+   */
+  async decide(id: string, fingerprint: string, approve: boolean, reason?: string) {
+    const denial = denialReason(approve, reason);
     const job = this.get(id);
     if (job.view.state !== "pending" || job.applying || fingerprint !== job.fingerprint)
       throw new KairomesError("APPROVAL_MISMATCH", "檔案變更已處理或審批內容不一致，請更新狀態。");
@@ -190,6 +204,7 @@ export class FileChangeManager {
       throw new KairomesError("APPROVAL_EXPIRED", "檔案變更請求已過期。");
     }
     if (!approve) {
+      if (denial) job.view.denial_reason = denial;
       this.finish(job, "denied");
       return;
     }

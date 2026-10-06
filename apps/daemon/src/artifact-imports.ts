@@ -16,6 +16,7 @@ import {
   WorkspaceArtifactImports,
   type WorkspaceRegistry,
 } from "@kairomes/workspace-core";
+import { denialReason } from "./approval-decision.ts";
 import { downloadOpenAIFile } from "./openai-file-download.ts";
 
 type Input = z.infer<typeof ArtifactImportRequestSchema>;
@@ -249,8 +250,12 @@ export class ArtifactImportManager {
     }));
   }
 
-  /** Administrative method. Only the trusted Extension or local approval page calls it. */
-  async decide(id: string, fingerprint: string, approve: boolean) {
+  /**
+   * Administrative method. Only the trusted Extension may approve; the admin channel may only
+   * deny or cancel. A denial may carry the user's reason.
+   */
+  async decide(id: string, fingerprint: string, approve: boolean, reason?: string) {
+    const denial = denialReason(approve, reason);
     const job = this.get(id);
     if (job.view.state !== "pending" || job.applying || fingerprint !== job.fingerprint)
       throw new KairomesError("APPROVAL_MISMATCH", "媒體匯入已處理或審批內容不一致，請更新狀態。");
@@ -259,6 +264,7 @@ export class ArtifactImportManager {
       throw new KairomesError("APPROVAL_EXPIRED", "媒體匯入請求已過期。");
     }
     if (!approve) {
+      if (denial) job.view.denial_reason = denial;
       this.finish(job, "denied");
       return;
     }

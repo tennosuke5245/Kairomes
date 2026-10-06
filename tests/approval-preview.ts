@@ -95,6 +95,7 @@ const changes: FileChangeApproval[] = [
       '+test("message", () => expect(message).toContain("喵"));',
     ].join("\n"),
     diff_truncated: false,
+    diff_available: true,
   },
 ];
 const query = new URLSearchParams(location.search);

@@ -1,12 +1,17 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
+  type AccessGrant,
+  ApprovalInputSchema,
+  type CompanionGrantSummary,
   KairomesError,
   LIMITS,
   McpAuthInputSchema,
   McpPanelInputSchema,
   PanelAccessInputSchema,
+  type PanelSnapshot,
   publicError,
   type ToolName,
+  VERSION,
   z,
 } from "@kairomes/protocol";
 import type { WorkspaceRegistry } from "@kairomes/workspace-core";
@@ -22,41 +27,34 @@ import { ToolService, toolDefinitions } from "./tools.ts";
 import { publishWorkbenchConnection } from "./workbench-connection.ts";
 
 const RequestSchema = z.object({ name: z.string(), arguments: z.unknown().default({}) }).strict();
-const ApprovalSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("list") }).strict(),
-  z
-    .object({
-      action: z.enum(["approve", "deny"]),
-      session_id: z.string().uuid().optional(),
-      command_id: z.string().uuid().optional(),
-      change_id: z.string().uuid().optional(),
-      import_id: z.string().uuid().optional(),
-      fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    })
-    .strict()
-    .refine(
-      (input) =>
-        [input.session_id, input.command_id, input.change_id, input.import_id].filter(Boolean)
-          .length === 1,
-      "請指定一個核准目標",
-    ),
-  z
-    .object({
-      action: z.literal("stop"),
-      session_id: z.string().uuid().optional(),
-      command_id: z.string().uuid().optional(),
-      change_id: z.string().uuid().optional(),
-      import_id: z.string().uuid().optional(),
-      fingerprint: z.string().optional(),
-    })
-    .strict()
-    .refine(
-      (input) =>
-        [input.session_id, input.command_id, input.change_id, input.import_id].filter(Boolean)
-          .length === 1,
-      "請指定一個停止目標",
-    ),
-]);
+/**
+ * The trusted panel's full state. File changes carry review diffs only while pending or
+ * applying (see FileChangeManager.approvals), which keeps every frame of /api/panel/stream
+ * well below the 2 MiB limit of readSnapshots.
+ */
+function panelSnapshot(
+  service: ToolService,
+  workbench: { instanceId: string; registry: WorkspaceRegistry },
+): PanelSnapshot {
+  return {
+    instanceId: workbench.instanceId,
+    sessions: service.terminals.approvals(),
+    workspaces: workbench.registry.list(),
+    accessGrants: service.terminals.access(),
+    commands: service.commands.approvals(),
+    changes: service.changes.approvals(),
+    imports: service.imports.approvals(),
+  };
+}
+
+/** Trusted local summary of live autonomy grants: level and expiry only, never id or owner. */
+export function grantSummary(grants: readonly AccessGrant[]): CompanionGrantSummary[] {
+  return grants.map(({ workspace_id, level, expires_at }) => ({
+    workspace_id,
+    level,
+    expires_at: expires_at === null ? null : new Date(expires_at).toISOString(),
+  }));
+}
 
 export function startPreview(registry: WorkspaceRegistry, widgetHtml: string, port = 4318) {
   try {
@@ -121,6 +119,11 @@ export async function startWorkbench(
     });
     return {
       ...app,
+      /**
+       * In-process, read-only view for the owning Companion. It adds no HTTP route, and an
+       * external workbench cannot be read this way.
+       */
+      accessSummary: () => grantSummary(service.terminals.access()),
       async close() {
         await unpublish();
         await app.close();
@@ -189,7 +192,10 @@ function startLocalServer(
         return new Response("Invalid host", { status: 403, headers });
       }
       if (request.method === "GET" && url.pathname === "/healthz") {
-        return Response.json({ status: "ok", instanceId: workbench?.instanceId }, { headers });
+        return Response.json(
+          { status: "ok", instanceId: workbench?.instanceId, version: VERSION },
+          { headers },
+        );
       }
       const panel = [
         "/api/panel/pair",
@@ -282,16 +288,9 @@ function startLocalServer(
             bunServer.timeout(request, 0);
             return snapshotStream(
               request,
-              (listener) => service.activity.subscribe(listener),
-              () => ({
-                instanceId: workbench.instanceId,
-                sessions: service.terminals.approvals(),
-                workspaces: workbench.registry.list(),
-                accessGrants: service.terminals.access(),
-                commands: service.commands.approvals(),
-                changes: service.changes.approvals(),
-                imports: service.imports.approvals(),
-              }),
+              // Terminal and command output never changes this snapshot; skip those wakeups.
+              (listener) => service.activity.subscribe(listener, { processIo: false }),
+              () => panelSnapshot(service, workbench),
               panelHeaders,
               streams,
               () => pairing.valid(panelToken),
@@ -345,13 +344,7 @@ function startLocalServer(
               );
             return Response.json(
               {
-                instanceId: workbench.instanceId,
-                sessions: service.terminals.approvals(),
-                workspaces: workbench.registry.list(),
-                accessGrants: service.terminals.access(),
-                commands: service.commands.approvals(),
-                changes: service.changes.approvals(),
-                imports: service.imports.approvals(),
+                ...panelSnapshot(service, workbench),
                 ...(receipt ? { access_receipt: receipt } : {}),
               },
               { headers: panelHeaders },
@@ -408,51 +401,9 @@ function startLocalServer(
             service.activity.changed();
             return Response.json(await service.mcp.panelState(), { headers: panelHeaders });
           }
-          const input = ApprovalSchema.parse(await request.json());
-          if (input.action !== "list" && input.import_id) {
-            if (input.action === "stop") service.imports.cancel(input.import_id);
-            else
-              await service.imports.decide(
-                input.import_id,
-                input.fingerprint,
-                input.action === "approve",
-              );
-          } else if (input.action !== "list" && input.change_id) {
-            if (input.action === "stop") service.changes.cancel(input.change_id);
-            else
-              await service.changes.decide(
-                input.change_id,
-                input.fingerprint,
-                input.action === "approve",
-              );
-          } else if (input.action !== "list" && input.command_id) {
-            if (input.action === "stop") await service.commands.cancel(input.command_id);
-            else
-              await service.commands.decide(
-                input.command_id,
-                input.fingerprint,
-                input.action === "approve",
-              );
-          } else if (input.action === "stop")
-            await service.terminals.stop(input.session_id as string);
-          else if (input.action !== "list")
-            await service.terminals.decide(
-              input.session_id as string,
-              input.fingerprint,
-              input.action === "approve",
-            );
-          return Response.json(
-            {
-              instanceId: workbench.instanceId,
-              sessions: service.terminals.approvals(),
-              workspaces: workbench.registry.list(),
-              accessGrants: service.terminals.access(),
-              commands: service.commands.approvals(),
-              changes: service.changes.approvals(),
-              imports: service.imports.approvals(),
-            },
-            { headers: panelHeaders },
-          );
+          const input = ApprovalInputSchema.parse(await request.json());
+          if (input.action !== "list") await service.decideApproval(input);
+          return Response.json(panelSnapshot(service, workbench), { headers: panelHeaders });
         } catch (error) {
           const exposed = publicError(error);
           const status =
@@ -591,7 +542,12 @@ function startLocalServer(
         }
         if (connection)
           return Response.json(
-            { mode: "workbench", instanceId: workbench?.instanceId, lastMcpRequestAt },
+            {
+              mode: "workbench",
+              instanceId: workbench?.instanceId,
+              lastMcpRequestAt,
+              pairedPanels: pairing.activeCount(),
+            },
             { headers },
           );
         if (mcp && workbench) {
@@ -620,39 +576,16 @@ function startLocalServer(
           }
         }
         if (admin) {
-          const input = ApprovalSchema.parse(await request.json());
-          if (input.action !== "list" && input.import_id) {
-            if (input.action === "stop") service.imports.cancel(input.import_id);
-            else
-              await service.imports.decide(
-                input.import_id,
-                input.fingerprint,
-                input.action === "approve",
-              );
-          } else if (input.action !== "list" && input.change_id) {
-            if (input.action === "stop") service.changes.cancel(input.change_id);
-            else
-              await service.changes.decide(
-                input.change_id,
-                input.fingerprint,
-                input.action === "approve",
-              );
-          } else if (input.action !== "list" && input.command_id) {
-            if (input.action === "stop") await service.commands.cancel(input.command_id);
-            else
-              await service.commands.decide(
-                input.command_id,
-                input.fingerprint,
-                input.action === "approve",
-              );
-          } else if (input.action === "stop")
-            await service.terminals.stop(input.session_id as string);
-          else if (input.action !== "list")
-            await service.terminals.decide(
-              input.session_id as string,
-              input.fingerprint,
-              input.action === "approve",
+          const input = ApprovalInputSchema.parse(await request.json());
+          // The admin token also drives the legacy /approvals page, which has no image review.
+          // Image imports are approved only in the paired Extension; denying or cancelling
+          // one here only reduces what can happen.
+          if (input.action === "approve" && input.import_id)
+            throw new KairomesError(
+              "IMPORT_APPROVAL_PANEL_ONLY",
+              "圖片匯入只能在已配對的瀏覽器側欄核准。",
             );
+          if (input.action !== "list") await service.decideApproval(input);
           return Response.json(
             {
               sessions: service.terminals.approvals(),

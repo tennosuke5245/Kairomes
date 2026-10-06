@@ -1,38 +1,40 @@
+import type {
+  CompanionAttention,
+  CompanionGrantSummary,
+  CompanionStatus,
+  CompanionTunnelStatus,
+  TunnelReason,
+} from "../../../packages/protocol/src/companion.ts";
+import type { Workspace } from "../../../packages/protocol/src/index.ts";
+
+export type {
+  DiagnosticCheck,
+  DiagnosticCheckId,
+  DiagnosticCode,
+  DiagnosticFix,
+  DiagnosticState,
+  DiagnosticsReport,
+} from "../../../packages/protocol/src/diagnostics.ts";
+export type {
+  CompanionAttention,
+  CompanionGrantSummary,
+  CompanionStatus,
+  CompanionTunnelStatus,
+  TunnelReason,
+};
+
 type ProcessState = "starting" | "running" | "error" | "stopped";
 
-export type WorkspaceSummary = {
-  id: string;
-  name: string;
-  capabilities: string[];
-};
+export type WorkspaceSummary = Workspace;
 
-type CompanionStatus = {
-  version: string;
-  overall: { tone: "good" | "warn" | "busy"; label: string };
-  workspaces: WorkspaceSummary[];
-  workbench: {
-    state: "starting" | "running" | "external" | "stopped" | "error";
-    label: string;
-    message: string;
-    meta: string;
-  };
-  tunnel: {
-    state: "missing" | "starting" | "running" | "stopped" | "error";
-    label: string;
-    message: string;
-    meta: string;
-    logs: string[];
-  };
-  connector: {
-    state: "connected" | "waiting" | "blocked";
-    label: string;
-    message: string;
-    meta: string;
-  };
-  extension: { configured: boolean };
-};
+/** Desktop-only absolute project root. Never send it to the widget, the Extension or the model. */
+export type WorkspacePath = { id: string; root: string };
 
 export type DesktopSnapshot = {
+  /** Version of the Desktop app itself. */
+  version: string;
+  /** Increases with every status collection in one Desktop process; larger is newer. */
+  sequence: number;
   credentialConfigured: boolean;
   tunnelClientInstalled: boolean;
   runtime: {
@@ -41,7 +43,192 @@ export type DesktopSnapshot = {
     message: string;
   };
   companion: CompanionStatus | null;
+  /** The Companion differs from Desktop, or its workbench differs from the Companion. */
+  versionMismatch: boolean;
 };
+
+type WireTunnel = Omit<
+  CompanionTunnelStatus,
+  "startedAt" | "reason" | "restartCount" | "nextRetryAt" | "logs"
+> &
+  Partial<
+    Pick<CompanionTunnelStatus, "startedAt" | "reason" | "restartCount" | "nextRetryAt" | "logs">
+  >;
+
+type WireCompanion = Omit<
+  CompanionStatus,
+  "workbenchVersion" | "versionMismatch" | "tunnel" | "attention"
+> & {
+  workbenchVersion?: string | null;
+  versionMismatch?: boolean;
+  tunnel: WireTunnel;
+  attention?: Partial<CompanionAttention>;
+};
+
+/** A snapshot as it may arrive from an older Companion or a synthetic fixture. */
+export type WireDesktopSnapshot = Omit<
+  DesktopSnapshot,
+  "version" | "sequence" | "versionMismatch" | "companion"
+> & {
+  version?: string;
+  sequence?: number;
+  versionMismatch?: boolean;
+  companion: WireCompanion | null;
+};
+
+const UNKNOWN_ATTENTION: CompanionAttention = {
+  pending: null,
+  grants: null,
+  grantsKnown: false,
+  lastMcpRequestAt: null,
+  pairedPanels: null,
+};
+
+/**
+ * Fills fields an older Companion does not send yet, so the UI can read every field of
+ * DesktopSnapshot without guarding. Unknown values stay null, never optimistic.
+ */
+export function normalizeDesktopSnapshot(snapshot: WireDesktopSnapshot): DesktopSnapshot {
+  const companion = snapshot.companion;
+  const sequence = snapshot.sequence;
+  return {
+    ...snapshot,
+    version: typeof snapshot.version === "string" ? snapshot.version : "",
+    sequence: typeof sequence === "number" && Number.isSafeInteger(sequence) ? sequence : 0,
+    versionMismatch: snapshot.versionMismatch === true,
+    companion: companion
+      ? {
+          ...companion,
+          workbenchVersion: companion.workbenchVersion ?? null,
+          versionMismatch: companion.versionMismatch === true,
+          tunnel: {
+            ...companion.tunnel,
+            logs: companion.tunnel.logs ?? [],
+            startedAt: companion.tunnel.startedAt ?? null,
+            reason: companion.tunnel.reason ?? null,
+            restartCount: companion.tunnel.restartCount ?? 0,
+            nextRetryAt: companion.tunnel.nextRetryAt ?? null,
+          },
+          attention: {
+            ...UNKNOWN_ATTENTION,
+            ...companion.attention,
+            grantsKnown: companion.attention?.grantsKnown === true,
+          },
+        }
+      : null,
+  };
+}
+
+/** Keeps the newer of two snapshots, so a late response never overwrites a pushed update. */
+export function newerSnapshot(current: DesktopSnapshot, next: DesktopSnapshot): DesktopSnapshot {
+  return next.sequence >= current.sequence ? next : current;
+}
+
+/** Milliseconds from now until an ISO time (negative once passed); null when absent or invalid. */
+export function msUntil(iso: string | null | undefined, now = Date.now()): number | null {
+  if (typeof iso !== "string") return null;
+  const time = Date.parse(iso);
+  return Number.isFinite(time) ? time - now : null;
+}
+
+/** A grant with less time left than this is shown as expiring soon. */
+export const GRANT_EXPIRING_SOON_MS = 15 * 60_000;
+
+export type AttentionGrant = {
+  workspaceId: string;
+  /** Null when the workspace is no longer mounted. */
+  workspaceName: string | null;
+  level: CompanionGrantSummary["level"];
+  /** ISO 8601 expiry; null for a grant kept until the user revokes it. */
+  expiresAt: string | null;
+  /** Null for a grant kept until revoked. */
+  remainingMs: number | null;
+  expiringSoon: boolean;
+};
+
+export type DesktopAttention = {
+  /** Pending approvals; null when the workbench could not be read. */
+  pending: number | null;
+  pendingByWorkspace: { workspaceId: string; workspaceName: string | null; count: number }[];
+  /** Active autonomy grants, soonest expiry first; null means 權限待確認. */
+  grants: AttentionGrant[] | null;
+  lastMcpRequestAt: string | null;
+  /** Milliseconds since the last MCP request; null when none was seen. */
+  lastMcpAgoMs: number | null;
+  /** Valid side-panel pairings; null when unknown. */
+  pairedPanels: number | null;
+};
+
+/**
+ * Dashboard facts from the Companion's counts and grant metadata. Nothing here carries
+ * fingerprints, argv, cwd or diffs, and Desktop cannot change a grant.
+ */
+export function deriveAttention(snapshot: DesktopSnapshot, now = Date.now()): DesktopAttention {
+  const companion = snapshot.companion;
+  if (!companion)
+    return {
+      pending: null,
+      pendingByWorkspace: [],
+      grants: null,
+      lastMcpRequestAt: null,
+      lastMcpAgoMs: null,
+      pairedPanels: null,
+    };
+  const names = new Map(companion.workspaces.map((workspace) => [workspace.id, workspace.name]));
+  const attention = companion.attention;
+  const grants = attention.grantsKnown
+    ? (attention.grants ?? [])
+        .map((grant): AttentionGrant => {
+          const remainingMs = msUntil(grant.expires_at, now);
+          return {
+            workspaceId: grant.workspace_id,
+            workspaceName: names.get(grant.workspace_id) ?? null,
+            level: grant.level,
+            expiresAt: grant.expires_at,
+            remainingMs,
+            expiringSoon: remainingMs !== null && remainingMs <= GRANT_EXPIRING_SOON_MS,
+          };
+        })
+        .filter((grant) => grant.expiresAt === null || (grant.remainingMs ?? 0) > 0)
+        .sort(
+          (a, b) =>
+            (a.remainingMs ?? Number.POSITIVE_INFINITY) -
+              (b.remainingMs ?? Number.POSITIVE_INFINITY) ||
+            a.workspaceId.localeCompare(b.workspaceId),
+        )
+    : null;
+  const ago = msUntil(attention.lastMcpRequestAt, now);
+  return {
+    pending: attention.pending?.total ?? null,
+    pendingByWorkspace: (attention.pending?.byWorkspace ?? []).map((entry) => ({
+      workspaceId: entry.workspace_id,
+      workspaceName: names.get(entry.workspace_id) ?? null,
+      count: entry.count,
+    })),
+    grants,
+    lastMcpRequestAt: attention.lastMcpRequestAt,
+    lastMcpAgoMs: ago === null ? null : Math.max(0, -ago),
+    pairedPanels: attention.pairedPanels,
+  };
+}
+
+export type VersionMismatch = {
+  desktop: string;
+  /** Null when the Companion did not answer. */
+  companion: string | null;
+  /** Null when the attached workbench did not report a version. */
+  workbench: string | null;
+};
+
+/** Versions to show when Desktop, the Companion and the workbench disagree; otherwise null. */
+export function versionMismatchDetail(snapshot: DesktopSnapshot): VersionMismatch | null {
+  if (!snapshot.versionMismatch) return null;
+  return {
+    desktop: snapshot.version,
+    companion: snapshot.companion?.version ?? null,
+    workbench: snapshot.companion?.workbenchVersion ?? null,
+  };
+}
 
 export type PrimaryAction =
   | "configure_key"
@@ -185,7 +372,7 @@ export function deriveDesktopView(snapshot: DesktopSnapshot): DesktopView {
   return {
     tone: "ready",
     title: "已連上 ChatGPT",
-    description: "Kairomes 會在背景守著連線；只有需要你決定的事情，才會把視窗叫回來。",
+    description: "Kairomes 會在背景守著連線；有事需要你決定時，系統匣圖示會出現紅點。",
     action: "open_workbench",
     actionLabel: "開啟工作台",
     localState: "done",

@@ -66,6 +66,49 @@ describe("workspace authorization", () => {
     });
   });
 
+  test("rename reuses add() name rules, keeps the root and persists", async () => {
+    for (const invalid of ["", "   ", "x".repeat(81), "bad\nname", "bad‮name", "tab\tname"])
+      expect(() => f.registry.rename(f.workspace.id, invalid)).toThrow(
+        expect.objectContaining({ code: "INVALID_NAME" }),
+      );
+    expect(() => f.registry.rename(crypto.randomUUID(), "新名稱")).toThrow(
+      expect.objectContaining({ code: "WORKSPACE_NOT_FOUND" }),
+    );
+    expect(f.registry.list()[0]?.name).toBe("測試專案");
+
+    const renamed = f.registry.rename(f.workspace.id, "  新名稱  ");
+    expect(renamed).toEqual({ ...f.workspace, name: "新名稱" });
+    expect(f.registry.rename(f.workspace.id, "x".repeat(80)).name).toHaveLength(80);
+    f.registry.rename(f.workspace.id, "新名稱");
+    expect(f.registry.get(f.workspace.id).root).toBe(f.root);
+    // Renaming changes no authority: reads still resolve through the same root identity.
+    expect((await files.read(f.workspace.id, "README.md")).content).toContain("Hello Kairomes");
+
+    const reopened = await WorkspaceRegistry.open(f.state);
+    try {
+      expect(reopened.list()).toEqual([{ ...f.workspace, name: "新名稱" }]);
+      // Remounting the same root keeps the id; an explicit label still wins on remount.
+      expect((await reopened.add(f.root, "再次掛載")).id).toBe(f.workspace.id);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("only details() carries absolute roots; list() never does", async () => {
+    const otherRoot = path.join(f.directory, "other");
+    await mkdir(otherRoot);
+    const other = await f.registry.add(otherRoot, "其他");
+    f.registry.rename(other.id, "改名後");
+    expect(f.registry.details()).toEqual([
+      { id: other.id, name: "改名後", root: otherRoot },
+      { id: f.workspace.id, name: "測試專案", root: f.root },
+    ]);
+    const listed = JSON.stringify(f.registry.list());
+    expect(listed).toContain("改名後");
+    expect(listed).not.toContain(f.root);
+    expect(listed).not.toContain(otherRoot);
+  });
+
   test("detects replacement of the mounted root", async () => {
     await rename(f.root, `${f.root}-old`);
     await mkdir(f.root);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DenialReasonSchema } from "./approval.ts";
 import { ArtifactInputs, ArtifactSchema } from "./artifact.ts";
 import {
   CommandInputs,
@@ -17,9 +18,12 @@ import {
 } from "./mcp-host.ts";
 
 export * from "./activity.ts";
+export * from "./approval.ts";
 export * from "./artifact.ts";
 export * from "./artifact-import.ts";
 export * from "./command.ts";
+export * from "./companion.ts";
+export * from "./diagnostics.ts";
 export * from "./diff-lines.ts";
 export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
@@ -256,10 +260,13 @@ const TerminalSessionSchema = z.object({
     "failed",
   ]),
   created_at: z.number(),
+  /** Epoch milliseconds; the approval deadline while pending, then the session deadline. */
   expires_at: z.number(),
   cols: z.number().int(),
   rows: z.number().int(),
   exit_code: z.number().int().nullable(),
+  /** Present only on a denied session whose local user typed a reason. */
+  denial_reason: DenialReasonSchema.optional(),
 });
 export type TerminalSession = z.infer<typeof TerminalSessionSchema>;
 export const TerminalResultSchema = z.object({

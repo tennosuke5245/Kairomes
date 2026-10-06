@@ -37,6 +37,7 @@ const review: FileChangeApproval = {
   files: [{ operation: "write", path: "test.ts", before_version: null, after_version: "next" }],
   diff: "+export const value = 1",
   diff_truncated: false,
+  diff_available: true,
 };
 
 test("the reviewed request cannot authorize changed content or a replaced identity", () => {

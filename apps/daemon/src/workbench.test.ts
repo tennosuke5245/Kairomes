@@ -7,6 +7,7 @@ import {
   LIMITS,
   TerminalListSchema,
   TerminalResultSchema,
+  VERSION,
   WIDGET_URI,
 } from "@kairomes/protocol";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -51,6 +52,36 @@ test("connection descriptor rejects malformed, oversized and non-loopback destin
     });
   } finally {
     await f.dispose();
+  }
+});
+
+test("workbench version comes only from a plain semver in /healthz", async () => {
+  const instanceId = crypto.randomUUID();
+  let version: unknown = "0.1.4";
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ status: "ok", instanceId, version }),
+  });
+  try {
+    const connection = {
+      instanceId,
+      pid: process.pid,
+      origin: `http://127.0.0.1:${server.port}`,
+      uiToken: "a".repeat(64),
+      mcpToken: "b".repeat(64),
+      adminToken: "c".repeat(64),
+    };
+    expect(await verifyWorkbenchConnection(connection)).toEqual({ version: "0.1.4" });
+    for (const value of [undefined, 3, "0.1.4\nCONTROL_PLANE_API_KEY=x", "http://127.0.0.1:1/"]) {
+      version = value;
+      expect(await verifyWorkbenchConnection(connection)).toEqual({ version: null });
+    }
+    await expect(
+      verifyWorkbenchConnection({ ...connection, instanceId: crypto.randomUUID() }),
+    ).rejects.toMatchObject({ code: "WORKBENCH_UNAVAILABLE" });
+  } finally {
+    server.stop(true);
   }
 });
 
@@ -145,7 +176,15 @@ test("web workbench has no chat backend; MCP/UI/admin authority and frame bounda
     ).toBe(415);
     expect((await request("/api/connection", c.uiToken, null)).status).toBe(403);
     const status = await (await request("/api/connection", c.uiToken)).json();
-    expect(status).toEqual({ mode: "workbench", instanceId: c.instanceId, lastMcpRequestAt: null });
+    expect(status).toEqual({
+      mode: "workbench",
+      instanceId: c.instanceId,
+      lastMcpRequestAt: null,
+      pairedPanels: 0,
+    });
+    const health = await (await fetch(`${c.origin}/healthz`)).json();
+    expect(health).toEqual({ status: "ok", instanceId: c.instanceId, version: VERSION });
+    expect(await verifyWorkbenchConnection(c)).toEqual({ version: VERSION });
     expect(JSON.stringify(status)).not.toContain(c.mcpToken);
     await expect(startWorkbench(f.registry, minimalHtml, 0)).rejects.toMatchObject({
       code: "WORKBENCH_RUNNING",

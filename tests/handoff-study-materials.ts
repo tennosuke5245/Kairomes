@@ -22,7 +22,7 @@ export type StudyMaterial = Readonly<{
 export const HANDOFF_STUDY_WORKSPACE = Object.freeze({
   id: "00000000-0000-4000-8000-000000000010",
   name: "接續測試專案",
-  capabilities: Object.freeze(["read", "write_request"]),
+  capabilities: Object.freeze(["read", "write_request"] as const),
 });
 
 function immutable<T>(value: T): T {
