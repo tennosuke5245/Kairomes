@@ -22,6 +22,7 @@ import {
   diagnosticSummary,
   HandoffInputSchema,
   KairomesError,
+  parseVersion,
   publicError,
   type TunnelReason,
   VERSION,
@@ -35,11 +36,10 @@ import { companionPage } from "./companion-page.ts";
 import { validExtensionId } from "./extension-id.ts";
 import { HandoffStarts } from "./handoff-starts.ts";
 import {
-  classifyTunnelLine,
   nextTunnelRestartDelay,
-  strongerReason,
   TUNNEL_RESTART_DELAYS_MS,
   TUNNEL_RESTART_WINDOW_MS,
+  TunnelRunLog,
   tunnelExitReason,
   tunnelSpawnReason,
 } from "./tunnel-status.ts";
@@ -271,9 +271,11 @@ class TunnelSupervisor {
   private logs: string[] = [];
   private importantLogs: string[] = [];
   private failureLogged = false;
-  /** Most actionable failure class seen in the current run's log lines. */
-  private logReason?: TunnelReason;
+  /** Classified process lines of the current run; lines of an earlier run never reach it. */
+  private runLog?: TunnelRunLog;
   private reason?: TunnelReason;
+  /** The user stopped the Tunnel; only an explicit start or restart lifts it. */
+  private stoppedByUser = false;
   /** Times of automatic restarts; an explicit start or stop clears them. */
   private restarts: number[] = [];
   private retryTimer?: ReturnType<typeof setTimeout>;
@@ -352,24 +354,27 @@ class TunnelSupervisor {
     if (this.importantLogs.length > 6) this.importantLogs.splice(0, this.importantLogs.length - 6);
   }
 
-  /** Process output is classified; Companion's own notes are only recorded. */
-  private addLog(value: string, fromProcess = true) {
+  /**
+   * Output of the current run is classified; Companion's own notes (no run) and late lines of
+   * an earlier run are only recorded.
+   */
+  private addLog(value: string, run?: TunnelRunLog) {
     for (const line of value.split(/\r?\n/)) {
       let clean = stripTerminalControls(line);
       if (this.tunnelApiKey) clean = clean.replaceAll(this.tunnelApiKey, "[redacted]");
       clean = clean.slice(0, 500);
       if (clean) {
         this.logs.push(clean);
-        if (fromProcess) {
+        if (run && run === this.runLog) {
           this.rememberImportantLog(clean);
-          this.logReason = strongerReason(this.logReason, classifyTunnelLine(clean));
+          run.add(clean, Date.now());
         }
       }
     }
     if (this.logs.length > 80) this.logs.splice(0, this.logs.length - 80);
   }
 
-  private async collect(stream: ReadableStream<Uint8Array> | null) {
+  private async collect(stream: ReadableStream<Uint8Array> | null, run: TunnelRunLog) {
     if (!stream) return;
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -381,10 +386,10 @@ class TunnelSupervisor {
         pending += decoder.decode(chunk.value, { stream: true });
         const lines = pending.split(/\r?\n/);
         pending = lines.pop() ?? "";
-        this.addLog(lines.join("\n"));
+        this.addLog(lines.join("\n"), run);
       }
       pending += decoder.decode();
-      this.addLog(pending);
+      this.addLog(pending, run);
     } catch {
       // Process exit can close the stream while a read is pending.
     } finally {
@@ -424,8 +429,17 @@ class TunnelSupervisor {
     this.retryTimer.unref?.();
   }
 
-  /** An explicit start: cancels a scheduled retry and resets the automatic-restart budget. */
+  /** Whether the user stopped the Tunnel and has not started it again since. */
+  get pausedByUser() {
+    return this.stoppedByUser;
+  }
+
+  /**
+   * An explicit start: lifts a user stop, cancels a scheduled retry and resets the
+   * automatic-restart budget. Automatic paths check pausedByUser before calling it.
+   */
   async start() {
+    this.stoppedByUser = false;
     if (this.state === "running" || this.state === "starting") return;
     this.cancelRetry();
     this.restarts = [];
@@ -445,7 +459,8 @@ class TunnelSupervisor {
     this.logs = [];
     this.importantLogs = [];
     this.failureLogged = false;
-    this.logReason = undefined;
+    const run = new TunnelRunLog(Date.now());
+    this.runLog = run;
     const argv = this.commandOverride
       ? [...this.commandOverride]
       : process.platform === "win32" && /\.(cmd|bat)$/i.test(executable)
@@ -481,7 +496,7 @@ class TunnelSupervisor {
       guard.close();
       this.state = "error";
       this.reason = tunnelSpawnReason(error);
-      this.addLog(error instanceof Error ? error.message : "Tunnel 無法啟動。", false);
+      this.addLog(error instanceof Error ? error.message : "Tunnel 無法啟動。");
       return;
     }
     const generation = ++this.generation;
@@ -490,10 +505,11 @@ class TunnelSupervisor {
     this.state = "running";
     this.startedAt = new Date().toISOString();
     const drained = Promise.all([
-      this.collect(child.stdout instanceof ReadableStream ? child.stdout : null),
-      this.collect(child.stderr instanceof ReadableStream ? child.stderr : null),
+      this.collect(child.stdout instanceof ReadableStream ? child.stdout : null, run),
+      this.collect(child.stderr instanceof ReadableStream ? child.stderr : null, run),
     ]);
     void child.exited.then(async (code) => {
+      const exitedAt = Date.now();
       if (generation !== this.generation) return;
       this.child = undefined;
       this.guard = undefined;
@@ -503,14 +519,19 @@ class TunnelSupervisor {
       if (generation !== this.generation) return;
       this.exitCode = code;
       this.state = code === 0 && !this.failureLogged ? "stopped" : "error";
-      this.addLog(code === 0 ? "Tunnel 已停止。" : `Tunnel 已結束，Exit ${code}。`, false);
+      this.addLog(code === 0 ? "Tunnel 已停止。" : `Tunnel 已結束，Exit ${code}。`);
       if (this.state !== "error") return;
-      this.reason = tunnelExitReason(code, this.logReason);
+      this.reason = tunnelExitReason(code, run.reason(exitedAt));
       this.scheduleRestart(generation);
     });
   }
 
-  async stop() {
+  /**
+   * Stops the Tunnel. `byUser` records an explicit stop, so that status polls, workbench
+   * recovery and other automatic paths leave it stopped until the user starts it again.
+   */
+  async stop(byUser = false) {
+    if (byUser) this.stoppedByUser = true;
     this.cancelRetry();
     this.restarts = [];
     this.generation++;
@@ -535,9 +556,9 @@ class TunnelSupervisor {
     this.exitCode = undefined;
     this.startedAt = undefined;
     this.failureLogged = false;
-    this.logReason = undefined;
+    this.runLog = undefined;
     this.reason = undefined;
-    this.addLog("Tunnel 已由 Companion 停止。", false);
+    this.addLog("Tunnel 已由 Companion 停止。");
   }
 
   async restart() {
@@ -741,9 +762,15 @@ class CompanionRuntime {
     };
   }
 
+  /** Automatic Tunnel start, which never overrides an explicit stop by the user. */
+  private get tunnelWanted() {
+    return this.autoStartTunnel && !this.tunnel.pausedByUser;
+  }
+
   async status(): Promise<CompanionStatus> {
+    // Desktop polls this in the background, so recovery restarts the Tunnel only when wanted.
     const recovered = await this.recoverLostExternalWorkbench();
-    if (recovered && this.autoStartTunnel) await this.tunnel.restart();
+    if (recovered && this.tunnelWanted) await this.tunnel.restart();
     const tunnel = this.tunnel.snapshot();
     const connection = await this.workbenchConnection().catch(() => null);
     const attention = await this.attention(connection);
@@ -824,7 +851,12 @@ class CompanionRuntime {
     return { workspaces: await this.withRegistry((registry) => registry.details()) };
   }
 
-  async diagnostics(): Promise<DiagnosticsReport> {
+  /**
+   * `expectedVersion` is the caller's own version: Desktop passes its own, so a Companion or
+   * workbench left over from another version is reported with its fix, and the summary is
+   * headed with Desktop's version. It defaults to this Companion's version.
+   */
+  async diagnostics(expectedVersion = VERSION): Promise<DiagnosticsReport> {
     const tunnel = this.tunnel.snapshot();
     const checks = await collectDiagnostics({
       dataDirectory: this.dataDirectory,
@@ -834,8 +866,9 @@ class CompanionRuntime {
       registry: this.registry,
       which: (command) =>
         command === "tunnel-client" ? this.tunnel.executable() : Bun.which(command),
+      expectedVersion,
     });
-    return { checks, summary: diagnosticSummary(checks, VERSION) };
+    return { checks, summary: diagnosticSummary(checks, expectedVersion) };
   }
 
   async handoff(input: unknown, signal: AbortSignal) {
@@ -920,7 +953,7 @@ class CompanionRuntime {
     }
     await this.closeOwnedWorkbench();
     await this.startWorkbench();
-    if (this.autoStartTunnel && this.workbenchState === "running") await this.tunnel.start();
+    if (this.tunnelWanted && this.workbenchState === "running") await this.tunnel.start();
   }
 
   async configureExtension(extensionId: string) {
@@ -939,7 +972,7 @@ class CompanionRuntime {
     await this.startWorkbench();
     if (this.workbenchState !== "running")
       throw new KairomesError("WORKBENCH_UNAVAILABLE", this.workbenchMessage);
-    if (this.autoStartTunnel) await this.tunnel.start();
+    if (this.tunnelWanted) await this.tunnel.start();
     return this.createPairing();
   }
 
@@ -988,7 +1021,7 @@ class CompanionRuntime {
   }
 
   async stopTunnel() {
-    await this.tunnel.stop();
+    await this.tunnel.stop(true);
   }
 
   async restartTunnel() {
@@ -1033,7 +1066,17 @@ const ActionSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("workspace_details") }).strict(),
-  z.object({ action: z.literal("diagnostics") }).strict(),
+  z
+    .object({
+      action: z.literal("diagnostics"),
+      /** The caller's version, compared with this Companion and its workbench. */
+      expectedVersion: z
+        .string()
+        .max(64)
+        .refine((value) => parseVersion(value) !== null, "版本格式不正確。")
+        .optional(),
+    })
+    .strict(),
   z.object({ action: z.literal("quit") }).strict(),
 ]);
 
@@ -1177,7 +1220,8 @@ export async function startCompanionApplication(options: {
         else if (input.action === "workspace_rename")
           result = await runtime.renameWorkspace(input.workspace_id, input.name);
         else if (input.action === "workspace_details") result = await runtime.workspaceDetails();
-        else if (input.action === "diagnostics") result = await runtime.diagnostics();
+        else if (input.action === "diagnostics")
+          result = await runtime.diagnostics(input.expectedVersion);
         else if (input.action === "quit") setTimeout(() => void shutdown(), 80);
         return Response.json({ ok: true, ...result }, { headers });
       } catch (error) {

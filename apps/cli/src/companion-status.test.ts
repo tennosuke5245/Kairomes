@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { readWorkbenchConnection } from "@kairomes/daemon";
+import { loadWidget, readWorkbenchConnection, startWorkbench } from "@kairomes/daemon";
 import { type CompanionStatus, DIAGNOSTIC_CHECK_IDS, VERSION } from "@kairomes/protocol";
+import { WorkspaceRegistry } from "@kairomes/workspace-core";
 import { fixture } from "../../../tests/fixtures.ts";
 import { readCompanionConnection, startCompanionApplication } from "./companion.ts";
 
@@ -259,6 +260,38 @@ test("diagnostics action returns fixed checks and a summary without local secret
     const live = await c.action({ action: "diagnostics" });
     expect(live.body.summary).toContain("tunnel: ok tunnel_running");
 
+    // Desktop passes its own version: a Companion and workbench left from another version are
+    // reported with their fix, and the summary is headed with Desktop's version.
+    const newer = await c.action({ action: "diagnostics", expectedVersion: "99.0.0" });
+    expect(newer.status).toBe(200);
+    const newerChecks = Object.fromEntries(
+      newer.body.checks.map((check: Json) => [check.id, check]),
+    );
+    expect(newerChecks.companion).toEqual({
+      id: "companion",
+      state: "warn",
+      code: "companion_version_mismatch",
+      fix: "restart_runtime",
+      version: VERSION,
+    });
+    expect(newerChecks.workbench).toEqual({
+      id: "workbench",
+      state: "warn",
+      code: "workbench_version_mismatch",
+      fix: "restart_runtime",
+      version: VERSION,
+    });
+    expect(newer.body.summary.split("\n")[0]).toBe("Kairomes 99.0.0 診斷摘要");
+    expect(newer.body.summary).toContain(
+      `companion: warn companion_version_mismatch version=${VERSION} fix=restart_runtime`,
+    );
+    const same = await c.action({ action: "diagnostics", expectedVersion: VERSION });
+    expect(same.body.checks.find((check: Json) => check.id === "companion").code).toBe(
+      "companion_running",
+    );
+    for (const expectedVersion of ["latest", "1.0.0\nfixed", "1.0", 1, "9".repeat(80)])
+      expect((await c.action({ action: "diagnostics", expectedVersion })).status).toBe(400);
+
     const workbench = await readWorkbenchConnection(f.state);
     const text = JSON.stringify(live.body);
     for (const secret of [
@@ -364,6 +397,104 @@ for (const [name, body, reason] of [
           startedAt: null,
         });
     } finally {
+      await c.app.close();
+      await f.dispose();
+    }
+  }, 20_000);
+}
+
+test("an early profile-tagged warning does not make a later network exit permanent", async () => {
+  const f = await fixture();
+  const counter = path.join(f.directory, "tunnel-runs.txt");
+  const warning = JSON.stringify({
+    level: "WARN",
+    profile: "kairomes",
+    msg: "MCP session not found; client will reinitialize",
+  });
+  const c = await companion(f, {
+    tunnelCommand: [
+      process.execPath,
+      "-e",
+      counterScript(
+        counter,
+        `console.error(${JSON.stringify(warning)});
+         setTimeout(() => {
+           console.error("dial tcp 10.0.0.1:443: connect: connection refused");
+           process.exit(1);
+         }, 300);`,
+      ),
+    ],
+    tunnelRestartDelaysMs: [300, 300, 300],
+  });
+  try {
+    expect((await c.action({ action: "start_tunnel" })).status).toBe(200);
+    const retrying = await until(c.status, (status) => status.tunnel.nextRetryAt !== null);
+    expect(retrying.tunnel).toMatchObject({ state: "error", reason: "network" });
+    await until(
+      () => runs(counter),
+      (count) => count >= 2,
+    );
+  } finally {
+    await c.app.close();
+    await f.dispose();
+  }
+}, 20_000);
+
+for (const stoppedByUser of [false, true]) {
+  test(`workbench takeover ${stoppedByUser ? "keeps a stopped Tunnel stopped" : "restarts a running Tunnel"}`, async () => {
+    const f = await fixture();
+    const counter = path.join(f.directory, "tunnel-runs.txt");
+    const registry = await WorkspaceRegistry.open(f.state);
+    const widget = await loadWidget();
+    if (!widget) throw new Error("Test workbench widget is unavailable.");
+    const external = await startWorkbench(registry, widget, 0);
+    let externalClosed = false;
+    const c = await companion(f, {
+      autoStartTunnel: true,
+      tunnelCommand: [
+        process.execPath,
+        "-e",
+        counterScript(counter, "setInterval(() => {}, 1000);"),
+      ],
+    });
+    try {
+      const attached = await until(c.status, (status) => status.tunnel.state === "running");
+      expect(attached.workbench.state).toBe("external");
+      await until(
+        () => runs(counter),
+        (count) => count === 1,
+      );
+      if (stoppedByUser) {
+        expect((await c.action({ action: "stop_tunnel" })).status).toBe(200);
+        expect((await c.status()).tunnel.state).toBe("stopped");
+      }
+      await external.close();
+      externalClosed = true;
+      registry.close();
+
+      // Desktop's background loop polls status; a takeover must not undo the user's stop.
+      const recovered = await c.status();
+      expect(recovered.workbench.state).toBe("running");
+      if (stoppedByUser) {
+        expect(recovered.tunnel).toMatchObject({ state: "stopped", reason: null });
+        await Bun.sleep(300);
+        expect((await c.status()).tunnel.state).toBe("stopped");
+        expect(await runs(counter)).toBe(1);
+        // Retrying the workbench is not a Tunnel start either; only an explicit start is.
+        expect((await c.action({ action: "retry_workbench" })).status).toBe(200);
+        expect((await c.status()).tunnel.state).toBe("stopped");
+        expect((await c.action({ action: "start_tunnel" })).status).toBe(200);
+      }
+      expect((await c.status()).tunnel.state).toBe("running");
+      await until(
+        () => runs(counter),
+        (count) => count === 2,
+      );
+    } finally {
+      if (!externalClosed) {
+        await external.close();
+        registry.close();
+      }
       await c.app.close();
       await f.dispose();
     }
