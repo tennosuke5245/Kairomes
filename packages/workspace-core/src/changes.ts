@@ -171,16 +171,16 @@ function focusedDiff(pathname: string, before: string, after: string) {
   )
     tail++;
   const contextStart = Math.max(0, head - 2);
-  const oldEnd = Math.min(oldLines.length, oldLines.length - tail + 2);
-  const newEnd = Math.min(newLines.length, newLines.length - tail + 2);
+  // Up to two unchanged lines on each side, taken next to the change (not the file's end).
+  const trailingStart = newLines.length - tail;
   return [
     `--- a/${pathname}`,
     `+++ b/${pathname}`,
     `@@ ${head + 1} @@`,
     ...oldLines.slice(contextStart, head).map((line) => ` ${line}`),
-    ...oldLines.slice(head, oldEnd - Math.min(2, tail)).map((line) => `-${line}`),
-    ...newLines.slice(head, newEnd - Math.min(2, tail)).map((line) => `+${line}`),
-    ...newLines.slice(newLines.length - Math.min(2, tail)).map((line) => ` ${line}`),
+    ...oldLines.slice(head, oldLines.length - tail).map((line) => `-${line}`),
+    ...newLines.slice(head, trailingStart).map((line) => `+${line}`),
+    ...newLines.slice(trailingStart, trailingStart + Math.min(2, tail)).map((line) => ` ${line}`),
   ].join("\n");
 }
 
