@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { type CommandResult, commandActive } from "@kairomes/protocol";
-import { fixture } from "../../../tests/fixtures.ts";
+import { fixture, processAlive } from "../../../tests/fixtures.ts";
 import { CommandManager } from "./commands.ts";
 import { ToolService } from "./tools.ts";
 
@@ -204,14 +204,7 @@ test("command full-access grants approve pending and new commands; revoke cancel
 test("command completion and cancellation reap background descendants and keep IPC private", async () => {
   const f = await fixture();
   const service = new ToolService(f.registry, true);
-  const alive = (pid: number) => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const alive = processAlive;
   try {
     for (const natural of [false, true]) {
       const result = await service.commands.request({
