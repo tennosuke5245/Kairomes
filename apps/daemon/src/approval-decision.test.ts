@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import type { ArtifactImport, Command, TerminalSession } from "@kairomes/protocol";
+import {
+  type ArtifactImport,
+  type Command,
+  DENIAL_REASON_MAX_LENGTH,
+  DenialReasonSchema,
+  type TerminalSession,
+} from "@kairomes/protocol";
 import { fixture } from "../../../tests/fixtures.ts";
 import { ActivityStore } from "./activity.ts";
+import { denialReason } from "./approval-decision.ts";
 import { ArtifactImportManager } from "./artifact-imports.ts";
 import { CommandManager } from "./commands.ts";
 import { FileChangeManager } from "./file-changes.ts";
@@ -19,6 +26,44 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await f.dispose();
+});
+
+test("denial reasons never hand Kairomes URLs, pairing links or tokens to the model", () => {
+  const hex = "0123456789abcdef".repeat(4);
+  const instance = "2ff7f6d9-a7ee-46e6-b4c4-2e21602056e4";
+  const cases: [string, string][] = [
+    [`用這個核准頁 http://127.0.0.1:4318/approvals#session=${hex}`, "用這個核准頁 [LOCAL URL]"],
+    [`http://127.0.0.1:4318/pair#code=${hex}&instance=${instance}`, "[LOCAL URL]"],
+    [`見 HTTP://LOCALHOST:5173/#session=${hex.toUpperCase()}。`, "見 [LOCAL URL]。"],
+    ["改用 http://[::1]:8080/x 或 localhost:3000", "改用 [LOCAL URL] 或 [LOCAL URL]"],
+    ["https://app.localhost/ 與 http://0.0.0.0:80", "[LOCAL URL] 與 [LOCAL URL]"],
+    [`127.0.0.1:4318/approvals#session=${hex}`, "[LOCAL URL]"],
+    [`token ${hex}`, "token [TOKEN REDACTED]"],
+    [
+      `CONTROL_PLANE_API_KEY=sk-proj-${"A".repeat(24)}`,
+      "CONTROL_PLANE_API_KEY=[OPENAI KEY REDACTED]",
+    ],
+  ];
+  for (const [reason, expected] of cases) expect(denialReason(false, reason)).toBe(expected);
+  // Public URLs, short hex values and plain ports stay as typed.
+  for (const reason of [
+    "請參考 https://example.com/docs#section",
+    "commit abc1234、port 4318 與 127.0.0.1",
+    "版本 0.3.0 的 http 範例",
+  ])
+    expect(denialReason(false, reason)).toBe(reason);
+  // Markers are never longer than what they replace, so dense input still fits the schema.
+  for (const reason of [
+    "http://[::1] ".repeat(15),
+    "localhost:1 ".repeat(16),
+    `${hex} `.repeat(3),
+    `http://127.0.0.1:1/#session=${hex}`.padEnd(DENIAL_REASON_MAX_LENGTH, "長"),
+  ]) {
+    const redacted = denialReason(false, reason) ?? "";
+    expect(redacted).not.toMatch(/localhost|127\.0\.0\.1|::1|[0-9a-f]{64}/i);
+    expect(DenialReasonSchema.parse(redacted)).toBe(redacted);
+    expect([...redacted].length).toBeLessThanOrEqual(DENIAL_REASON_MAX_LENGTH);
+  }
 });
 
 async function rejects(action: Promise<unknown>) {

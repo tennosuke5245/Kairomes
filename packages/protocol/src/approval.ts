@@ -6,13 +6,24 @@ import { z } from "zod";
  */
 export const DENIAL_REASON_MAX_LENGTH = 200;
 
-// Control characters, line separators and bidirectional overrides could hide or reorder text.
-const unsafeReasonCharacters = /[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+/**
+ * Characters that could hide, reorder or smuggle text the reviewer never sees: control
+ * characters, line and paragraph separators, every format character (zero-width spaces and
+ * joiners, bidi marks, overrides and isolates, BOM, TAG characters), Hangul fillers and variation
+ * selectors. Two emoji mechanisms stay usable: U+200D only between pictographs (optionally after a
+ * skin tone or U+FE0F), and U+FE0E/U+FE0F only right after an emoji character. Subdivision flags,
+ * which are spelled with TAG characters, are therefore rejected.
+ */
+const unsafeReasonCharacters =
+  /[\p{Cc}\p{Zl}\p{Zp}\u{115f}\u{1160}\u{3164}\u{ffa0}]|[\u{fe00}-\u{fe0d}\u{e0100}-\u{e01ef}]|(?!\u{200d})\p{Cf}|(?<!\p{Extended_Pictographic}[\u{1f3fb}-\u{1f3ff}\u{fe0f}]?)\u{200d}|\u{200d}(?!\p{Extended_Pictographic})|(?<!\p{Emoji})[\u{fe0e}\u{fe0f}]/u;
+/** At least one character that renders as more than blank space or a lone combining mark. */
+const visibleReasonCharacter = /[^\p{White_Space}\p{M}\p{Cf}\u{2800}]/u;
 
 /**
  * Optional explanation the trusted local user attaches when denying a request. It is
- * trimmed, 1-200 code points and single-line. The model reads it back as `denial_reason`
- * on the denied item; only the paired Extension and the admin channel may submit one.
+ * trimmed, 1-200 code points, single-line and free of invisible characters, so the model reads
+ * exactly the text the user saw. The model reads it back as `denial_reason` on the denied item;
+ * only the paired Extension and the admin channel may submit one.
  */
 export const DenialReasonSchema = z
   .string()
@@ -20,7 +31,10 @@ export const DenialReasonSchema = z
   .min(1)
   .max(DENIAL_REASON_MAX_LENGTH)
   .refine((value) => !unsafeReasonCharacters.test(value), {
-    message: "拒絕原因不能包含控制字元或換行。",
+    message: "拒絕原因不能包含控制字元、換行或不可見字元。",
+  })
+  .refine((value) => visibleReasonCharacter.test(value), {
+    message: "拒絕原因需要包含可見的文字。",
   });
 
 const Fingerprint = z.string().regex(/^[a-f0-9]{64}$/);

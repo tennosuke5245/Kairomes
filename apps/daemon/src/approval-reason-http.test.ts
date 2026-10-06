@@ -164,6 +164,49 @@ test("only the trusted deny routes attach a reason, which the model reads from p
       )?.denial_reason,
     ).toBe("不要執行完整建置");
 
+    // The approvals URL and the pairing link say never to hand them to the model. Pasted into a
+    // reason on either trusted route, neither reaches command_poll or command_list.
+    const approvalsUrl = `${c.origin}/approvals#session=${c.adminToken}`;
+    const pairingCode = fragment.get("code") ?? "";
+    expect(pairingCode).toMatch(/^[a-f0-9]{64}$/);
+    for (const [deny, reason, expected] of [
+      [panelPost, `核准頁 ${approvalsUrl} 不要用`, "核准頁 [LOCAL URL] 不要用"],
+      [adminPost, `配對：${pairLink.pairingUrl}`, "配對：[LOCAL URL]"],
+      [panelPost, `代碼 ${pairingCode}`, "代碼 [TOKEN REDACTED]"],
+    ] as const) {
+      const pasted = CommandResultSchema.parse(
+        (
+          await tool("command_request", {
+            workspace_id: f.workspace.id,
+            request_id: crypto.randomUUID(),
+            argv: ["bun", "-e", "console.log('never runs')"],
+            timeout_ms: 5000,
+          })
+        ).structuredContent,
+      ).command;
+      const review = (await snapshot()).commands?.find((item) => item.id === pasted.id);
+      const response = await deny({
+        action: "deny",
+        command_id: pasted.id,
+        fingerprint: review?.fingerprint,
+        reason,
+      });
+      expect(response.status).toBe(200);
+      const polled = (await tool("command_poll", { command_id: pasted.id })).structuredContent;
+      const listed = (await tool("command_list", {})).structuredContent;
+      expect(CommandResultSchema.parse(polled).command.denial_reason).toBe(expected);
+      for (const text of [JSON.stringify(polled), JSON.stringify(listed)])
+        for (const secret of [
+          c.origin,
+          c.adminToken,
+          pairingCode,
+          c.instanceId,
+          "#session=",
+          "#code=",
+        ])
+          expect(text).not.toContain(secret);
+    }
+
     // The panel denies a terminal with a reason.
     const session = TerminalResultSchema.parse(
       (
