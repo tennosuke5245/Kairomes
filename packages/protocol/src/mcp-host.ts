@@ -119,11 +119,23 @@ export const McpInputs = {
   mcp_read_call: McpCallInputSchema,
 } as const;
 
+/**
+ * Platform-neutral check for a stdio MCP working directory, also bundled for the browser: a
+ * Windows drive path (`C:\` or `C:/`), a UNC share (`\\server\share`) or a POSIX path. The Host
+ * re-checks with its own platform rules before saving and before launching.
+ */
+export function isAbsoluteMcpCwd(value: string) {
+  return /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]|\/)/.test(value);
+}
+
+export const MCP_CWD_INVALID_MESSAGE = "工作目錄須為絕對路徑。";
+
 const McpStdioTransportConfigSchema = z
   .object({
     kind: z.literal("stdio"),
     command: z.string().min(1).max(2048),
     args: z.array(z.string().max(4096)).max(64).default([]),
+    // Stored configurations stay readable; a relative legacy value makes only that mount unavailable.
     cwd: z.string().min(1).max(4096).optional(),
     env: z
       .array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/))
@@ -221,7 +233,12 @@ export const McpPanelInputSchema = z.discriminatedUnion("action", [
       name: z.string().trim().min(1).max(80),
       command: z.string().min(1).max(2048),
       args: z.array(z.string().max(4096)).max(64).default([]),
-      cwd: z.string().min(1).max(4096).optional(),
+      cwd: z
+        .string()
+        .min(1)
+        .max(4096)
+        .refine(isAbsoluteMcpCwd, { message: MCP_CWD_INVALID_MESSAGE })
+        .optional(),
       env: z
         .array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/))
         .max(32)

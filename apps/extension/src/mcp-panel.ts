@@ -1,5 +1,7 @@
 import {
+  isAbsoluteMcpCwd,
   MCP_AUTH_LIMITS,
+  MCP_CWD_INVALID_MESSAGE,
   type McpAuthInput,
   type McpAuthResult,
   type McpPanelState,
@@ -20,6 +22,7 @@ import {
   type McpMutationScope,
   McpMutationTracker,
   mcpAddFingerprint,
+  mcpCwdRejected,
   readMcpMutationState,
   settleMcpMutation,
 } from "./mcp-mutation.ts";
@@ -107,6 +110,7 @@ export class McpPanel {
   private readonly args = el("textarea", "k-textarea k-input--mono");
   private readonly argsError = el("p", "k-error");
   private readonly cwd = el("input", "k-input k-input--mono");
+  private readonly cwdError = el("p", "k-error");
   private readonly preview = el("div", "mcp-add__preview");
   private readonly previewList = el("div", "mcp-add__argv");
   private readonly previewRisk = el("p", "mcp-add__risk");
@@ -349,13 +353,18 @@ export class McpPanel {
     this.argsError.hidden = true;
     this.cwd.autocomplete = "off";
     this.cwd.spellcheck = false;
-    this.cwd.placeholder = "可留空";
+    // Left empty, the program starts in Kairomes' own MCP folder, not wherever the Host started.
+    this.cwd.placeholder = "可留空；指定時填絕對路徑";
+    this.cwd.setAttribute("aria-describedby", "mcp-add-cwd-error");
+    this.cwdError.id = "mcp-add-cwd-error";
+    this.cwdError.hidden = true;
     const nameField = field("名稱", this.name, "mcp-add-name");
     const targetField = field(this.targetLabel, this.target, "mcp-add-target");
     const argsField = field("參數", this.args, "mcp-add-args");
     argsField.append(this.argsError);
     argsField.classList.add("mcp-add__stdio");
     const cwdField = field("工作目錄", this.cwd, "mcp-add-cwd");
+    cwdField.append(this.cwdError);
     cwdField.classList.add("mcp-add__stdio");
 
     // The exact argv is shown before saving, with one host-privilege line.
@@ -379,6 +388,10 @@ export class McpPanel {
     );
     for (const input of [this.target, this.args])
       input.addEventListener("input", this.updatePreview);
+    this.cwd.addEventListener("input", () => {
+      const value = this.cwd.value.trim();
+      if (!value || isAbsoluteMcpCwd(value)) this.showCwdError(false);
+    });
 
     const actions = el("div", "k-dialog__actions");
     this.submit.type = "submit";
@@ -432,6 +445,13 @@ export class McpPanel {
       );
       if (remove && !remove.closest("[hidden]")) remove.focus();
     });
+  }
+
+  private showCwdError(visible: boolean) {
+    this.cwdError.textContent = visible ? MCP_CWD_INVALID_MESSAGE : "";
+    this.cwdError.hidden = !visible;
+    if (visible) this.cwd.setAttribute("aria-invalid", "true");
+    else this.cwd.removeAttribute("aria-invalid");
   }
 
   private openRemove(server: Server) {
@@ -736,10 +756,11 @@ export class McpPanel {
     return this.uncertain;
   }
 
-  private async act(body: McpMutationBody) {
+  /** "applied", "cwd" when the Host refused the working directory before saving, else undefined. */
+  private async act(body: McpMutationBody): Promise<"applied" | "cwd" | undefined> {
     this.syncMutation();
-    if (this.busy || !this.available || this.uncertain || this.reviewRequired) return false;
-    if (!this.state) return false;
+    if (this.busy || !this.available || this.uncertain || this.reviewRequired) return;
+    if (!this.state) return;
     const base = structuredClone(this.state);
     const source = this.source();
     const scope = this.mutation.capture();
@@ -749,7 +770,7 @@ export class McpPanel {
     this.render(undefined, this.available);
     try {
       const fingerprint = await mcpAddFingerprint(body);
-      if (!current()) return false;
+      if (!current()) return;
       if ((body.action === "add_stdio" || body.action === "add_http") && !fingerprint) {
         if (this.addDialog.open) {
           this.report("");
@@ -757,10 +778,10 @@ export class McpPanel {
           this.dialogResult.hidden = false;
           this.reconcileButton.hidden = true;
         } else this.report("請檢查連線設定。");
-        return false;
+        return;
       }
       if (!this.available || !current() || !this.mutation.begin(base, body, source, fingerprint))
-        return false;
+        return;
       const result = await settleMcpMutation(
         async (requestBody) => {
           if (!current()) throw new Error("連線已變更。");
@@ -787,18 +808,26 @@ export class McpPanel {
         },
         (state) => this.mutation.observe(state, source),
         current,
+        (error) => body.action === "add_stdio" && mcpCwdRejected(error),
       );
-      if (!current()) return false;
+      if (!current()) return;
+      if (result.outcome === "rejected") {
+        // Refused before saving: nothing to reconcile, and the form marks the field.
+        this.mutation.acknowledge(source);
+        if (this.addDialog.open) this.showResult("");
+        else this.report(MCP_CWD_INVALID_MESSAGE);
+        return "cwd";
+      }
       if (result.state) this.state = result.state;
       if (result.outcome === "unknown") {
         this.showReconciliation(false);
-        return false;
+        return;
       }
       if (result.outcome === "applied") this.mutation.acknowledge(source);
       this.reviewRequired = result.outcome === "reconciled" && this.addDialog.open;
       if (result.outcome === "reconciled") this.showReconciliation(true);
       else this.showResult("");
-      return result.outcome === "applied";
+      return result.outcome === "applied" ? "applied" : undefined;
     } finally {
       if (current()) {
         this.busy = false;
@@ -866,20 +895,25 @@ export class McpPanel {
       this.args.focus();
       return;
     }
+    const cwd = stdio ? this.cwd.value.trim() : "";
+    if (cwd && !isAbsoluteMcpCwd(cwd)) {
+      this.showCwdError(true);
+      this.cwd.focus();
+      return;
+    }
     const previousIds = new Set(this.state?.servers.map((server) => server.id));
-    const added = await this.act(
+    const outcome = await this.act(
       stdio
-        ? {
-            action: "add_stdio",
-            name,
-            command: target,
-            args,
-            ...(this.cwd.value.trim() ? { cwd: this.cwd.value.trim() } : {}),
-          }
+        ? { action: "add_stdio", name, command: target, args, ...(cwd ? { cwd } : {}) }
         : { action: "add_http", name, url: target, header_env: {} },
     );
+    if (outcome === "cwd" && this.isMutationCurrent(scope) && this.addDialog.open) {
+      this.showCwdError(true);
+      this.cwd.focus();
+      return;
+    }
     if (
-      added &&
+      outcome === "applied" &&
       this.isMutationCurrent(scope) &&
       this.state?.servers.some((server) => server.name === name && !previousIds.has(server.id))
     ) {
@@ -887,6 +921,7 @@ export class McpPanel {
       this.target.value = "";
       this.args.value = "";
       this.cwd.value = "";
+      this.showCwdError(false);
       this.updatePreview();
       this.addDialog.close();
     }

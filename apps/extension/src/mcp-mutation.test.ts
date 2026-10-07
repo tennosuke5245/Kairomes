@@ -3,6 +3,7 @@ import type { McpCatalogTool, McpPanelState } from "@kairomes/protocol";
 import {
   McpMutationTracker,
   mcpAddFingerprint,
+  mcpCwdRejected,
   mcpMutationObserved,
   readMcpMutationState,
   settleMcpMutation,
@@ -62,6 +63,55 @@ test("a successful mutation does not perform a second request", async () => {
   );
   expect(result).toEqual({ outcome: "applied", state: "current" });
   expect(requests).toHaveLength(1);
+});
+
+test("only a recognized refusal skips reconciliation; other failures still read back", async () => {
+  const refusal = Object.assign(new Error("請求未被接受。"), { code: "MCP_CWD_INVALID" });
+  expect(mcpCwdRejected(refusal)).toBe(true);
+  for (const other of [new Error("Offline"), { code: "VALIDATION" }, undefined, "MCP_CWD_INVALID"])
+    expect(mcpCwdRejected(other)).toBe(false);
+  const requests: unknown[] = [];
+  let paused = false;
+  const body = { action: "add_stdio", name: "相對路徑", command: "npx", cwd: "/srv/work" };
+  const rejected = await settleMcpMutation(
+    async (request) => {
+      requests.push(request);
+      throw refusal;
+    },
+    body,
+    () => {
+      paused = true;
+    },
+    () => false,
+    () => true,
+    mcpCwdRejected,
+  );
+  expect(rejected).toEqual({ outcome: "rejected", error: refusal });
+  expect({ requests, paused }).toEqual({ requests: [body], paused: false });
+  const lost = await settleMcpMutation(
+    async (request) => {
+      requests.push(request);
+      throw new Error("Response lost");
+    },
+    body,
+    () => {
+      paused = true;
+    },
+    () => false,
+    () => true,
+    mcpCwdRejected,
+  );
+  expect(lost).toEqual({ outcome: "unknown" });
+  expect(paused).toBe(true);
+  expect(requests).toEqual([body, body, { action: "list" }]);
+});
+
+test("a relative working directory has no launch identity, so it is never sent", async () => {
+  const stdio = { action: "add_stdio", name: "服務", command: "npx", args: [], env: [] };
+  for (const cwd of ["project", "./project", "~/project", "C:project"])
+    expect(await mcpAddFingerprint({ ...stdio, cwd })).toBeUndefined();
+  for (const cwd of ["C:\\work", "/srv/work", "\\\\server\\share"])
+    expect(await mcpAddFingerprint({ ...stdio, cwd })).toMatch(/^[a-f0-9]{64}$/);
 });
 
 const tool: McpCatalogTool = {
@@ -324,7 +374,7 @@ test("a same-name new server with a different launch body cannot settle the orig
   for (const change of [
     { command: "other-program" },
     { args: ["other-argument"] },
-    { cwd: "other-directory" },
+    { cwd: "/srv/other-directory" },
     { env: ["OTHER_KEY"] },
   ]) {
     const stdio = {
@@ -332,7 +382,7 @@ test("a same-name new server with a different launch body cannot settle the orig
       name: "同名服務",
       command: "program",
       args: ["argument"],
-      cwd: "directory",
+      cwd: "/srv/directory",
       env: ["ORIGINAL_KEY"],
     };
     expect(await mcpAddFingerprint({ ...stdio, ...change })).not.toBe(

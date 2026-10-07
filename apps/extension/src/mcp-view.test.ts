@@ -110,9 +110,7 @@ test("an off server keeps its switch and is neither 已開啟 nor 需處理", ()
 });
 
 test("a start failure shows the Host's reason and 重試, not the refresh icon", () => {
-  const view = mcpServerView(
-    server({ state: "unavailable", message: "找不到啟動程式或工作目錄。" }),
-  );
+  const view = mcpServerView(server({ state: "unavailable", message: "找不到啟動程式。" }));
   // The switch stays (a failing server can still be turned off), so 已開啟 counts it as well
   // as 需處理: the summary never disagrees with the switches on screen.
   expect(view).toMatchObject({
@@ -126,7 +124,7 @@ test("a start failure shows the Host's reason and 重試, not the refresh icon",
   expect(view.notice).toEqual({
     tone: "danger",
     icon: "WarningCircle",
-    text: "找不到啟動程式或工作目錄。",
+    text: "找不到啟動程式。",
     action: { kind: "refresh", label: "重試", primary: false },
   });
   expect(mcpServerView(server({ state: "unavailable" })).notice?.text).toBe(

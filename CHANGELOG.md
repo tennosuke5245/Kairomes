@@ -19,6 +19,8 @@
 ### 改善與修正
 
 - `mcp_tool_call`／`mcp_read_call` 在 Host 執行期間，同一 `request_id` 至多送出一次；結果不明回 `MCP_CALL_UNKNOWN`，不再重送。
+- 本機 stdio MCP 不再繼承 Host 的工作目錄：未指定時在資料目錄的 `mcp-runtime` 啟動，內含最小 `package.json`，讓 npm／npx／bunx 不會向上採用 Host 所在專案或 Kairomes 原始碼目錄的依賴（修正 Host 位於專案子目錄時 `npx -y chrome-devtools-mcp@latest` 因 npm 崩潰而無法啟動）。子程序的 PATH 也移除 Host 啟動時加入的 `node_modules/.bin` 與 Bun 暫時 node shim。
+- 工作目錄須為絕對路徑：側欄當場提示，`kairomes mcp add-stdio --cwd` 依目前資料夾解析相對路徑。舊設定的相對路徑不再依 Host 位置解析，該 MCP 顯示需改為絕對路徑，`doctor` 會計數；資料夾不存在時回報「工作目錄不存在或不是資料夾」，不再誤報找不到程式。
 - stdio relay 請求上限由 32 KiB 改為 320 KiB，過大、逾時、忙碌與離線各自回報。
 - 側欄快照只附待核准與套用中的差異，保留大量變更時核准串流不再反覆重連；命令與終端機輸出不再觸發側欄快照。
 - 審閱差異的後置上下文改取變更旁的行；換行差異在側欄、本機核准頁與工作台顯示一致。
@@ -40,11 +42,12 @@
 ### 更新與限制
 
 - 需同步更新 Desktop 與 Extension；`WIDGET_URI` 改為 v8、`MCP_RESULT_URI` 改為 v4。ChatGPT 仍顯示舊工作台或舊工具清單時，到 Connector 設定按「重新整理」。
+- 以相對工作目錄加入的本機 MCP 不會再啟動；請移除後以絕對路徑重新加入。
 - 圖片匯入已在原始碼實作，**由 ChatGPT 交出檔案的途徑尚未以真實 ChatGPT 驗證**；側欄貼上、選擇檔案與拖放隨時可用。匯入紀錄與 `request_id` 只存在記憶體，Host 重啟後不保留。
 - 命令／終端機仍使用主機使用者權限，不是 OS sandbox。新介面只以合成預覽、Vite 預覽與 `desktop:check` 檢查，尚未在原生視窗、WebView2、真實 Extension 或 Tunnel 實機驗收。
 - 此版本目前為原始碼準備；下載仍為 0.1.4。
 
-提交前已通過 `bun run check`（941 個測試）與 `bun run desktop:check`（23 個 Rust 測試），並檢查文件相對連結。
+提交前已通過 `bun run check`（958 個測試）與 `bun run desktop:check`（23 個 Rust 測試），並檢查文件相對連結。
 
 ## 0.2.0（待發佈）
 

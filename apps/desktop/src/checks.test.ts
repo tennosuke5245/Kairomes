@@ -201,6 +201,24 @@ test("environment checks map each code to one fact and an unknown stays unknown"
   // Codex CLI is optional: missing is a fact, not a failure.
   expect(byId(rows, "codex_cli")).toMatchObject({ tone: "neutral", pill: "未安裝" });
   expect(byId(rows, "mcp_config")).toMatchObject({ pill: "無法確認", pillIcon: "Question" });
+  const relative = deriveCheckRows({
+    snapshot,
+    now: NOW,
+    checks: [
+      {
+        id: "mcp_config",
+        state: "warn",
+        code: "mcp_config_cwd_relative",
+        count: 2,
+        fix: "review_mcp_config",
+      },
+    ],
+  });
+  expect(byId(relative, "mcp_config")).toMatchObject({
+    tone: "warning",
+    pill: "需要更新",
+    detail: "2 個本機 MCP 的工作目錄需改為絕對路徑；請到側欄移除後重新加入",
+  });
 });
 
 test("no row repeats the cause or the meta the status line states", () => {

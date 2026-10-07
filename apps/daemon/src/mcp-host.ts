@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { chmod, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   KairomesError,
   LIMITS,
+  MCP_CWD_INVALID_MESSAGE,
   type McpAuthInput,
   type McpAuthResult,
   type McpAuthSummary,
@@ -38,6 +40,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { isAbsoluteLaunchDirectory, launchDirectory, sanitizeLaunchPath } from "./mcp-launch.ts";
 import { type McpOAuthDependencies, McpOAuthManager, type McpOAuthTarget } from "./mcp-oauth.ts";
 
 const CONFIG_FILE = "mcp-servers.json";
@@ -185,12 +188,17 @@ function safeMessage(error?: unknown, transport?: McpMountConfig["transport"]["k
     if (error.code === "MCP_TOOL_LIMIT") return "工具數量超過 128 項上限。";
     if (error.code === "MCP_SCHEMA_LIMIT") return "工具定義超過 64 KiB 上限。";
     if (error.code === "MCP_TOOL_NAME_INVALID") return "服務回傳無效或重複的工具名稱。";
+    // Fixed text only: servers[].message reaches the model, so no path or variable is echoed.
+    if (error.code === "MCP_CWD_INVALID") return "工作目錄設定需改為絕對路徑。";
+    if (error.code === "MCP_CWD_MISSING") return "工作目錄不存在或不是資料夾。";
+    if (error.code === "MCP_RUNTIME_UNAVAILABLE") return "無法準備 MCP 工作目錄。";
   }
   if (error instanceof McpError && error.code === ErrorCode.RequestTimeout)
     return "連線逾時；請完成必要登入後再重新探索。";
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
   if (transport === "stdio") {
-    if (code === "ENOENT") return "找不到啟動程式或工作目錄。";
+    // The working directory is checked before spawning, so ENOENT here means the program.
+    if (code === "ENOENT") return "找不到啟動程式。";
     if (code === "EACCES" || code === "EPERM") return "啟動權限不足。";
   }
   return "無法連線；請由本機使用者檢查這個 MCP 的設定與執行狀態。";
@@ -250,6 +258,19 @@ function environment(names: string[]): Record<string, string> {
     if (value === undefined)
       throw new KairomesError("MCP_ENV_MISSING", `缺少 MCP 所需的環境變數：${name}`);
     result[name] = value;
+  }
+  let cwd: string | undefined;
+  try {
+    cwd = process.cwd();
+  } catch {
+    // The Host's folder was removed; the child no longer depends on it, so only its PATH chain is unknown.
+  }
+  const context = { cwd, tmpdir: tmpdir(), platform: process.platform };
+  // Windows names it Path; the SDK copies it as PATH, and this value replaces that copy.
+  for (const key of Object.keys(result)) {
+    const value = result[key];
+    if (key.toUpperCase() === "PATH" && value !== undefined)
+      result[key] = sanitizeLaunchPath(value, context);
   }
   return result;
 }
@@ -416,6 +437,7 @@ function normalizeTool(runtime: Runtime, discovered: DiscoveredTool): McpCatalog
 }
 
 export class McpHostManager {
+  private readonly dataDirectory: string;
   private readonly configPath: string;
   private readonly validator = new AjvJsonSchemaValidator();
   private readonly calls = new Map<string, CachedCall>();
@@ -431,6 +453,7 @@ export class McpHostManager {
   private readonly oauth: McpOAuthManager;
 
   constructor(dataDirectory: string, options: { oauth?: McpOAuthDependencies } = {}) {
+    this.dataDirectory = path.resolve(dataDirectory);
     this.configPath = path.join(dataDirectory, CONFIG_FILE);
     this.oauth = new McpOAuthManager(options.oauth);
   }
@@ -612,15 +635,17 @@ export class McpHostManager {
     return structuredClone(config);
   }
 
-  private transport(
+  private async transport(
     config: McpMountConfig,
     oauth?: ReturnType<McpOAuthManager["transport"]>,
-  ): Transport {
+  ): Promise<Transport> {
     if (config.transport.kind === "stdio") {
+      // Never the Host's own working directory: it depends on how the Host was started.
+      const cwd = await launchDirectory(config.transport.cwd, this.dataDirectory);
       const transport = new StdioClientTransport({
         command: config.transport.command,
         args: config.transport.args,
-        ...(config.transport.cwd ? { cwd: path.resolve(config.transport.cwd) } : {}),
+        cwd,
         env: environment(config.transport.env),
         stderr: "pipe",
         maxBufferSize: 2 * 1024 * 1024,
@@ -714,7 +739,8 @@ export class McpHostManager {
         const oauth = target ? await this.oauth.prepareTransport(target) : undefined;
         authEpoch = this.oauth.generation(runtime.config.id);
         if (!current()) return;
-        const transport = this.transport(runtime.config, oauth);
+        const transport = await this.transport(runtime.config, oauth);
+        if (!current()) return;
         const client = new Client(
           { name: `kairomes:${runtime.config.id}`, version: VERSION },
           {
@@ -1307,6 +1333,9 @@ export class McpHostManager {
   }
 
   async addStdio(input: AddStdioMount): Promise<McpMountConfig> {
+    // Saved as given (the panel fingerprints this exact value); only an absolute path is accepted.
+    if (input.cwd && !isAbsoluteLaunchDirectory(input.cwd))
+      throw new KairomesError("MCP_CWD_INVALID", MCP_CWD_INVALID_MESSAGE);
     await this.load();
     await this.reloadIfChanged();
     const config = McpMountConfigSchema.parse({

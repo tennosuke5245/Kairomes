@@ -7,6 +7,7 @@ import {
   IMAGE_IMPORT_UPLOAD_TYPES,
   KairomesError,
   LIMITS,
+  MCP_CWD_INVALID_MESSAGE,
   McpAuthInputSchema,
   McpPanelInputSchema,
   PanelAccessInputSchema,
@@ -481,7 +482,12 @@ function startLocalServer(
             return Response.json(receipt, { headers: panelHeaders });
           }
           if (url.pathname === "/api/panel/mcp") {
-            const input = McpPanelInputSchema.parse(await request.json());
+            const parsed = McpPanelInputSchema.safeParse(await request.json());
+            // A relative working directory gets its own code so the panel can mark that field.
+            if (!parsed.success && parsed.error.issues.some((issue) => issue.path[0] === "cwd"))
+              throw new KairomesError("MCP_CWD_INVALID", MCP_CWD_INVALID_MESSAGE);
+            if (!parsed.success) throw parsed.error;
+            const input = parsed.data;
             if (!pairing.valid(panelToken))
               return Response.json(
                 { message: "配對已失效。" },
