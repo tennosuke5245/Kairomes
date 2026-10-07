@@ -33,7 +33,6 @@ import {
 } from "./approval-state.ts";
 import { browser } from "./browser.ts";
 import { setIcon } from "./icons.ts";
-import { importErrorText } from "./image-file.ts";
 import { ImageIntake, type ImageTarget } from "./image-intake.ts";
 import { ImageUploadTracker } from "./image-upload.ts";
 import { ImportClient, ImportRequestError } from "./import-client.ts";
@@ -45,6 +44,7 @@ import { NoticeSlot } from "./notice-slot.ts";
 import { parsePairingUrl, parseWorkbenchUrl } from "./pairing.ts";
 import { PanelAnnouncements } from "./panel-announcements.ts";
 import { type NoticeTone, panelRecoveryNotice, STALE_NOTICE } from "./panel-error.ts";
+import { PanelRequestError, panelRequestError } from "./panel-request-error.ts";
 import { PanelStreamAvailability } from "./panel-stream-availability.ts";
 import { importHydrationText, panelView, settingsBackLabel } from "./panel-view.ts";
 import { commandTokens, setupCommands } from "./setup-commands.ts";
@@ -458,39 +458,8 @@ async function api(
     ),
   });
   if (response.status === 401 || response.status === 403) invalidatePairing(target);
-  if (!response.ok) {
-    let code: string | undefined;
-    try {
-      const data: unknown = await response.json();
-      if (data && typeof data === "object" && "code" in data && typeof data.code === "string")
-        code = data.code;
-    } catch {
-      /* The status alone still classifies the failure. */
-    }
-    throw new PanelRequestError(response.status, code);
-  }
+  if (!response.ok) throw await panelRequestError(response);
   return response.json();
-}
-class PanelRequestError extends Error {
-  constructor(
-    readonly status: number,
-    /** Daemon error code, e.g. IMPORT_PREVIEW_REQUIRED; only fixed-map text is shown. */
-    readonly code?: string,
-  ) {
-    super(
-      status === 401 || status === 403
-        ? "配對已失效。"
-        : code === "IMPORT_PREVIEW_REQUIRED"
-          ? importErrorText(code)
-          : status === 409
-            ? "請求已變更；請重新審閱。"
-            : status === 429
-              ? "請稍後再查詢狀態。"
-              : status < 500
-                ? "請求未被接受。"
-                : "結果待確認。",
-    );
-  }
 }
 
 /** Fetch for the binary image routes: same token, origin and no-redirect rule as api(). */
