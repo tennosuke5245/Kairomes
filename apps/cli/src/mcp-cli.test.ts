@@ -67,8 +67,14 @@ test("mcp add-stdio saves an absolute --cwd as given", async () => {
     expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
     const saved = JSON.parse(await readFile(path.join(f.state, "mcp-servers.json"), "utf8"));
     expect(saved.servers[0].transport.cwd).toBe(folder);
-    // The folder exists, so the only failure left is the missing synthetic program.
-    expect(JSON.parse(stdout)).toMatchObject({ state: "unavailable", message: "找不到啟動程式。" });
+    // The folder exists, so the only failure left is the missing synthetic program, never the folder.
+    const mount = JSON.parse(stdout) as { state: string; message: string };
+    expect(mount.state).toBe("unavailable");
+    expect(mount.message).not.toBe("工作目錄不存在或不是資料夾。");
+    expect(mount.message).not.toBe("工作目錄設定需改為絕對路徑。");
+    // Windows launches commands through cmd.exe, so a missing program exits instead of failing
+    // to spawn and is reported as a generic connection failure there.
+    if (process.platform !== "win32") expect(mount.message).toBe("找不到啟動程式。");
   } finally {
     await f.dispose();
   }
