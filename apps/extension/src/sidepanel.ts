@@ -387,11 +387,25 @@ async function api(
     ),
   });
   if (response.status === 401 || response.status === 403) invalidatePairing(target);
-  if (!response.ok) throw new PanelRequestError(response.status);
+  if (!response.ok) {
+    let code: string | undefined;
+    try {
+      const data: unknown = await response.json();
+      if (data && typeof data === "object" && "code" in data && typeof data.code === "string")
+        code = data.code;
+    } catch {
+      /* The status alone still classifies the failure. */
+    }
+    throw new PanelRequestError(response.status, code);
+  }
   return response.json();
 }
 class PanelRequestError extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly status: number,
+    /** Daemon error code, e.g. MCP_CWD_INVALID; only fixed-map text is ever shown for it. */
+    readonly code?: string,
+  ) {
     super(
       status === 401 || status === 403
         ? "配對已失效。"

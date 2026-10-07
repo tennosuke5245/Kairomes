@@ -1,8 +1,15 @@
-import { McpPanelInputSchema, type McpPanelState, mcpConfigFingerprint } from "@kairomes/protocol";
+import {
+  MCP_COMMAND_RELATIVE_MESSAGE,
+  MCP_CWD_INVALID_MESSAGE,
+  McpPanelInputSchema,
+  type McpPanelState,
+  mcpConfigFingerprint,
+} from "@kairomes/protocol";
 
 export type McpMutationResult<T> =
   | { outcome: "applied"; state: T }
   | { outcome: "reconciled"; state: T }
+  | { outcome: "rejected"; error: unknown }
   | { outcome: "unknown"; state?: T };
 
 export type McpMutationBody = { action: string; [key: string]: unknown };
@@ -10,6 +17,22 @@ export type McpMutationBody = { action: string; [key: string]: unknown };
 export interface McpMutationScope {
   source?: string;
   generation: number;
+}
+
+const cwdRefusals: Record<string, string> = {
+  MCP_CWD_INVALID: MCP_CWD_INVALID_MESSAGE,
+  MCP_COMMAND_RELATIVE: MCP_COMMAND_RELATIVE_MESSAGE,
+};
+
+/**
+ * The working-directory field's message when the Host refused a stdio add before saving anything:
+ * a relative working directory, or a relative command path without one. Otherwise undefined.
+ */
+export function mcpCwdRefusal(error: unknown) {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  return typeof code === "string" && Object.hasOwn(cwdRefusals, code)
+    ? cwdRefusals[code]
+    : undefined;
 }
 
 export async function mcpAddFingerprint(body: McpMutationBody) {
@@ -167,20 +190,25 @@ export class McpMutationTracker {
   }
 }
 
-/** A lost response never causes a mutation to be replayed, including an add request. */
+/**
+ * A lost response never causes a mutation to be replayed, including an add request. Only an
+ * answer that `rejected` recognizes as a refusal made before any change skips reconciliation.
+ */
 export async function settleMcpMutation<T>(
   request: (body: unknown) => Promise<T>,
   body: unknown,
   uncertain: () => void,
   observed: (state: T) => boolean,
   current: () => boolean = () => true,
+  rejected: (error: unknown) => boolean = () => false,
 ): Promise<McpMutationResult<T>> {
   if (!current()) return { outcome: "unknown" };
   try {
     const state = await request(body);
     return current() ? { outcome: "applied", state } : { outcome: "unknown" };
-  } catch {
+  } catch (error) {
     if (!current()) return { outcome: "unknown" };
+    if (rejected(error)) return { outcome: "rejected", error };
     uncertain();
     if (!current()) return { outcome: "unknown" };
     try {

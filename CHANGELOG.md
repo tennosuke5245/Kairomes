@@ -18,12 +18,15 @@
 - MCP 工具定義的合計上限調整為每工具 64 KiB；授權與工具可用分開顯示，管理按鈕維持一致高度。
 - 切換工作台時保留各來源的待確認操作；MCP 配置、登入與工具清單共同核對，避免混用舊狀態。
 - 取消 Codex 接續後，不再啟動延遲完成路徑檢查的紀錄讀取程序。
+- 本機 stdio MCP 不再繼承 Host 的工作目錄：未指定時在資料目錄的 `mcp-runtime` 啟動，內含最小 `package.json`，讓 npm／npx／bunx 不會向上採用 Host 所在專案或 Kairomes 原始碼目錄的依賴（修正 Host 位於專案子目錄時 `npx -y chrome-devtools-mcp@latest` 因 npm 崩潰而無法啟動）。由 `bun run` 或 npm script 啟動 Host 時，子程序的 PATH 移除這些啟動器加入的 `node_modules/.bin`；Bun 暫時 node shim 一律移除，使用者自己加入的項目保留。
+- 工作目錄須為絕對路徑，啟動程式寫成相對路徑（如 `./start.sh`）時也須指定：側欄當場在「工作目錄」欄提示，貼上帶引號的 Windows 路徑會自動去除引號；`kairomes mcp add-stdio` 同樣不接受相對路徑。舊設定的相對工作目錄或相對啟動程式不再依 Host 位置解析也不啟動，`doctor` 會計數；資料夾不存在時回報「工作目錄不存在或不是資料夾」，不再誤報找不到程式。
 
 ### 更新與限制
 
 - 更新時需同步 Desktop 與 Extension；Extension ID 變更時重新配對。Host 重啟後，使用 Kairomes 原生 OAuth 的服務需再登入。
+- 未指定工作目錄的本機 MCP 改在 `mcp-runtime` 啟動，參數中的相對路徑（如 `node dist/index.js`）也以此為準；請改成絕對路徑或補上絕對工作目錄。使用相對工作目錄或相對啟動程式的設定不會再啟動，請解除掛載後以絕對路徑重新加入。
 - 接續不自動傳送訊息或授權。命令／終端機仍使用主機使用者權限，不是 OS sandbox。
 - Layer 修補後已有使用者回報連線成功；特定工具、長期登入、ChatGPT／Tunnel 及跨平台實機流程未全部驗收。
 - 此版本目前為原始碼準備；下載仍為 0.1.4。詳細證據見[產品設計文件](docs/product-design/README.md)。
 
-提交前已通過 `bun run check`（381 個測試）與 `bun run desktop:check`，並檢查文件相對連結。
+提交前已通過 `bun run check`（576 個測試）與 `bun run desktop:check`，並檢查文件相對連結。

@@ -1,6 +1,16 @@
+import { writeFileSync } from "node:fs";
 import { z } from "@kairomes/protocol";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+// `--report <file>` records how the Host launched this process, for launch-context tests.
+const report = process.argv.indexOf("--report");
+const reportFile = report > 1 ? process.argv[report + 1] : undefined;
+if (reportFile)
+  writeFileSync(
+    reportFile,
+    JSON.stringify({ cwd: process.cwd(), path: process.env.PATH ?? process.env.Path ?? null }),
+  );
 
 const server = new McpServer({ name: "kairomes-read-fixture", version: "1.0.0" });
 
