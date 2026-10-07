@@ -4,7 +4,6 @@ import {
   dragKind,
   dropEffectFor,
   imageFromTransfer,
-  pasteHasImage,
 } from "./image-transfer.ts";
 
 const file = (name: string, type: string) => new File([new Uint8Array([1])], name, { type });
@@ -53,10 +52,10 @@ test("drag types decide the overlay before any file can be read", () => {
 });
 
 test("a text paste is never mistaken for an image paste", () => {
-  expect(pasteHasImage({ files: [], items: [item(null, "string")], types: ["text/plain"] })).toBe(
-    false,
-  );
-  expect(pasteHasImage({ files: [file("image.png", "image/png")] })).toBe(true);
+  expect(
+    imageFromTransfer({ files: [], items: [item(null, "string")], types: ["text/plain"] }).kind,
+  ).not.toBe("image");
+  expect(imageFromTransfer({ files: [file("image.png", "image/png")] }).kind).toBe("image");
 });
 
 test("a dragged link is accepted so its drop shows the copy-image instruction", () => {

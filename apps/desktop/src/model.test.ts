@@ -19,7 +19,6 @@ import {
   tunnelReasonAction,
   validateProjectName,
   versionIssue,
-  versionMismatchDetail,
   type WireDesktopSnapshot,
   workspaceAccess,
 } from "./model.ts";
@@ -716,21 +715,4 @@ test("time helpers reject missing or invalid timestamps", () => {
   expect(msUntil(undefined, NOW)).toBeNull();
   expect(msUntil("not a date", NOW)).toBeNull();
   expect(msUntil(new Date(NOW + 10_000).toISOString(), NOW)).toBe(10_000);
-});
-
-test("version mismatch detail lists every side only when versions disagree", () => {
-  expect(versionMismatchDetail(snapshot())).toBeNull();
-  const current = snapshot({ versionMismatch: true });
-  companionOf(current).workbenchVersion = "0.1.4";
-  companionOf(current).versionMismatch = true;
-  expect(versionMismatchDetail(current)).toEqual({
-    desktop: "0.2.0",
-    companion: "0.2.0",
-    workbench: "0.1.4",
-  });
-  expect(versionMismatchDetail(snapshot({ versionMismatch: true, companion: null }))).toEqual({
-    desktop: "0.2.0",
-    companion: null,
-    workbench: null,
-  });
 });

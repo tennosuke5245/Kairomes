@@ -67,11 +67,6 @@ export function dragKind(types: ArrayLike<string> | null | undefined): DragKind 
   return list.some((type) => linkTypes.includes(type.toLowerCase())) ? "link" : "none";
 }
 
-/** True when a paste carries an image file, so a text paste is never intercepted. */
-export function pasteHasImage(data: TransferLike | null | undefined) {
-  return imageFromTransfer(data).kind === "image";
-}
-
 /**
  * The drop effect while dragging over the panel. Files with somewhere to go are copied. A link
  * or markup is also accepted, only so that the drop happens and leaves its lasting instruction

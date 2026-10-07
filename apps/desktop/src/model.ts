@@ -245,24 +245,6 @@ export function deriveAttention(
   };
 }
 
-export type VersionMismatch = {
-  desktop: string;
-  /** Null when the Companion did not answer. */
-  companion: string | null;
-  /** Null when the attached workbench did not report a version. */
-  workbench: string | null;
-};
-
-/** Versions to show when Desktop, the Companion and the workbench disagree; otherwise null. */
-export function versionMismatchDetail(snapshot: DesktopSnapshot): VersionMismatch | null {
-  if (!snapshot.versionMismatch) return null;
-  return {
-    desktop: snapshot.version,
-    companion: snapshot.companion?.version ?? null,
-    workbench: snapshot.companion?.workbenchVersion ?? null,
-  };
-}
-
 export type VersionIssue = {
   /** The side that differs from Desktop; the local service is named first when both do. */
   side: "companion" | "workbench";

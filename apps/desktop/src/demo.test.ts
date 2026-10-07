@@ -13,7 +13,7 @@ import {
   deriveAttention,
   deriveDesktopView,
   normalizeDesktopSnapshot,
-  versionMismatchDetail,
+  versionIssue,
 } from "./model.ts";
 
 const NOW = Date.parse("2026-10-06T12:00:00.000Z");
@@ -86,11 +86,7 @@ test("demo modes reach the states the redesign needs", () => {
   expect(retryIn).toBeLessThanOrEqual(10_000);
 
   const mismatch = demo("mismatch").snapshot;
-  expect(versionMismatchDetail(mismatch)).toEqual({
-    desktop: VERSION,
-    companion: VERSION,
-    workbench: "0.1.4",
-  });
+  expect(versionIssue(mismatch)).toMatchObject({ side: "workbench", version: "0.1.4" });
   expect(mismatch.companion?.attention.grantsKnown).toBe(false);
   expect(deriveAttention(mismatch, NOW).grants).toBeNull();
 });
