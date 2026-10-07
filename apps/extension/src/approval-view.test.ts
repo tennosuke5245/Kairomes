@@ -123,6 +123,11 @@ const image: ArtifactImportApproval = {
   expires_at: 301_000,
   message: null,
   artifact: null,
+  delivery: "host_file",
+  sha256_short: "dddddddddddd",
+  upload_id: null,
+  write_outcome: "not_written",
+  error_code: null,
   fingerprint: "d".repeat(64),
 };
 

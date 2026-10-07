@@ -107,7 +107,11 @@ const byKind: Record<UiStateKind, Record<string, Entry>> = {
     failed: ["danger", "XCircle", "啟動失敗"],
   },
   file_change: {},
-  artifact_import: {},
+  artifact_import: {
+    // The local user has to drop, paste or choose the image in the side panel.
+    awaiting_file: ["attention", "Tray", "等待圖片"],
+    preparing: ["running", "CircleNotch", "準備中", true],
+  },
   tool: {},
   mcp_server: {
     ready: ["success", "Dot", "已連線"],

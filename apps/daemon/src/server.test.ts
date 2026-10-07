@@ -162,7 +162,7 @@ describe("MCP contracts", () => {
     const c = await connect();
     try {
       const { tools } = await c.client.listTools();
-      expect(tools.length).toBe(30);
+      expect(tools.length).toBe(33);
       expect(
         tools
           .filter(
@@ -174,6 +174,8 @@ describe("MCP contracts", () => {
                 "file_change_request",
                 "file_change_cancel",
                 "mcp_tool_call",
+                "image_import_request",
+                "image_import_cancel",
               ].includes(tool.name),
           )
           .every((tool) => tool.annotations?.readOnlyHint === true),
@@ -269,7 +271,29 @@ describe("MCP contracts", () => {
       ]);
       expect(JSON.stringify([many, search, find])).not.toContain(f.root);
       expect(tools.some((tool) => tool.name.includes("approve"))).toBe(false);
+      // Image imports: request downloads from OpenAI's file service but only creates new files;
+      // the paired side panel approves each one, so no tool can approve.
       expect(tools.some((tool) => tool.name.startsWith("artifact_import_"))).toBe(false);
+      expect(tools.find((tool) => tool.name === "image_import_request")?.annotations).toEqual({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(tools.find((tool) => tool.name === "image_import_poll")?.annotations).toEqual({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(tools.find((tool) => tool.name === "image_import_cancel")?.annotations).toEqual({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(described("image_import_request")).toContain("individual approval");
+      expect(described("image_import_request")).toContain("IMPORT_SOURCE_REJECTED");
       expect(
         tools
           .filter((tool) => (tool._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri)
@@ -397,7 +421,7 @@ describe("MCP contracts", () => {
     transport.stderr?.on("data", () => undefined);
     try {
       await client.connect(transport, { timeout: 5000 });
-      expect((await client.listTools()).tools.length).toBe(30);
+      expect((await client.listTools()).tools.length).toBe(33);
       const result = await client.callTool({ name: "kairomes_status", arguments: {} });
       expect(result.isError).not.toBe(true);
       expect(StatusSchema.parse(result.structuredContent).mounted_workspaces).toBe(1);

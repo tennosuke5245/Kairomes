@@ -119,7 +119,58 @@ function webpInfo(data: Buffer): ImageInfo | undefined {
   return undefined;
 }
 
-export function inspectImageBuffer(data: Buffer): ImageInfo {
+/**
+ * Format named by the leading magic bytes alone, or undefined. Needs at most 12 bytes, so a
+ * download can stop as soon as an HTML page, JSON error or other non-image body starts.
+ */
+export function imageSignature(data: Uint8Array): Artifact["mime_type"] | undefined {
+  const head = Buffer.from(data.buffer, data.byteOffset, Math.min(data.byteLength, 12));
+  if (head.length >= 8 && head.subarray(0, 8).equals(pngSignature)) return "image/png";
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff)
+    return "image/jpeg";
+  if (
+    head.length >= 12 &&
+    head.toString("ascii", 0, 4) === "RIFF" &&
+    head.toString("ascii", 8, 12) === "WEBP"
+  )
+    return "image/webp";
+  return undefined;
+}
+
+/** True for an animated PNG (acTL before the first IDAT) or WebP (animation flag or frames). */
+export function isAnimatedImage(data: Buffer, mimeType: Artifact["mime_type"]) {
+  if (mimeType === "image/png") {
+    let offset = 8;
+    while (offset + 8 <= data.length) {
+      const length = data.readUInt32BE(offset);
+      const type = data.toString("ascii", offset + 4, offset + 8);
+      if (type === "acTL") return true;
+      if (type === "IDAT" || type === "IEND") return false;
+      offset += 12 + length;
+    }
+    return false;
+  }
+  if (mimeType === "image/webp") {
+    let offset = 12;
+    while (offset + 8 <= data.length) {
+      const type = data.toString("ascii", offset, offset + 4);
+      const length = data.readUInt32LE(offset + 4);
+      if (type === "VP8X" && length >= 1 && ((data[offset + 8] ?? 0) & 0x02) !== 0) return true;
+      if (type === "ANIM" || type === "ANMF") return true;
+      offset += 8 + length + (length % 2);
+    }
+  }
+  return false;
+}
+
+/**
+ * Validates the container and header dimensions. `maxPixels` defaults to the workspace preview
+ * budget; imports pass the smaller LIMITS.importPixels. This is not a full decode.
+ */
+export function inspectImageBuffer(
+  data: Buffer,
+  maxPixels: number = LIMITS.artifactPixels,
+): ImageInfo {
   const info = pngInfo(data) ?? jpegInfo(data) ?? webpInfo(data);
   if (!info)
     throw new KairomesError(
@@ -131,7 +182,7 @@ export function inspectImageBuffer(data: Buffer): ImageInfo {
     info.height <= 0 ||
     info.width > 16_384 ||
     info.height > 16_384 ||
-    info.width * info.height > LIMITS.artifactPixels
+    info.width * info.height > maxPixels
   )
     throw new KairomesError("UNSAFE_IMAGE_DIMENSIONS", "圖片尺寸超過安全預覽上限。");
   return info;

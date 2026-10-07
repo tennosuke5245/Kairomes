@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ActivityEntry } from "./activity.ts";
-import type { ArtifactImport } from "./artifact-import.ts";
+import {
+  type ArtifactImport,
+  artifactImportDisplayState,
+  artifactImportLabel,
+} from "./artifact-import.ts";
 import type { Command } from "./command.ts";
 import type { FileChange } from "./file-change.ts";
 import type { TerminalSession } from "./index.ts";
@@ -39,7 +43,7 @@ const changeStates: FileChange["state"][] = [
   "conflict",
   "failed",
 ];
-const importStates: ArtifactImport["state"][] = changeStates;
+const importStates: ArtifactImport["state"][] = [...changeStates, "awaiting_file", "preparing"];
 const mcpStates: McpServerSummary["state"][] = [
   "disconnected",
   "connecting",
@@ -101,7 +105,7 @@ describe("toneFor", () => {
     expect(toneFor("terminal", "exited").label).toBe("已結束");
   });
 
-  test("file changes and artifact imports share one table", () => {
+  test("file changes and artifact imports share one table plus the import waits", () => {
     const expected = {
       pending: "attention",
       applying: "running",
@@ -113,9 +117,31 @@ describe("toneFor", () => {
       failed: "danger",
     } satisfies Record<FileChange["state"], UiTone>;
     expect(tones("file_change", changeStates)).toEqual(expected);
-    expect(tones("artifact_import", importStates)).toEqual(expected);
+    expect(tones("artifact_import", importStates)).toEqual({
+      ...expected,
+      awaiting_file: "attention",
+      preparing: "running",
+    } satisfies Record<ArtifactImport["state"], UiTone>);
+    expect(toneFor("artifact_import", "awaiting_file").label).toBe("等待圖片");
+    expect(toneFor("artifact_import", "preparing")).toMatchObject({ label: "準備中", spin: true });
     expect(toneFor("file_change", "conflict").label).toBe("版本衝突");
     expect(toneFor("file_change", "applied").label).toBe("已套用");
+  });
+
+  test("an import whose write result is unknown reads 結果待確認, never 匯入失敗", () => {
+    const unknown = { state: "failed", write_outcome: "unknown" } as const;
+    expect(artifactImportLabel(unknown)).toBe("結果待確認");
+    expect(toneFor("artifact_import", artifactImportDisplayState(unknown))).toMatchObject({
+      tone: "warning",
+      label: "結果待確認",
+    });
+    expect(artifactImportLabel({ state: "failed", write_outcome: "not_written" })).toBe("匯入失敗");
+    expect(artifactImportDisplayState({ state: "applying", write_outcome: "unknown" })).toBe(
+      "applying",
+    );
+    expect(artifactImportLabel({ state: "applied", write_outcome: "written_verified" })).toBe(
+      "已匯入",
+    );
   });
 
   test("activity entries map directly from their kind and state", () => {

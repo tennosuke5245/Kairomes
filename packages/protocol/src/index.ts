@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DenialReasonSchema } from "./approval.ts";
 import { ArtifactInputs, ArtifactSchema } from "./artifact.ts";
+import { ImageImportInputs, ImageImportResultSchema } from "./artifact-import.ts";
 import {
   CommandInputs,
   CommandListSchema,
@@ -42,6 +43,8 @@ export const LIMITS = {
   fileBytes: 1024 * 1024,
   artifactBytes: 25 * 1024 * 1024,
   artifactPixels: 80 * 1024 * 1024,
+  /** Decoded-size budget of one imported image (16 MP); each side stays within 16,384 px. */
+  importPixels: 16 * 1024 * 1024,
   responseBytes: 48 * 1024,
   directoryEntries: 200,
   /** Directory entries read by one workspace_snapshot call. */
@@ -304,6 +307,7 @@ export const ToolDataSchema = z.discriminatedUnion("kind", [
   GitStatusSchema,
   GitDiffSchema,
   GitLogSchema,
+  ImageImportResultSchema,
 ]);
 export type ToolData = z.infer<typeof ToolDataSchema>;
 export const WorkspaceId = z.string().uuid();
@@ -329,6 +333,7 @@ export const Inputs = {
   ...CommandInputs,
   ...FileChangeInputs,
   ...GitInputs,
+  ...ImageImportInputs,
   ...McpInputs,
   terminal_start: z
     .object({

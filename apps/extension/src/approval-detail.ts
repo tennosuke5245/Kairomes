@@ -73,7 +73,9 @@ export function facts(item: ApprovalItem, view: DiffView): HTMLElement[] {
       fact("儲存為", codebox(item.path)),
       fact(
         "內容",
-        `${item.mime_type} · ${item.width} × ${item.height} · ${(item.byte_size / 1024).toFixed(1)} KB`,
+        item.byte_size === null
+          ? "等待圖片"
+          : `${item.mime_type} · ${item.width} × ${item.height} · ${(item.byte_size / 1024).toFixed(1)} KB`,
       ),
     );
     return [list];

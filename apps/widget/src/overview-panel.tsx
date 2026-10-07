@@ -183,7 +183,19 @@ function ArtifactImportSummary({
     <>
       {value.state === "pending" && <PendingNotice />}
       <FactsStrip
-        facts={artifactCaption(value).map((part, index) => ({
+        facts={(value.mime_type === null ||
+        value.byte_size === null ||
+        value.width === null ||
+        value.height === null
+          ? []
+          : artifactCaption({
+              ...value,
+              mime_type: value.mime_type,
+              byte_size: value.byte_size,
+              width: value.width,
+              height: value.height,
+            })
+        ).map((part, index) => ({
           label: ["尺寸", "格式", "大小"][index] ?? "",
           value: part,
         }))}
