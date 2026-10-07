@@ -5,6 +5,7 @@ import {
   type ArtifactImport,
   type ArtifactImportApproval,
   type ArtifactImportDelivery,
+  type ArtifactImportOrigin,
   type ArtifactImportState,
   artifactImportActive,
   IMAGE_IMPORT_UPLOAD_TYPES,
@@ -34,7 +35,7 @@ export type ArtifactDownload = (
 ) => Promise<Uint8Array>;
 
 /** Who opened the import: an MCP or local tool call, or the local user in the side panel. */
-type Origin = "tool" | "panel";
+type Origin = ArtifactImportOrigin;
 
 type Job = {
   view: ArtifactImport;
@@ -777,6 +778,7 @@ export class ArtifactImportManager {
         this.registry.list().find((workspace) => workspace.id === job.view.workspace_id)?.name ??
         "已解除掛載",
       delivery: job.delivery,
+      origin: job.origin,
       sha256_short: job.view.version?.slice(0, 12) ?? null,
       upload_id: job.uploadId,
     };

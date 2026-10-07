@@ -9,7 +9,13 @@ import {
   type McpCall,
   type SearchResult,
 } from "@kairomes/protocol";
-import { FolderOpenIcon, ImageIcon, InfoIcon } from "@phosphor-icons/react";
+import {
+  CircleNotchIcon,
+  FolderOpenIcon,
+  ImageIcon,
+  InfoIcon,
+  TrayIcon,
+} from "@phosphor-icons/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { latestFocus } from "./activity-panel.tsx";
 import { ArtifactPreview, artifactCaption } from "./artifact-panel.tsx";
@@ -170,6 +176,45 @@ function McpCallSummary({
   );
 }
 
+/**
+ * What an image import waits for, as text only: the image and the decision both belong to the
+ * trusted side panel, so this view has no upload or approve control.
+ */
+function ImportStateNotice({ value }: { value: ArtifactImport }) {
+  if (value.state === "pending") return <PendingNotice />;
+  if (value.state === "awaiting_file")
+    return (
+      <p className="k-notice" data-tone="brand" role="status">
+        <TrayIcon {...iconProps("lg")} />
+        <span className="k-notice__body">
+          <span className="k-notice__title">等待圖片</span> · 請在 Kairomes 側欄提供圖片
+        </span>
+      </p>
+    );
+  if (value.state === "preparing" || value.state === "applying")
+    return (
+      <p className="k-notice" data-tone="running" role="status">
+        <CircleNotchIcon {...iconProps("lg")} className="k-icon k-spin" />
+        <span className="k-notice__body">
+          {value.state === "preparing" ? "正在接收並核對圖片…" : "正在寫入圖片…"}
+        </span>
+      </p>
+    );
+  return null;
+}
+
+/** The written file, only when it is this import's own target and verified version. */
+export function importedArtifact(value: ArtifactImport, loaded: Artifact | null) {
+  if (value.state !== "applied" || value.write_outcome !== "written_verified") return null;
+  const candidate = loaded ?? value.artifact;
+  return candidate &&
+    candidate.workspace_id === value.workspace_id &&
+    candidate.path === value.path &&
+    candidate.version === value.version
+    ? candidate
+    : null;
+}
+
 function ArtifactImportSummary({
   value,
   artifact,
@@ -179,9 +224,10 @@ function ArtifactImportSummary({
   artifact: Artifact | null;
   bridge: WorkbenchBridge;
 }) {
+  const written = importedArtifact(value, artifact);
   return (
     <>
-      {value.state === "pending" && <PendingNotice />}
+      <ImportStateNotice value={value} />
       <FactsStrip
         facts={(value.mime_type === null ||
         value.byte_size === null ||
@@ -206,7 +252,7 @@ function ArtifactImportSummary({
           <dd className="k-codebox">{value.path}</dd>
         </div>
       </dl>
-      {artifact && <ArtifactPreview artifact={artifact} bridge={bridge} compact />}
+      {written && <ArtifactPreview artifact={written} bridge={bridge} compact />}
     </>
   );
 }
@@ -263,6 +309,7 @@ export function OverviewPanel({
   const artifactImport = snapshot?.imports?.find((item) => item.id === current?.importId);
   const now = useNow(
     current?.state === "pending" ||
+      current?.state === "awaiting_file" ||
       (!!command && commandActive(command)) ||
       session?.state === "running",
   );

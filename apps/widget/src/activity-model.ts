@@ -1,7 +1,9 @@
 import {
   type ActivityEntry,
   type ActivitySnapshot,
-  artifactImportLabels,
+  type ArtifactImport,
+  artifactImportDisplayState,
+  artifactImportLabel,
   commandLabels,
   fileChangeLabels,
   terminalLabels,
@@ -37,9 +39,26 @@ export function visibleActivity(snapshot?: ActivitySnapshot, workspaceId?: strin
   return [...latest.values()].sort((a, b) => b.seq - a.seq);
 }
 
-/** One status system (design spec §3): tone, icon and label come from toneFor. */
+/** State and write outcome of an image import entry (older entries carry no outcome). */
+function importValue(entry: ActivityEntry) {
+  return {
+    state: entry.state as ArtifactImport["state"],
+    write_outcome: entry.writeOutcome ?? "not_written",
+  } as const;
+}
+
+/**
+ * One status system (design spec §3): tone, icon and label come from toneFor. An image import
+ * takes its label from artifactImportLabel, so a failed write with an unknown outcome reads
+ * 結果待確認 (warning), never 匯入失敗, and awaiting_file reads 等待圖片.
+ */
 export function activityState(entry: ActivityEntry): UiState {
-  return toneFor(entry.kind, entry.state);
+  if (entry.kind !== "artifact_import") return toneFor(entry.kind, entry.state);
+  const value = importValue(entry);
+  return {
+    ...toneFor("artifact_import", artifactImportDisplayState(value)),
+    label: artifactImportLabel(value),
+  };
 }
 
 const own = (table: Record<string, string>, key: string) =>
@@ -50,7 +69,7 @@ function daemonStatusLabel(entry: ActivityEntry) {
   if (entry.kind === "command") return own(commandLabels, entry.state);
   if (entry.kind === "terminal") return own(terminalLabels, entry.state);
   if (entry.kind === "file_change") return own(fileChangeLabels, entry.state);
-  if (entry.kind === "artifact_import") return own(artifactImportLabels, entry.state);
+  if (entry.kind === "artifact_import") return artifactImportLabel(importValue(entry));
   return undefined;
 }
 
@@ -120,4 +139,59 @@ export function workspaceFilterMessage(value: unknown): { workspaceId: string | 
   )
     return;
   return { workspaceId: data.workspaceId as string | null };
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The trusted side panel asks the workbench to show one file (檢查目前檔案 / 查看既有檔案 after
+ * an image import). Only the exact envelope is accepted: a workspace UUID and a relative path,
+ * which the workbench then reads through its own tools like any file it opens; nothing else.
+ */
+export function openArtifactMessage(
+  value: unknown,
+): { workspaceId: string; path: string } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const data = value as Record<string, unknown>;
+  if (Object.keys(data).some((key) => !["type", "version", "workspaceId", "path"].includes(key)))
+    return;
+  if (data.type !== "kairomes:open-artifact" || data.version !== 1) return;
+  if (typeof data.workspaceId !== "string" || !uuidPattern.test(data.workspaceId)) return;
+  const path = data.path;
+  if (
+    typeof path !== "string" ||
+    !path ||
+    path.length > 1024 ||
+    path.startsWith("/") ||
+    /\p{Cc}/u.test(path) ||
+    path.split(/[\\/]/).some((part) => part === "..")
+  )
+    return;
+  return { workspaceId: data.workspaceId, path };
+}
+
+interface PasteItem {
+  kind: string;
+  type: string;
+}
+
+/**
+ * True when a paste carries an image file (copied with 複製圖片). The workbench is another
+ * origin and never uploads: it only tells the trusted panel, which asks for the paste there.
+ */
+export function pasteCarriesImage(
+  data:
+    | {
+        files?: ArrayLike<{ type: string }> | null;
+        items?: ArrayLike<PasteItem> | null;
+      }
+    | null
+    | undefined,
+) {
+  if (!data) return false;
+  const image = (type: string) => type.toLowerCase().startsWith("image/");
+  return (
+    Array.from(data.files ?? []).some((file) => image(file.type)) ||
+    Array.from(data.items ?? []).some((item) => item.kind === "file" && image(item.type))
+  );
 }

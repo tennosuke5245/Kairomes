@@ -1,8 +1,14 @@
+import {
+  type ArtifactImportApproval,
+  artifactImportDisplayState,
+  artifactImportLabel,
+} from "@kairomes/protocol";
 import { parseUnifiedDiff } from "@kairomes/protocol/diff-lines";
 import { toneFor, type UiDataTone, type UiStateKind } from "@kairomes/protocol/ui-state";
 import { formatRemaining, spokenRemaining } from "./access-state.ts";
-import type { ApprovalItem } from "./approval-state.ts";
+import type { ApprovalBlock, ApprovalItem } from "./approval-state.ts";
 import type { PanelIcon } from "./icons.ts";
+import { importErrorField, importErrorText } from "./image-file.ts";
 
 // Pure presentation helpers for the trusted approval page: no DOM. Every string returned here
 // is rendered through textContent; model-provided values are never parsed as markup.
@@ -266,9 +272,121 @@ export function relativeTime(at: number, now: number) {
 /** First eight characters of the request id, for the detail's technical row only. */
 export const requestFragment = (item: Pick<ApprovalItem, "id">) => item.id.slice(0, 8);
 
-/** State pill for running and finished work (never 已驗證: exit 0 is a run result). */
+/**
+ * The short ID in a detail's footer, named after the ID it is: an image import shows its 匯入
+ * ID (the same one 技術資訊 lists in full), everything else its 請求.
+ */
+export function requestMetaLabel(item: ApprovalItem) {
+  return { label: "source_file_id" in item ? "匯入" : "請求", value: requestFragment(item) };
+}
+
+/**
+ * State pill for running and finished work (never 已驗證: exit 0 is a run result). An image
+ * import takes tone and icon from toneFor and its label from artifactImportLabel, so a failed
+ * write with an unknown outcome reads 結果待確認, never 匯入失敗.
+ */
 export function stateView(item: ApprovalItem) {
-  return toneFor(approvalKind(item), item.state);
+  if (!("source_file_id" in item)) return toneFor(approvalKind(item), item.state);
+  return {
+    ...toneFor("artifact_import", artifactImportDisplayState(item)),
+    label: artifactImportLabel(item),
+  };
+}
+
+/** `正在從 ChatGPT 取得圖片…` while the daemon downloads; `正在接收圖片…` for the user's upload. */
+export function preparingText(item: Pick<ArtifactImportApproval, "delivery">) {
+  return item.delivery === "host_file" ? "正在從 ChatGPT 取得圖片…" : "正在接收圖片…";
+}
+
+/**
+ * Where the verified image came from, or undefined when no bytes were ever verified (an import
+ * denied, cancelled or expired while waiting, or one whose download failed): then there is no
+ * image to name, whatever the request said it would deliver.
+ */
+export function importSourceText(item: Pick<ArtifactImportApproval, "delivery" | "version">) {
+  if (item.version === null) return undefined;
+  return item.delivery === "host_file" ? "ChatGPT 交付的圖片" : "你提供的圖片";
+}
+
+/**
+ * Who asked for the import, from the daemon's own record (never from the summary text): the
+ * user's 匯入圖片 in this panel, or a tool request such as ChatGPT's.
+ */
+export function importRequester(item: Pick<ArtifactImportApproval, "origin">) {
+  return item.origin === "panel" ? "你（側欄）" : "ChatGPT";
+}
+
+/**
+ * The file a finished import points at, opened read-only in the workbench: the written file
+ * (檢查目前檔案), the file that blocked it (查看既有檔案, never the pending image), or the target
+ * of a write whose result is unknown. Undefined when there is no file worth opening.
+ */
+export function importFileAction(item: ArtifactImportApproval) {
+  switch (artifactImportDisplayState(item)) {
+    case "applied":
+      return item.write_outcome === "written_verified" ? { label: "檢查目前檔案" } : undefined;
+    case "conflict":
+      return item.error_code === "FILE_EXISTS" || !item.error_code
+        ? { label: "查看既有檔案" }
+        : undefined;
+    case "uncertain":
+      return { label: "檢查目的檔案" };
+    default:
+      return undefined;
+  }
+}
+
+/** True only for an import the local user opened in the side panel (daemon-recorded origin). */
+export function isPanelImport(item: ApprovalItem) {
+  return "source_file_id" in item && item.origin === "panel";
+}
+
+const sourceFailures = new Set([
+  "FILE_DOWNLOAD_FAILED",
+  "FILE_DOWNLOAD_TIMEOUT",
+  "FILE_REDIRECT_BLOCKED",
+  "UNSAFE_FILE_HOST",
+  "IMPORT_SOURCE_REJECTED",
+]);
+
+/** One fixed reason line for a finished image import; the daemon message is never shown. */
+export function importOutcomeReason(
+  item: ArtifactImportApproval,
+): { text: string; tone?: UiDataTone } | undefined {
+  const code = item.error_code ?? "";
+  switch (artifactImportDisplayState(item)) {
+    case "uncertain":
+      return { text: "無法確認是否已寫入；請先檢查目的檔案，不要重新匯入。", tone: "warning" };
+    case "conflict":
+      return {
+        text:
+          code === "PARENT_NOT_FOUND"
+            ? "找不到儲存資料夾，沒有寫入。"
+            : code === "FILE_EXISTS" || !code
+              ? "同名檔案已存在，沒有覆寫。"
+              : "儲存位置已變更，沒有寫入。",
+        tone: "danger",
+      };
+    case "failed":
+      return {
+        text: sourceFailures.has(code)
+          ? "無法從 ChatGPT 取得圖片，沒有寫入檔案。"
+          : importErrorField(code) === "image"
+            ? `${importErrorText(code)}沒有寫入檔案。`
+            : "匯入失敗，沒有寫入檔案。",
+        tone: "danger",
+      };
+    case "denied":
+      return item.denial_reason ? { text: `你的說明：${item.denial_reason}` } : undefined;
+    case "expired":
+      return { text: "請求已到期，沒有寫入。" };
+    case "cancelled":
+      return { text: "已取消，沒有寫入。" };
+    case "applying":
+      return { text: "正在寫入圖片…" };
+    default:
+      return undefined;
+  }
 }
 
 /** When finished work ended, for sorting 最近 and its relative time. */
@@ -298,6 +416,7 @@ export function runningMeta(item: ApprovalItem, now: number) {
  * never shown. A user's own denial reason is shown back to them.
  */
 export function outcomeReason(item: ApprovalItem): { text: string; tone?: UiDataTone } | undefined {
+  if ("source_file_id" in item) return importOutcomeReason(item);
   if (item.state === "denied")
     return item.denial_reason ? { text: `你的說明：${item.denial_reason}` } : undefined;
   if ("argv" in item) {
@@ -312,7 +431,7 @@ export function outcomeReason(item: ApprovalItem): { text: string; tone?: UiData
   }
   if ("shell" in item && item.state === "exited" && item.exit_code !== null)
     return { text: `結束碼 ${item.exit_code}` };
-  if (("files" in item || "source_file_id" in item) && item.state === "conflict")
+  if ("files" in item && item.state === "conflict")
     return { text: "檔案已被修改，沒有寫入", tone: "danger" };
   return undefined;
 }
@@ -365,13 +484,7 @@ export function isWindowsHost(userAgent: string) {
   return /Windows/i.test(userAgent);
 }
 
-export type DecisionBlock =
-  | "unavailable"
-  | "gone"
-  | "expired"
-  | "changed"
-  | "incomplete"
-  | "unknown";
+export type DecisionBlock = ApprovalBlock;
 
 export interface DecisionNotice {
   text: string;
@@ -452,8 +565,30 @@ export function queueRow(
     preview: approvalPreview(item),
   };
   if (tab === "pending") {
-    const risk = approvalRisk(item);
     const remaining = countdown(item.expires_at, now);
+    // An image import still waiting for its image says so: 等待圖片 needs the user.
+    if ("source_file_id" in item && item.state !== "pending") {
+      const state = stateView(item);
+      return {
+        ...base,
+        pill: {
+          tone: state.dataTone,
+          icon: state.icon as PanelIcon,
+          label: state.label,
+          spin: state.spin,
+        },
+        meta: [
+          tag,
+          item.state === "preparing"
+            ? {
+                kind: "text",
+                text: item.delivery === "host_file" ? "正在取得圖片…" : "正在接收圖片…",
+              }
+            : { kind: "countdown", ...remaining },
+        ],
+      };
+    }
+    const risk = approvalRisk(item);
     return {
       ...base,
       pill: { ...risk, spin: false },

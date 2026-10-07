@@ -299,7 +299,7 @@ export async function createPreviewPages(bundles: PreviewBundles) {
     'aria-label="MCP 工具整合"',
   );
   const settingsPage = `${settingsShell}<script type="module">${bundles.settings}</script>`;
-  const panelFlowPage = `${base}<aside id="synthetic-panel-controls" style="position:fixed;bottom:0;right:0;z-index:500;background:white;border:1px solid #ccc;padding:4px" aria-label="合成測試控制"><details><summary>測試控制</summary><button data-fixture-action="pending">新增核准</button><button data-fixture-action="offline">離線</button><button data-fixture-action="online">恢復連線</button><button data-fixture-action="invalid">配對失效</button><button data-fixture-action="lost">下一次回應遺失</button><button data-fixture-action="finish">完成延遲變更</button><output id="fixture-probe"></output></details></aside><script type="module">${bundles.panelFlow}</script>`;
+  const panelFlowPage = `${base}<aside id="synthetic-panel-controls" style="position:fixed;bottom:0;right:0;z-index:500;background:white;border:1px solid #ccc;padding:4px" aria-label="合成測試控制"><details><summary>測試控制</summary><button data-fixture-action="pending">新增核准</button><button data-fixture-action="offline">離線</button><button data-fixture-action="online">恢復連線</button><button data-fixture-action="invalid">配對失效</button><button data-fixture-action="lost">下一次回應遺失</button><button data-fixture-action="finish">完成延遲變更</button><button data-fixture-action="import">新增圖片匯入</button><button data-fixture-action="lose-upload">下一次上傳回應遺失</button><output id="fixture-probe"></output></details></aside><script type="module">${bundles.panelFlow}</script>`;
   const panelHttpPage = panelFlowPage
     .replace(
       '<button data-fixture-action="finish">完成延遲變更</button>',
@@ -390,7 +390,8 @@ export async function startPreviewServer(
   const server: Server<undefined> = Bun.serve({
     hostname: "127.0.0.1",
     port: options.port ?? 0,
-    maxRequestBodySize: 4096,
+    // Synthetic image uploads reach the HTTP fixture; JSON routes keep their own 4 KiB cap.
+    maxRequestBodySize: 26 * 1024 * 1024,
     async fetch(request) {
       const url = new URL(request.url);
       if (request.headers.get("host") !== `127.0.0.1:${server.port}`)
@@ -443,7 +444,7 @@ export async function startPreviewServer(
         const opened = url.searchParams.get("open") ?? "";
         const query =
           view === "approvals" &&
-          [
+          ([
             "queue",
             "running",
             "recent",
@@ -452,7 +453,8 @@ export async function startPreviewServer(
             "files",
             "reason",
             "truncated",
-          ].includes(opened)
+          ].includes(opened) ||
+            /^import-[a-z-]{1,24}$/.test(opened))
             ? `?open=${opened}`
             : "";
         // Effective CSS viewport and physical scaling, not real browser zoom.

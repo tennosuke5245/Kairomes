@@ -1,4 +1,8 @@
-import { DENIAL_REASON_MAX_LENGTH } from "@kairomes/protocol";
+import {
+  type ArtifactImportApproval,
+  artifactImportDisplayState,
+  DENIAL_REASON_MAX_LENGTH,
+} from "@kairomes/protocol";
 import { type DiffView, facts, quote, requestMeta, riskElement } from "./approval-detail.ts";
 import {
   diffStatElement,
@@ -16,9 +20,12 @@ import {
   approvalDecisionBlock,
   approvalsInWorkspace,
   armedUntil,
+  awaitingDecision,
   canStopOngoing,
   checkDenialReason,
   decisionArming,
+  importReviewFollows,
+  isImportItem,
   nextPending,
   normalizeReasonInput,
   pendingQueue,
@@ -32,6 +39,8 @@ import {
   countdownMilestone,
   decisionNotice,
   diffStat,
+  importFileAction,
+  isPanelImport,
   isWindowsHost,
   modelReason,
   outcomeReason,
@@ -43,6 +52,7 @@ import {
   stateView,
 } from "./approval-view.ts";
 import { icon, type PanelIcon, setIcon } from "./icons.ts";
+import { type ImportBackend, ImportView } from "./import-view.ts";
 import { activeIndicator } from "./toolbar-state.ts";
 
 export type { ApprovalTab } from "./approval-view.ts";
@@ -53,6 +63,8 @@ export interface ApprovalPanelOptions {
   /** Sends one decision. A deny may carry the user's reason in the same single request. */
   decide: (item: ApprovalItem, action: ApprovalAction, reason?: string) => Promise<void>;
   report: (message: string) => void;
+  /** A neutral one-line notice that replaces an earlier report (defaults to `report`). */
+  inform?: (message: string) => void;
   /** Open state or tab changed; the coordinator updates the body view and toolbar. */
   change?: (open: boolean, tab: ApprovalTab) => void;
   /** True while an earlier decision for this request has an unconfirmed result. */
@@ -60,6 +72,15 @@ export interface ApprovalPanelOptions {
   /** Approval live region (countdown milestones, decisions, auto-advance). */
   announce?: (message: string) => void;
   now?: () => number;
+  /** Image imports: preview, upload and local-origin lookups. Without it, nothing is fetched. */
+  imports?: ImportBackend;
+  /** Opens the user's own 匯入圖片 dialog; shown in 需確認 while `canStartImport()` holds. */
+  startImport?: () => void;
+  canStartImport?: () => boolean;
+  /** Shows a finished import's file in the workbench (檢查目前檔案 / 查看既有檔案). */
+  openFile?: (item: ArtifactImportApproval) => void;
+  /** 查詢狀態: re-reads the authoritative snapshot (never resends a decision). */
+  refresh?: () => Promise<void>;
 }
 
 const TABS: readonly { id: ApprovalTab; label: string; empty: string; text?: string }[] = [
@@ -67,7 +88,7 @@ const TABS: readonly { id: ApprovalTab; label: string; empty: string; text?: str
     id: "pending",
     label: "需確認",
     empty: "沒有待確認的請求",
-    text: "ChatGPT 要改檔案或執行命令時會列在這裡。",
+    text: "ChatGPT 要改檔案、執行命令或匯入圖片時會列在這裡。",
   },
   { id: "running", label: "執行中", empty: "沒有執行中的工作" },
   {
@@ -110,6 +131,7 @@ type Row = {
 export class ApprovalPanel {
   private readonly decide: ApprovalPanelOptions["decide"];
   private readonly report: (message: string) => void;
+  private readonly inform: (message: string) => void;
   private readonly change: (open: boolean, tab: ApprovalTab) => void;
   private readonly uncertain: (item: ApprovalItem) => boolean;
   private readonly announce: (message: string) => void;
@@ -126,6 +148,12 @@ export class ApprovalPanel {
   private readonly timerText = el("span");
   private readonly scroll = el("div", "rq-scroll");
   private readonly queue = el("div", "rq-queue");
+  private readonly tools = el("div", "rq-tools");
+  private readonly importButton = textButton(
+    "匯入圖片",
+    "k-btn k-btn--secondary k-btn--sm",
+    "Image",
+  );
   private readonly list = el("ul", "k-list k-card rq-list");
   private readonly empty = el("div", "k-empty rq-empty");
   private readonly emptyIcon = icon("Tray", { size: "xl" });
@@ -151,6 +179,11 @@ export class ApprovalPanel {
   private readonly reasonCancel = textButton("取消", "k-btn k-btn--secondary k-btn--lg");
   private readonly reasonToggle = textButton("拒絕並說明原因…", "k-btn k-btn--quiet k-btn--sm");
   private readonly stopButton = textButton("停止", "k-btn k-btn--secondary k-btn--lg", "Stop");
+  private readonly importView: ImportView;
+  private readonly startImport?: () => void;
+  private readonly openFile?: (item: ArtifactImportApproval) => void;
+  private readonly canStartImport: () => boolean;
+  private readonly refreshState?: () => Promise<void>;
 
   private items: ApprovalItem[] = [];
   private available = false;
@@ -164,6 +197,7 @@ export class ApprovalPanel {
   private recordId?: string;
   private recordKey = "";
   private busy = false;
+  private busyAction?: "approve" | "deny";
   private armed?: number;
   private armTimer?: ReturnType<typeof setTimeout>;
   /** Requests decided in this review run, for the 2／3 position and auto-advance. */
@@ -178,6 +212,10 @@ export class ApprovalPanel {
   private stopping = new Set<string>();
   private readonly diffView: DiffView = { wrap: true };
   private stats = new Map<string, { additions: number; deletions: number } | undefined>();
+  /** An image import just approved here: its record shows 寫入中 until the snapshot moves on. */
+  private approvedImport?: string;
+  /** The daemon wanted this panel's own read of the image first; it is being read again. */
+  private previewRecheck?: string;
 
   constructor(
     private readonly container: HTMLElement,
@@ -185,10 +223,25 @@ export class ApprovalPanel {
   ) {
     this.decide = options.decide;
     this.report = options.report;
+    this.inform = options.inform ?? options.report;
     this.change = options.change ?? (() => {});
     this.uncertain = options.uncertain ?? (() => false);
     this.announce = options.announce ?? (() => {});
     this.now = options.now ?? Date.now;
+    this.refreshState = options.refresh;
+    this.startImport = options.startImport;
+    this.openFile = options.openFile;
+    this.canStartImport = options.canStartImport ?? (() => Boolean(options.startImport));
+    this.importView = new ImportView({
+      backend: options.imports,
+      announce: (message) => this.announce(message),
+      changed: () => {
+        if (!this.reviewed) return;
+        this.updateDecision();
+        this.previewRechecked();
+      },
+      available: () => this.available,
+    });
     this.build();
   }
 
@@ -235,7 +288,10 @@ export class ApprovalPanel {
       this.renderList();
       this.elsewhereToggle.focus();
     });
-    this.queue.append(this.list, this.empty, this.elsewhere);
+    // The user's own import starts here; pasting or dropping an image anywhere also opens it.
+    this.tools.append(el("p", "rq-tools__hint", "貼上或拖入圖片也能匯入。"), this.importButton);
+    this.importButton.addEventListener("click", () => this.startImport?.());
+    this.queue.append(this.tools, this.list, this.empty, this.elsewhere);
     this.detail.setAttribute("aria-labelledby", this.title.id);
     this.scroll.append(this.queue, this.detail);
 
@@ -347,6 +403,8 @@ export class ApprovalPanel {
   }
 
   private clearDetail() {
+    this.importView.release();
+    this.approvedImport = undefined;
     this.reviewed = undefined;
     this.recordId = undefined;
     this.recordKey = "";
@@ -438,10 +496,93 @@ export class ApprovalPanel {
     }
     // A request that left the snapshot entirely cannot be reviewed any more.
     if (this.reviewed && !this.find(this.reviewed.id)) this.backToQueue(this.openState);
+    this.followImport();
+    if (this.reviewed && isImportItem(this.reviewed)) this.importView.refresh();
     if (this.recordId && !this.find(this.recordId)) this.backToQueue(this.openState);
     this.renderList();
     if (this.recordId) this.renderRecord();
     this.refreshView();
+  }
+
+  /**
+   * An image import under review that is still waiting for its image follows the same import
+   * as the image arrives; pending content then needs its own armed, verified review.
+   */
+  private followImport() {
+    const reviewed = this.reviewed;
+    if (!reviewed || this.busy || !isImportItem(reviewed)) return;
+    const current = this.find(reviewed.id);
+    if (!importReviewFollows(reviewed, current) || !current || !isImportItem(current)) return;
+    this.reviewed = structuredClone(current);
+    if (current.state === "pending") {
+      this.arm();
+      this.announce("圖片已送達，請核對預覽。");
+    }
+    this.importView.update(this.reviewed);
+  }
+
+  private arm() {
+    this.armed = armedUntil(this.now());
+    clearTimeout(this.armTimer);
+    this.armTimer = setTimeout(() => this.updateDecision(), ARM_DELAY_MS + 20);
+  }
+
+  /** The request under review while the page is open (an immutable copy). */
+  get reviewedItem() {
+    return this.openState ? this.reviewed : undefined;
+  }
+
+  /** The open import detail takes a pasted, dropped or chosen image; false otherwise. */
+  offerImage(file: File) {
+    return this.openState && this.reviewed !== undefined && isImportItem(this.reviewed)
+      ? this.importView.offer(file)
+      : false;
+  }
+
+  /** True while the open detail waits for the user's image (paste or drop goes there). */
+  get acceptsImage() {
+    return (
+      this.openState &&
+      this.reviewed !== undefined &&
+      isImportItem(this.reviewed) &&
+      this.importView.accepting
+    );
+  }
+
+  /**
+   * Opens one request by id (the import dialog shows the result of its own import). `approved`
+   * says this panel's approve of that import was accepted, so a copy that still reads pending
+   * (the snapshot has not caught up) shows 寫入中 instead of a fresh review.
+   */
+  openItem(
+    id: string,
+    options: { approved?: boolean; image?: { canvas: HTMLCanvasElement; version: string } } = {},
+  ) {
+    const item = this.find(id);
+    if (!item) return;
+    if (!this.openState) this.open("pending");
+    this.queueScroll = this.scroll.scrollTop;
+    this.lastRow = undefined;
+    this.decidedIds.clear();
+    if (options.approved && isImportItem(item)) {
+      this.currentTab = "recent";
+      this.clearDetail();
+      if (options.image) this.importView.adopt(id, options.image.version, options.image.canvas);
+      this.approvedImport = id;
+      this.openRecord(item);
+    } else if (awaitingDecision(item)) {
+      this.currentTab = "pending";
+      this.openReview(item, false);
+    } else {
+      this.currentTab = splitApprovalItems([item]).ongoing.length ? "running" : "recent";
+      this.openRecord(item);
+    }
+    this.change(true, this.currentTab);
+  }
+
+  /** The user's own import (daemon-recorded origin): withdrawn as 取消匯入, never explained. */
+  private isLocalImport(item: ApprovalItem) {
+    return isPanelImport(item);
   }
 
   private tick() {
@@ -596,7 +737,7 @@ export class ApprovalPanel {
     this.queueScroll = this.scroll.scrollTop;
     this.lastRow = item.id;
     this.decidedIds.clear();
-    if (item.state === "pending") this.openReview(item, false);
+    if (awaitingDecision(item)) this.openReview(item, false);
     else this.openRecord(item);
   }
 
@@ -623,9 +764,7 @@ export class ApprovalPanel {
     this.reasonInput.value = "";
     // Arm on every open: the second click of a double click (on a row or on the previous
     // request's buttons) cannot land on this request's decision.
-    this.armed = armedUntil(this.now());
-    clearTimeout(this.armTimer);
-    this.armTimer = setTimeout(() => this.updateDecision(), ARM_DELAY_MS + 20);
+    this.arm();
     this.renderReview(this.reviewed);
     this.refreshView();
     this.scroll.scrollTop = 0;
@@ -633,6 +772,15 @@ export class ApprovalPanel {
   }
 
   private renderReview(item: ApprovalItem) {
+    if (isImportItem(item)) {
+      // No risk strip: the target and create-only rule are the first facts of the body.
+      this.detail.replaceChildren(
+        this.importView.show(item, "review"),
+        requestMeta(item, this.now()),
+      );
+      setButtonLabel(this.approve, primaryLabel(item));
+      return;
+    }
     const parts: HTMLElement[] = [riskElement(item, this.windows)];
     const reason = modelReason(item);
     if (reason) parts.push(quote(reason));
@@ -654,7 +802,7 @@ export class ApprovalPanel {
     if (kind === "back") this.backToQueue();
     else if (kind === "rereview") {
       const current = this.find(this.reviewed?.id);
-      if (current?.state === "pending") this.openReview(current, this.advanced);
+      if (current && awaitingDecision(current)) this.openReview(current, this.advanced);
     }
   }
 
@@ -665,8 +813,17 @@ export class ApprovalPanel {
     const now = this.now();
     const current = this.find(reviewed.id);
     const uncertain = this.uncertain(reviewed);
+    const previewReady = isImportItem(reviewed) && this.importView.ready(reviewed);
     const blockFor = (action: "approve" | "deny") =>
-      approvalDecisionBlock(reviewed, current, this.available, action, now, uncertain);
+      approvalDecisionBlock(
+        reviewed,
+        current,
+        this.available,
+        action,
+        now,
+        uncertain,
+        previewReady,
+      );
     const block = blockFor("approve");
     const denyBlock = blockFor("deny");
     const arming = decisionArming(this.armed, now);
@@ -696,8 +853,17 @@ export class ApprovalPanel {
       this.busy || arming || Boolean(denyBlock) || !reason.ok || reason.reason === undefined;
     this.reasonToggle.disabled = this.busy || Boolean(denyBlock);
     this.bar.setAttribute("aria-busy", String(this.busy));
+    if (isImportItem(reviewed)) {
+      setButtonLabel(
+        this.approve,
+        this.busy && this.busyAction === "approve" ? "正在匯入…" : primaryLabel(reviewed),
+      );
+      setButtonLabel(this.deny, this.isLocalImport(reviewed) ? "取消匯入" : "拒絕");
+    } else setButtonLabel(this.deny, "拒絕");
 
     // The earlier deadline wins: a request never looks more open than it is.
+    // A receiving import has no deadline of its own (its 60 s is a safety net), so no countdown.
+    this.timer.hidden = current?.state === "preparing";
     const deadline = Math.min(reviewed.expires_at, current?.expires_at ?? reviewed.expires_at);
     const remaining = deadline - now;
     const shown = countdown(deadline, now);
@@ -707,7 +873,7 @@ export class ApprovalPanel {
     this.timer.setAttribute("aria-label", shown.spoken);
     const milestone = countdownMilestone(this.lastRemaining, remaining);
     this.lastRemaining = remaining;
-    if (milestone && current?.state === "pending")
+    if (milestone && current && awaitingDecision(current))
       this.announce(`${approvalTitle(reviewed)}：${milestone}`);
     this.updatePosition();
   }
@@ -730,6 +896,7 @@ export class ApprovalPanel {
     const now = this.now();
     if (!reviewed || this.busy || decisionArming(this.armed, now)) return;
     const current = this.find(reviewed.id);
+    const previewReady = isImportItem(reviewed) && this.importView.ready(reviewed);
     if (
       approvalDecisionBlock(
         reviewed,
@@ -738,6 +905,7 @@ export class ApprovalPanel {
         action,
         now,
         this.uncertain(reviewed),
+        previewReady,
       )
     )
       return;
@@ -748,26 +916,69 @@ export class ApprovalPanel {
       reason = checked.reason;
     }
     const order = this.pendingVisible().map((item) => item.id);
+    // The user's own import is withdrawn, not refused: there is no model to explain it to.
+    const sent: ApprovalAction =
+      action === "deny" && this.isLocalImport(reviewed) ? "stop" : action;
+    const image = isImportItem(reviewed) && action === "approve";
+    if (image) this.importView.keep(reviewed);
     this.busy = true;
+    this.busyAction = action;
     this.updateDecision();
     let decided = false;
     try {
-      await this.decide(reviewed, action, reason);
+      await this.decide(reviewed, sent, reason);
       decided = true;
     } catch (cause) {
       this.report(cause instanceof Error ? cause.message : "結果待確認；請查詢狀態。");
+      // The daemon wants this panel's own read of the bytes first: load the preview again.
+      if (image && (cause as { code?: unknown })?.code === "IMPORT_PREVIEW_REQUIRED") {
+        this.previewRecheck = reviewed.id;
+        this.importView.reloadPreview();
+      }
     } finally {
       this.busy = false;
+      this.busyAction = undefined;
     }
-    if (decided && this.openState && this.reviewed?.id === reviewed.id)
-      this.advance(reviewed, action, order);
-    else this.updateDecision();
+    if (decided && this.openState && this.reviewed?.id === reviewed.id) {
+      if (image) {
+        // Show where the image went (or why not) instead of moving on to the next request.
+        this.approvedImport = reviewed.id;
+        this.openRecord(this.find(reviewed.id) ?? reviewed);
+      } else this.advance(reviewed, sent === "stop" ? "stop" : action, order);
+    } else {
+      this.updateDecision();
+      this.keepDecisionFocus(action);
+    }
+  }
+
+  /**
+   * After a refused or unconfirmed decision the pressed button was disabled while busy, so
+   * focus fell to <body>. It goes back to that button when usable, else to the detail title.
+   */
+  private keepDecisionFocus(action: "approve" | "deny") {
+    if (!this.openState || !this.reviewed) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && this.container.contains(active)) return;
+    const pressed = action === "approve" ? this.approve : this.deny;
+    (pressed.disabled ? this.title : pressed).focus({ preventScroll: true });
+  }
+
+  /** The re-read preview is ready: say so (the refusal notice is stale) and offer 匯入圖片 again. */
+  private previewRechecked() {
+    const reviewed = this.reviewed;
+    if (!reviewed || this.previewRecheck !== reviewed.id || !isImportItem(reviewed)) return;
+    if (!this.importView.ready(reviewed)) return;
+    this.previewRecheck = undefined;
+    this.inform("已重新核對預覽，請再按一次「匯入圖片」。");
+    const active = document.activeElement;
+    const lost = !active || active === document.body || active === this.title;
+    if (lost && !this.approve.disabled) this.approve.focus({ preventScroll: true });
   }
 
   /** B7: open the next request in the same queue; it arms before it accepts a decision. */
-  private advance(decided: ApprovalItem, action: "approve" | "deny", order: string[]) {
+  private advance(decided: ApprovalItem, action: ApprovalAction, order: string[]) {
     this.decidedIds.add(decided.id);
-    const done = action === "approve" ? "已允許" : "已拒絕";
+    const done = action === "approve" ? "已允許" : action === "stop" ? "已取消" : "已拒絕";
     const next = nextPending(order, decided.id, this.pendingVisible());
     if (!next) {
       this.lastRow = undefined;
@@ -783,6 +994,7 @@ export class ApprovalPanel {
   // ---------- Read-only record (running, finished) ----------
 
   private openRecord(item: ApprovalItem) {
+    if (item.id !== this.approvedImport) this.approvedImport = undefined;
     this.reviewed = undefined;
     this.recordId = item.id;
     this.recordKey = "";
@@ -795,16 +1007,29 @@ export class ApprovalPanel {
   private renderRecord() {
     const item = this.find(this.recordId);
     if (!item) return;
-    if (item.state === "pending") {
+    const justApproved = this.approvedImport === item.id && item.state === "pending";
+    if (awaitingDecision(item) && !justApproved) {
       // A record never turns into a decision without a fresh, armed review.
       this.openReview(item, false);
       return;
     }
-    const key = JSON.stringify(item);
+    const key = JSON.stringify([item, justApproved]);
     if (key !== this.recordKey) {
       this.recordKey = key;
+      // The write this panel approved has finished: say how, once.
+      if (
+        this.approvedImport === item.id &&
+        isImportItem(item) &&
+        !["pending", "applying"].includes(item.state)
+      ) {
+        this.approvedImport = undefined;
+        this.announce(`${stateView(item).label}：${item.path}`);
+      }
       const outcome = el("div", "rq-outcome");
-      const state = stateView(item);
+      // Just approved here, before the snapshot caught up: the write is under way.
+      const state = justApproved
+        ? stateView({ ...item, state: "applying", write_outcome: "unknown" } as ApprovalItem)
+        : stateView(item);
       const statePill = pill(
         state.dataTone,
         state.icon === "Dot" ? undefined : state.icon,
@@ -813,7 +1038,7 @@ export class ApprovalPanel {
       );
       statePill.classList.add("k-pill--lg");
       outcome.append(statePill);
-      const reason = outcomeReason(item);
+      const reason = justApproved ? { text: "正在寫入圖片…" } : outcomeReason(item);
       if (reason) {
         const line = el("p", "rq-outcome__reason", reason.text);
         if (reason.tone) line.dataset.tone = reason.tone;
@@ -822,13 +1047,49 @@ export class ApprovalPanel {
       const running = el("p", "rq-outcome__meta");
       running.dataset.role = "running-meta";
       outcome.append(running);
+      // A write whose result is unknown: only a read of the authoritative state, never a retry.
+      if (
+        isImportItem(item) &&
+        !justApproved &&
+        artifactImportDisplayState(item) === "uncertain" &&
+        this.refreshState
+      )
+        outcome.append(this.refreshButton());
+      const fileAction = isImportItem(item) && !justApproved ? importFileAction(item) : undefined;
+      if (fileAction && this.openFile && isImportItem(item)) {
+        const open = this.openFile;
+        const button = textButton(fileAction.label, "k-btn k-btn--secondary k-btn--sm", "Eye");
+        button.addEventListener("click", () => open(item));
+        outcome.append(button);
+      }
       this.detail.replaceChildren(
         outcome,
-        ...facts(item, this.diffView),
+        ...(isImportItem(item)
+          ? [this.importView.show(item, "record")]
+          : facts(item, this.diffView)),
         requestMeta(item, this.now()),
       );
     }
     this.updateRecordMeta();
+  }
+
+  private refreshButton() {
+    const button = textButton("查詢狀態", "k-btn k-btn--secondary k-btn--sm", "ArrowsClockwise");
+    button.addEventListener("click", async () => {
+      if (!this.refreshState || button.disabled) return;
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      try {
+        await this.refreshState();
+        this.announce("已重新讀取狀態");
+      } catch {
+        this.report("無法查詢狀態，請稍後再試。");
+      } finally {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
+    });
+    return button;
   }
 
   private updateRecordMeta() {
@@ -877,7 +1138,9 @@ export class ApprovalPanel {
     this.detail.hidden = !detail;
     this.tabList.hidden = detail;
     this.title.hidden = !detail;
-    this.timer.hidden = !review;
+    this.timer.hidden = !review || this.find(review.id)?.state === "preparing";
+    this.tools.hidden =
+      detail || this.currentTab !== "pending" || !this.startImport || !this.canStartImport();
     for (const [id, tab] of this.tabs) {
       const selected = id === this.currentTab;
       tab.setAttribute("aria-selected", String(selected));
@@ -909,7 +1172,7 @@ export class ApprovalPanel {
     this.reasonSubmit.hidden = !review || !this.reasonOpen;
     this.reasonCancel.hidden = !review || !this.reasonOpen;
     this.reasonBox.hidden = !review || !this.reasonOpen;
-    this.reasonToggle.hidden = !review || this.reasonOpen;
+    this.reasonToggle.hidden = !review || this.reasonOpen || this.isLocalImport(review);
     this.stopButton.hidden = Boolean(review) || !stoppable;
     this.decisionRow.classList.toggle("rq-bar__row--single", !review);
     if (!review) this.block.hidden = true;

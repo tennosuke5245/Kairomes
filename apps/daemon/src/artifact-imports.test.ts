@@ -168,6 +168,7 @@ test("a host file reserves the request first, verifies the bytes and waits for a
   const trusted = review(first.image_import.id);
   expect(trusted).toMatchObject({
     delivery: "host_file",
+    origin: "tool",
     workspace_name: "測試專案",
     source_file_id: "file_fixture",
     source_file_name: "cat.png",
@@ -330,7 +331,22 @@ test("without a file the import waits for the user's image and still needs appro
   expect(result.guidance).toContain("Kairomes side panel");
   expect(result.guidance).toContain("image_import_poll");
   const slot = review(result.image_import.id);
-  expect(slot).toMatchObject({ delivery: "user_supplied", source_file_id: null, upload_id: null });
+  expect(slot).toMatchObject({
+    delivery: "user_supplied",
+    origin: "tool",
+    source_file_id: null,
+    upload_id: null,
+  });
+  // The panel's own default summary, sent by a model, does not make the request the user's own.
+  const lookalike = await request({
+    file: undefined,
+    path: "design/lookalike.png",
+    summary: "從側欄匯入的圖片",
+  });
+  expect(review(lookalike.image_import.id)).toMatchObject({
+    origin: "tool",
+    summary: "從側欄匯入的圖片",
+  });
   // Waiting has nothing to approve or preview.
   await expect(
     manager.decide(result.image_import.id, slot?.fingerprint ?? "", true, undefined, panel),

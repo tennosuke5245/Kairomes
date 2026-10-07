@@ -1,14 +1,16 @@
 import { expect, test } from "bun:test";
-import type { FileChangeApproval } from "@kairomes/protocol";
+import type { ArtifactImportApproval, FileChangeApproval } from "@kairomes/protocol";
 import {
   ARM_DELAY_MS,
   approvalDecisionBlock,
   approvalDecisionObserved,
   approvalsInWorkspace,
   armedUntil,
+  awaitingDecision,
   canStopOngoing,
   checkDenialReason,
   decisionArming,
+  importReviewFollows,
   nextPending,
   normalizeReasonInput,
   pendingQueue,
@@ -179,4 +181,127 @@ test("a lost decision response is resolved by the same ID and fingerprint, never
   expect(approvalDecisionObserved(review, { ...review, state: "denied" }, "approve")).toBe(false);
   expect(approvalDecisionObserved(review, { ...review, state: "applied" }, "deny")).toBe(false);
   expect(approvalDecisionObserved(review, { ...review, state: "failed" }, "stop")).toBe(false);
+});
+
+const waitingImport = {
+  id: "import-1",
+  request_id: "request-import-1",
+  workspace_id: "project-1",
+  workspace_name: "測試專案",
+  path: "design/placeholders/figure-default.png",
+  summary: "保存示意圖",
+  source_file_id: null,
+  source_file_name: null,
+  claimed_mime_type: null,
+  mime_type: null,
+  byte_size: null,
+  width: null,
+  height: null,
+  version: null,
+  sha256_short: null,
+  state: "awaiting_file",
+  write_outcome: "not_written",
+  created_at: 1,
+  applied_at: null,
+  expires_at: 100,
+  error_code: null,
+  message: null,
+  artifact: null,
+  fingerprint: "waiting",
+  delivery: "user_supplied",
+  origin: "tool",
+  upload_id: null,
+} satisfies ArtifactImportApproval;
+const pendingImport: ArtifactImportApproval = {
+  ...waitingImport,
+  state: "pending",
+  mime_type: "image/png",
+  byte_size: 10,
+  width: 2,
+  height: 2,
+  version: "a".repeat(64),
+  sha256_short: "a".repeat(12),
+  fingerprint: "content",
+  upload_id: "upload-1",
+};
+
+test("an image import that waits for or receives its image belongs in 需確認", () => {
+  const items = [
+    waitingImport,
+    { ...waitingImport, id: "preparing", state: "preparing" as const },
+    { ...pendingImport, id: "applying", state: "applying" as const },
+    { ...pendingImport, id: "applied", state: "applied" as const },
+    // A non-import never counts its own odd states as waiting.
+    { id: "other", state: "awaiting_file" },
+  ];
+  expect(items.map((item) => awaitingDecision(item))).toEqual([true, true, false, false, false]);
+  const { pending, ongoing, recent } = splitApprovalItems(items);
+  expect(pending.map((item) => item.id)).toEqual(["import-1", "preparing"]);
+  expect(ongoing.map((item) => item.id)).toEqual(["applying"]);
+  expect(recent.map((item) => item.id)).toEqual(["applied", "other"]);
+  expect(pendingQueue([pendingImport, waitingImport]).map((item) => item.id)).toEqual([
+    "import-1",
+    "import-1",
+  ]);
+});
+
+test("a waiting import can be denied but never approved; preparing has no deadline of its own", () => {
+  expect(approvalDecisionBlock(waitingImport, waitingImport, true, "deny", 50)).toBeUndefined();
+  expect(approvalDecisionBlock(waitingImport, waitingImport, true, "approve", 50)).toBe("waiting");
+  expect(approvalDecisionBlock(waitingImport, waitingImport, true, "deny", 100)).toBe("expired");
+  const preparing = { ...waitingImport, state: "preparing" as const };
+  expect(approvalDecisionBlock(preparing, preparing, true, "deny", 500)).toBeUndefined();
+  expect(approvalDecisionBlock(preparing, preparing, true, "approve", 500)).toBe("waiting");
+});
+
+test("a pending image needs this panel's verified preview before 匯入圖片", () => {
+  expect(approvalDecisionBlock(pendingImport, pendingImport, true, "approve", 50)).toBe("preview");
+  expect(
+    approvalDecisionBlock(pendingImport, pendingImport, true, "approve", 50, false, true),
+  ).toBeUndefined();
+  expect(approvalDecisionBlock(pendingImport, pendingImport, true, "deny", 50)).toBeUndefined();
+  // An unconfirmed earlier decision still locks it, preview or not.
+  expect(approvalDecisionBlock(pendingImport, pendingImport, true, "approve", 50, true, true)).toBe(
+    "unknown",
+  );
+});
+
+test("a waiting review follows its own import as the image arrives, then locks", () => {
+  expect(importReviewFollows(waitingImport, pendingImport)).toBe(true);
+  expect(
+    importReviewFollows(waitingImport, { ...waitingImport, error_code: "INVALID_IMAGE" }),
+  ).toBe(true);
+  expect(importReviewFollows(waitingImport, waitingImport)).toBe(false);
+  // Another target, another request or a finished import is never followed.
+  expect(importReviewFollows(waitingImport, { ...pendingImport, path: "other.png" })).toBe(false);
+  expect(importReviewFollows(waitingImport, { ...pendingImport, request_id: "x" })).toBe(false);
+  expect(importReviewFollows(waitingImport, { ...pendingImport, state: "applied" })).toBe(false);
+  // Once pending bytes were shown, a change needs 重新審閱.
+  expect(importReviewFollows(pendingImport, { ...pendingImport, version: "b".repeat(64) })).toBe(
+    false,
+  );
+  expect(
+    approvalDecisionBlock(
+      pendingImport,
+      { ...pendingImport, fingerprint: "new" },
+      true,
+      "approve",
+      50,
+      false,
+      true,
+    ),
+  ).toBe("changed");
+});
+
+test("an approved import's write result settles a lost answer", () => {
+  for (const state of ["applying", "applied", "conflict", "failed"] as const)
+    expect(approvalDecisionObserved(pendingImport, { ...pendingImport, state }, "approve")).toBe(
+      true,
+    );
+  expect(approvalDecisionObserved(pendingImport, pendingImport, "approve")).toBe(false);
+  expect(
+    approvalDecisionObserved(waitingImport, { ...waitingImport, state: "cancelled" }, "stop"),
+  ).toBe(true);
+  // A file change conflict is not an import: unchanged rule.
+  expect(approvalDecisionObserved(review, { ...review, state: "conflict" }, "approve")).toBe(false);
 });

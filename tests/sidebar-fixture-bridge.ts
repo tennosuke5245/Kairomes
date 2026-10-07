@@ -3,6 +3,7 @@ import { ResultError } from "../apps/widget/src/tool-result.ts";
 import type {
   ActivitySnapshot,
   Artifact,
+  ArtifactImport,
   Command,
   CommandResult,
   FileChange,
@@ -189,6 +190,82 @@ const studyChange: FileChangeResult = {
   ].join("\n"),
   diff_truncated: false,
 };
+// ?imports=1: image imports in the timeline (waiting for the image, written, uncertain).
+const importsFixture = new URLSearchParams(location.search).get("imports") === "1";
+if (importsFixture) {
+  const base = (id: string, patch: Partial<ArtifactImport>): ArtifactImport => ({
+    id,
+    request_id: id.replace(/^1/, "2"),
+    workspace_id: workspace.id,
+    path: "design/placeholders/figure-default.png",
+    summary: "合成圖片匯入",
+    source_file_id: null,
+    source_file_name: null,
+    claimed_mime_type: null,
+    mime_type: null,
+    byte_size: null,
+    width: null,
+    height: null,
+    version: null,
+    state: "awaiting_file",
+    write_outcome: "not_written",
+    created_at: Date.now() - 20_000,
+    applied_at: null,
+    expires_at: Date.now() + 9 * 60_000,
+    error_code: null,
+    message: null,
+    artifact: null,
+    ...patch,
+  });
+  const waiting = base("10000001-0000-4000-8000-0000000000dd", {});
+  const written = base("10000002-0000-4000-8000-0000000000dd", {
+    path: artifact.path,
+    state: "applied",
+    write_outcome: "written_verified",
+    mime_type: "image/png",
+    byte_size: artifact.byte_size,
+    width: artifact.width,
+    height: artifact.height,
+    version: artifact.version,
+    applied_at: Date.now() - 60_000,
+    artifact: { ...artifact },
+  });
+  const unknown = base("10000003-0000-4000-8000-0000000000dd", {
+    path: "design/banner.png",
+    state: "failed",
+    write_outcome: "unknown",
+    error_code: "WRITE_UNVERIFIED",
+    message: "寫入後無法確認檔案內容，請先檢查目的檔案。",
+  });
+  const entry = (item: ArtifactImport, seq: number, label: string) => ({
+    id: `import-${seq}`,
+    seq,
+    focusSeq: seq,
+    source: "mcp" as const,
+    kind: "artifact_import" as const,
+    tool: "artifact_import_request" as const,
+    title: `匯入圖片 · ${label}`,
+    state: item.state,
+    writeOutcome: item.write_outcome,
+    updatedAt: Date.now() - (12 - seq) * 30_000,
+    workspaceId: workspace.id,
+    path: item.path,
+    importId: item.id,
+    ...(item.message ? { message: item.message } : {}),
+    ...(item.state === "applied" ? { resultId: "import-result" } : {}),
+  });
+  snapshot = {
+    ...snapshot,
+    seq: 12,
+    imports: [waiting, written, unknown],
+    entries: [
+      entry(waiting, 12, "等待圖片"),
+      entry(unknown, 11, "結果待確認"),
+      entry(written, 10, "已匯入"),
+      ...snapshot.entries,
+    ],
+  };
+}
 if (artifactFixture && snapshot.entries[0]) {
   snapshot.entries[0] = {
     ...snapshot.entries[0],
@@ -794,6 +871,7 @@ export function createBridge(): WorkbenchBridge {
             scanned_files: 6,
             skipped_files: 0,
           };
+        if (importsFixture && id === "import-result") return structuredClone(artifact);
         return structuredClone(artifactFixture ? artifact : file);
       },
     },

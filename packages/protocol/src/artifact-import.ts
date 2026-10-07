@@ -53,6 +53,12 @@ export type ArtifactImportWriteOutcome = z.infer<typeof ImageImportWriteOutcomeS
 
 /** How the bytes of an import arrived. Trusted panel and admin surfaces only. */
 export type ArtifactImportDelivery = "host_file" | "user_supplied";
+/**
+ * Who opened an import, as recorded by the daemon (never taken from request text): `tool` for
+ * an MCP or local tool request such as ChatGPT's image_import_request, `panel` for the local
+ * user's own 匯入圖片 in the side panel.
+ */
+export type ArtifactImportOrigin = "tool" | "panel";
 
 /**
  * Internal view shared by the trusted panel and the local workbench activity stream. It never
@@ -99,6 +105,8 @@ export interface ArtifactImportApproval extends ArtifactImport {
   fingerprint: string;
   workspace_name: string;
   delivery: ArtifactImportDelivery;
+  /** Trusted origin: only `panel` imports may hide the summary or be withdrawn as 取消匯入. */
+  origin: ArtifactImportOrigin;
   /** First 12 hex characters of `version`; decisions always compare the full hash. */
   sha256_short: string | null;
   /** The upload_id whose bytes were accepted (or are being received); null before any upload. */

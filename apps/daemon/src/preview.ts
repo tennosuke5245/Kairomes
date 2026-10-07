@@ -247,7 +247,19 @@ function startLocalServer(
         "/api/panel/mcp-auth",
       ].includes(url.pathname);
       if (panel || importCreate || importRoute) {
-        if (!workbench || !extensionOrigin || request.headers.get("origin") !== extensionOrigin)
+        const origin = request.headers.get("origin");
+        // Chromium skips CORS for an extension page that holds host access to 127.0.0.1, and then
+        // sends no Origin on a GET (POST keeps it). The pending-image read is the panel's only
+        // GET, so it may arrive without an Origin from a browser context that is not a web page
+        // (Sec-Fetch-Site "none"). A same-origin page (the workbench) sends "same-origin" and is
+        // refused; any Origin that is sent must be the extension's; the panel token is required.
+        const fetchSite = request.headers.get("sec-fetch-site");
+        const originlessRead =
+          importRoute?.[2] === "content" &&
+          request.method === "GET" &&
+          origin === null &&
+          (fetchSite === null || fetchSite === "none");
+        if (!workbench || !extensionOrigin || (origin !== extensionOrigin && !originlessRead))
           return new Response("Invalid extension origin", { status: 403, headers });
         const panelHeaders = {
           ...headers,

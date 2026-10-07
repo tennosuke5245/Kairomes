@@ -1,4 +1,5 @@
 import {
+  type ArtifactImportApproval,
   McpAuthInputSchema,
   McpAuthResultSchema,
   type McpPanelState,
@@ -6,6 +7,7 @@ import {
   PanelAccessMutationSchema,
   type PanelAccessResponse,
   type PanelConnection,
+  type PanelImportResponse,
   type PanelSnapshot,
   panelAccessFingerprint,
   readSnapshots,
@@ -24,11 +26,18 @@ import { ApprovalPanel } from "./approval-panel.ts";
 import {
   type ApprovalItem,
   approvalDecisionObserved,
+  awaitingDecision,
   checkDenialReason,
+  isImportItem,
   splitApprovalItems,
 } from "./approval-state.ts";
 import { browser } from "./browser.ts";
 import { setIcon } from "./icons.ts";
+import { importErrorText } from "./image-file.ts";
+import { ImageIntake, type ImageTarget } from "./image-intake.ts";
+import { ImageUploadTracker } from "./image-upload.ts";
+import { ImportClient, ImportRequestError } from "./import-client.ts";
+import { ImportDialog } from "./import-dialog.ts";
 import { writeMcpAuthPending } from "./mcp-auth-tracker.ts";
 import { readMcpCatalog } from "./mcp-catalog-read.ts";
 import { McpPanel } from "./mcp-panel.ts";
@@ -127,6 +136,8 @@ let catalogReadGeneration = 0;
 let selectedWorkspace: string | null = null;
 let needsPairing = false;
 const approvalMutations = new ApprovalMutationTracker();
+/** Upload identities for image imports, scoped to the paired instance like decisions. */
+const uploads = new ImageUploadTracker();
 const accessMutations = new AccessMutationTracker();
 let accessNeedsPairRecovery = false;
 const streamAvailability = new PanelStreamAvailability();
@@ -146,6 +157,13 @@ function approvalItems(snapshot: PanelSnapshot) {
 
 function approvalUncertain(item: ApprovalItem) {
   return approvalMutations.isLocked(approvalSource(), item);
+}
+
+/** One paired instance at a time: decisions and uploads start empty. */
+function bindInstance() {
+  const source = approvalSource();
+  approvalMutations.bind(source);
+  uploads.bind(source);
 }
 
 // 執行中 opens the approval page on its own tab; stop controls stay in native DOM there.
@@ -432,23 +450,105 @@ async function api(
     ),
   });
   if (response.status === 401 || response.status === 403) invalidatePairing(target);
-  if (!response.ok) throw new PanelRequestError(response.status);
+  if (!response.ok) {
+    let code: string | undefined;
+    try {
+      const data: unknown = await response.json();
+      if (data && typeof data === "object" && "code" in data && typeof data.code === "string")
+        code = data.code;
+    } catch {
+      /* The status alone still classifies the failure. */
+    }
+    throw new PanelRequestError(response.status, code);
+  }
   return response.json();
 }
 class PanelRequestError extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly status: number,
+    /** Daemon error code, e.g. IMPORT_PREVIEW_REQUIRED; only fixed-map text is shown. */
+    readonly code?: string,
+  ) {
     super(
       status === 401 || status === 403
         ? "配對已失效。"
-        : status === 409
-          ? "請求已變更；請重新審閱。"
-          : status === 429
-            ? "請稍後再查詢狀態。"
-            : status < 500
-              ? "請求未被接受。"
-              : "結果待確認。",
+        : code === "IMPORT_PREVIEW_REQUIRED"
+          ? importErrorText(code)
+          : status === 409
+            ? "請求已變更；請重新審閱。"
+            : status === 429
+              ? "請稍後再查詢狀態。"
+              : status < 500
+                ? "請求未被接受。"
+                : "結果待確認。",
     );
   }
+}
+
+/** Fetch for the binary image routes: same token, origin and no-redirect rule as api(). */
+async function panelFetch(
+  target: PanelConnection,
+  path: string,
+  init: RequestInit & { timeoutMs: number },
+) {
+  const { timeoutMs, signal, headers, ...rest } = init;
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const response = await fetch(`${target.origin}${path}`, {
+    ...rest,
+    headers: {
+      ...(headers as Record<string, string>),
+      Authorization: `Bearer ${target.panelToken}`,
+    },
+    redirect: "error",
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  });
+  // A refused token ends the pairing. A 403 on the preview GET (no Origin is sent on a GET from
+  // this page) is a refused read, not proof that the pairing is gone.
+  if (response.status === 401 || (response.status === 403 && rest.method !== "GET"))
+    invalidatePairing(target);
+  return response;
+}
+
+const importClient = new ImportClient({
+  fetch: (path, init) => {
+    const target = connection;
+    // Nothing is sent without a usable pairing, so this refusal is definite.
+    if (!target || needsPairing || !available) throw ImportRequestError.unsent("OFFLINE");
+    return panelFetch(target, path, init);
+  },
+  uploads,
+  source: () => approvalSource(),
+});
+
+/**
+ * Runs an import route and adopts the snapshot it returns, unless the stream delivered a newer
+ * frame meanwhile (that frame already holds the change). A different instance ends the pairing.
+ */
+async function withImportSnapshot(run: () => Promise<PanelImportResponse>) {
+  const target = connection;
+  const before = latest;
+  const response = await run();
+  if (target && connection === target) {
+    if (response.instanceId !== target.instanceId) {
+      invalidatePairing(target);
+      throw new ImportRequestError("PANEL_UNAUTHORIZED", undefined, false);
+    }
+    if (latest === before) {
+      const { import: _touched, ...snapshot } = response;
+      latest = snapshot;
+      renderApprovals(snapshot);
+    }
+  }
+  return response;
+}
+
+function findImport(id: string): ArtifactImportApproval | undefined {
+  return latest?.imports?.find((item) => item.id === id);
+}
+
+/** The 匯入圖片 action exists once paired with at least one mounted project. */
+function canStartImport() {
+  return Boolean(connection) && !needsPairing && (latest?.workspaces?.length ?? 0) > 0;
 }
 async function decideApproval(
   session: ApprovalItem,
@@ -547,9 +647,88 @@ async function decideApproval(
 const reportApprovalError = (message: string) => {
   if (!needsPairing) showPanelError(available ? message : "結果待確認。");
 };
+const importDialog = new ImportDialog({
+  client: {
+    create: (input, signal) => withImportSnapshot(() => importClient.create(input, signal)),
+    upload: (item, image, signal) =>
+      withImportSnapshot(() => importClient.upload(item, image, signal)),
+    content: (item, signal) => importClient.content(item, signal),
+  },
+  workspaces: () => latest?.workspaces ?? [],
+  defaultWorkspace: () => selectedWorkspace,
+  available: () => available && !!connection && !needsPairing,
+  find: findImport,
+  decide: async (item, action) => {
+    try {
+      await decideApproval(item, action);
+    } catch (cause) {
+      reportApprovalError(cause instanceof Error ? cause.message : "結果待確認。");
+      throw cause;
+    }
+  },
+  finished: (id, approved, image) => approvals.openItem(id, { approved, image }),
+  announce: (message) => approvalStatus.replaceChildren(document.createTextNode(message)),
+});
+function openImportDialog(file?: File, pasteAgain = false) {
+  const active = document.activeElement;
+  importDialog.open({
+    file,
+    pasteAgain,
+    returnFocus: active instanceof HTMLElement && active !== document.body ? active : approvalCount,
+  });
+}
+
+const importUnavailableText = () =>
+  !connection || needsPairing ? "配對後才能匯入圖片。" : "還沒有專案；請先在 Desktop 加入專案。";
+
+/**
+ * An image was pasted while the workbench frame had focus. Its bytes stay in that frame (it is
+ * another origin and never uploads), so the panel takes focus and asks for the paste again.
+ * Acted on only while the frame really has focus: the frame cannot open the dialog on its own.
+ */
+function relayWorkbenchPaste() {
+  if (document.activeElement !== frame || importDialog.isOpen) return;
+  if (!canStartImport()) {
+    flashNotice(importUnavailableText(), "warning");
+    return;
+  }
+  openImportDialog(undefined, true);
+}
+
+/**
+ * 檢查目前檔案 / 查看既有檔案: show the workbench with that file open. The workbench reads it
+ * with its own tools; the panel only names the workspace and relative path.
+ */
+function openWorkbenchFile(workspaceId: string, path: string) {
+  const target = connection;
+  const workbench = frame.contentWindow;
+  if (!target || !workbench || !latest?.workspaces?.some((item) => item.id === workspaceId)) {
+    flashNotice("這個專案已不在工作台，無法開啟檔案。", "warning");
+    return;
+  }
+  // A filter on another project would hide the file; switch to its project first.
+  if (selectedWorkspace !== null && selectedWorkspace !== workspaceId) {
+    selectedWorkspace = workspaceId;
+    workspaceFilter.value = workspaceId;
+    syncSwitcherLabel();
+    access.selectWorkspace(selectedWorkspace);
+    renderApprovals();
+    sendWorkspaceFilter();
+  }
+  approvals.close();
+  workbench.postMessage(
+    { type: "kairomes:open-artifact", version: 1, workspaceId, path },
+    target.origin,
+  );
+  frame.focus();
+}
 const approvals = new ApprovalPanel(approvalContainer, {
   decide: decideApproval,
   report: reportApprovalError,
+  inform: (message) => {
+    showPanelError("");
+    flashNotice(message, "neutral");
+  },
   change: (open, tab) => {
     if (open) {
       settingsVisible = false;
@@ -563,7 +742,62 @@ const approvals = new ApprovalPanel(approvalContainer, {
   },
   uncertain: approvalUncertain,
   announce: (message) => approvalStatus.replaceChildren(document.createTextNode(message)),
+  imports: {
+    content: (item, signal) => importClient.content(item, signal),
+    upload: async (item, image) => {
+      await withImportSnapshot(() => importClient.upload(item, image));
+    },
+    uploadStatus: (item) => uploads.status(approvalSource(), item.id),
+  },
+  startImport: () => openImportDialog(),
+  canStartImport,
+  openFile: (item) => openWorkbenchFile(item.workspace_id, item.path),
+  refresh: async () => {
+    const target = connection;
+    if (!target || needsPairing || !available) throw new Error("offline");
+    const before = latest;
+    const data = (await api(target, "approvals", { action: "list" })) as PanelSnapshot;
+    if (connection !== target) return;
+    if (data.instanceId !== target.instanceId) {
+      invalidatePairing(target);
+      return;
+    }
+    if (latest === before) latest = data;
+    renderApprovals();
+  },
 });
+
+// Paste or drop an image anywhere in the panel: into the open import that waits for one,
+// into the open dialog, or as a new import of the user's own.
+const intake = new ImageIntake({
+  target: (): ImageTarget | undefined => {
+    if (importDialog.isOpen)
+      return {
+        offer: (file) => importDialog.offer(file),
+        dropLabel: "放開以使用這張圖片",
+        ownZone: importDialog.dropZone,
+      };
+    const reviewed = approvals.reviewedItem;
+    if (
+      reviewed &&
+      isImportItem(reviewed) &&
+      awaitingDecision(reviewed) &&
+      reviewed.state !== "pending"
+    )
+      return {
+        offer: (file) => {
+          if (!approvals.offerImage(file)) flashNotice("這筆匯入現在無法接收圖片。", "warning");
+        },
+        dropLabel: "放開以提供這張圖片",
+      };
+    if (canStartImport())
+      return { offer: (file) => openImportDialog(file), dropLabel: "放開以匯入到專案" };
+    return undefined;
+  },
+  notify: (message) => flashNotice(message, "warning"),
+  unavailable: importUnavailableText,
+});
+document.body.append(intake.overlay);
 const access = new AccessPanel(
   accessTrigger,
   required<HTMLElement>("#access-popover"),
@@ -808,8 +1042,10 @@ async function refreshMcp(target: PanelConnection) {
 
 function renderApprovals(snapshot = latest, connected = available) {
   const source = approvalSource();
-  if (snapshot && connected && source && snapshot.instanceId === connection?.instanceId)
+  if (snapshot && connected && source && snapshot.instanceId === connection?.instanceId) {
     approvalMutations.observe(source, approvalItems(snapshot));
+    uploads.observe(source, snapshot.imports ?? []);
+  }
   const items = [
     ...(snapshot?.imports ?? []),
     ...(snapshot?.changes ?? []),
@@ -1060,6 +1296,9 @@ window.addEventListener("message", (event) => {
   if (message.type === "kairomes:open-settings" && message.version === 1) showSettings("general");
   if (message.version !== 1) return;
   if (message.type === "kairomes:workbench-ready") sendWorkspaceFilter();
+  // Files dragged over the workbench: cover it with the trusted overlay so the drop lands here.
+  if (message.type === "kairomes:file-drag") intake.hint();
+  if (message.type === "kairomes:file-paste") relayWorkbenchPaste();
   if (message.type === "kairomes:workbench-status" && typeof message.available === "boolean") {
     // The iframe reports only its own data stream; approvals use the panel's stream.
     workbenchChannel.hidden = message.available;
@@ -1230,7 +1469,7 @@ form.addEventListener("submit", async (event) => {
     if (connection !== issued || generation !== attempt) throw new Error("配對已取消。");
     accessMutations.bind(issued);
     accessNeedsPairRecovery = false;
-    approvalMutations.bind(approvalSource());
+    bindInstance();
     showPanelError("");
     showWorkbench(issued.workbenchUrl);
     startStream(issued);
@@ -1283,6 +1522,9 @@ async function disconnectPanel() {
       .then((key) => browser.storage.session.remove(key))
       .catch(() => {});
   approvalMutations.bind(undefined);
+  uploads.bind(undefined);
+  importDialog.dispose();
+  intake.hide();
   latest = undefined;
   renderApprovals(undefined, false);
   frame.removeAttribute("src");
@@ -1342,7 +1584,7 @@ void (async () => {
     if (connection !== target || generation !== attempt) return;
     if (pending[pendingKey]) await accessMutations.restore(target, pending[pendingKey]);
     if (connection !== target || generation !== attempt) return;
-    approvalMutations.bind(approvalSource());
+    bindInstance();
     showWorkbench(target.workbenchUrl);
     startStream(target);
   } catch {

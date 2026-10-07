@@ -6,6 +6,8 @@ import {
   activityState,
   activityTitle,
   filterActivity,
+  openArtifactMessage,
+  pasteCarriesImage,
   unreadActivity,
   visibleActivity,
   workspaceFilterMessage,
@@ -137,6 +139,44 @@ test("trust boundary accepts only the workspace navigation envelope, never added
     { ...message, type: "kairomes:approve" },
   ])
     expect(workspaceFilterMessage(invalid)).toBeUndefined();
+});
+
+test("the panel may only ask the workbench to show one relative file of a workspace", () => {
+  const message = {
+    type: "kairomes:open-artifact",
+    version: 1,
+    workspaceId: one,
+    path: "design/placeholders/封面.png",
+  };
+  expect(openArtifactMessage(message)).toEqual({
+    workspaceId: one,
+    path: "design/placeholders/封面.png",
+  });
+  for (const invalid of [
+    null,
+    [],
+    { ...message, grant: "full" },
+    { ...message, version: 2 },
+    { ...message, type: "kairomes:workspace-filter" },
+    { ...message, workspaceId: "untrusted" },
+    { ...message, path: "" },
+    { ...message, path: "/etc/passwd" },
+    { ...message, path: "../outside.png" },
+    { ...message, path: "images\\..\\..\\x.png" },
+    { ...message, path: "images/a\npng" },
+    { ...message, path: 1 },
+    { ...message, path: "a".repeat(1025) },
+  ])
+    expect(openArtifactMessage(invalid)).toBeUndefined();
+});
+
+test("only a pasted image file is forwarded as a paste hint; text and links are not", () => {
+  expect(pasteCarriesImage({ items: [{ kind: "file", type: "image/png" }] })).toBe(true);
+  expect(pasteCarriesImage({ files: [{ type: "image/webp" }] })).toBe(true);
+  expect(pasteCarriesImage({ items: [{ kind: "string", type: "text/plain" }] })).toBe(false);
+  expect(pasteCarriesImage({ items: [{ kind: "string", type: "text/html" }] })).toBe(false);
+  expect(pasteCarriesImage({ files: [{ type: "application/pdf" }] })).toBe(false);
+  expect(pasteCarriesImage(null)).toBe(false);
 });
 
 test("operation status is rendered once; native approval counts are not duplicated by the iframe", () => {

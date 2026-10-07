@@ -30,6 +30,7 @@ export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
 export * from "./git.ts";
 export * from "./handoff.ts";
+export * from "./image-path.ts";
 export * from "./mcp-auth.ts";
 export * from "./mcp-host.ts";
 export * from "./panel-access.ts";

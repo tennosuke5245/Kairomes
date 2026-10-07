@@ -170,7 +170,11 @@ export function ActivityPanel({
     ...(snapshot?.sessions ?? []),
     ...(snapshot?.commands ?? []),
   ].filter(
-    (item) => item.state === "pending" && (!workspaceId || item.workspace_id === workspaceId),
+    (item) =>
+      // Same 需確認 as the side panel: an image import waiting for its image counts too.
+      (item.state === "pending" ||
+        ("source_file_id" in item && ["awaiting_file", "preparing"].includes(item.state))) &&
+      (!workspaceId || item.workspace_id === workspaceId),
   ).length;
   const live = liveStatus(following);
   const titleId = useId();

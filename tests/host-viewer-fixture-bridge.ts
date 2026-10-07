@@ -46,7 +46,32 @@ const file = (path: string, content: string): FileResult => ({
   redacted: false,
 });
 
+/**
+ * ?openai-files: stand-ins for the ChatGPT host's file helpers, so 從 ChatGPT 選擇圖片 can be
+ * shown. The URL is a reserved example host; nothing is fetched.
+ */
+function installSyntheticFileHelpers() {
+  if (!new URLSearchParams(location.search).has("openai-files")) return;
+  Object.assign(window, {
+    openai: {
+      async selectFiles() {
+        return [
+          {
+            fileId: "file-synthetic",
+            fileName: "ChatGPT Image 合成封面.png",
+            mimeType: "image/png",
+          },
+        ];
+      },
+      async getFileDownloadUrl() {
+        return { downloadUrl: "https://files.example.invalid/synthetic" };
+      },
+    },
+  });
+}
+
 export function createBridge(): WorkbenchBridge {
+  installSyntheticFileHelpers();
   let closed = false;
   let receive: ((data: ToolData) => void) | undefined;
   let release: (() => void) | undefined;
@@ -105,6 +130,33 @@ export function createBridge(): WorkbenchBridge {
         return content === undefined ? delayed(file("A.txt", "舊讀取 A")) : file(path, content);
       }
       if (name === "command_list") return { kind: "commands", commands: [] };
+      if (name === "image_import_request") {
+        const now = Date.now();
+        return {
+          kind: "image_import",
+          image_import: {
+            id: "00000000-0000-4000-8000-0000000000ee",
+            request_id: String(args.request_id),
+            workspace_id: String(args.workspace_id),
+            path: String(args.path),
+            summary: String(args.summary),
+            state: "preparing",
+            write_outcome: "not_written",
+            mime_type: null,
+            byte_size: null,
+            width: null,
+            height: null,
+            version: null,
+            created_at: now,
+            expires_at: now + 60_000,
+            applied_at: null,
+            error_code: null,
+            message: null,
+            artifact: null,
+          },
+          guidance: "Synthetic.",
+        };
+      }
       if (name === "file_search")
         return delayed({
           kind: "search",

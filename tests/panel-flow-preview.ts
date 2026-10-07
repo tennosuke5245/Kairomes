@@ -6,6 +6,7 @@ import type {
   PanelSnapshot,
 } from "../packages/protocol/src/index.ts";
 import { McpAuthInputSchema } from "../packages/protocol/src/index.ts";
+import { createSyntheticImports, syntheticImport } from "./import-fixture.ts";
 
 // Runs the actual sidepanel coordinator with synthetic fetch/stream/Chrome boundaries.
 // No network POST, actual credential, process, workspace or pairing is used.
@@ -35,6 +36,41 @@ const snapshot: PanelSnapshot = {
   accessGrants: [],
 };
 let catalog: McpPanelState = { catalog_revision: "fixture", servers: [] };
+// Image imports run through the same memory-only stand-in as the approval preview.
+const imports = createSyntheticImports({
+  workspaces: [
+    {
+      id: workspaceId,
+      name: "協調流程測試專案",
+      folders: ["", "images", "design", "design/placeholders"],
+      existing: ["images/logo.png"],
+    },
+  ],
+  changed: () => emit(),
+});
+const frame = (): PanelSnapshot => ({ ...snapshot, imports: imports.list() });
+imports.setSnapshot(frame);
+let importSeq = 0;
+async function modelImport() {
+  importSeq++;
+  await imports.seed(
+    syntheticImport(
+      {
+        id: `${String(importSeq).padStart(8, "0")}-0000-4000-8000-0000000000bb`,
+        workspace: { id: workspaceId, name: "協調流程測試專案" },
+        now: Date.now(),
+      },
+      {
+        path:
+          importSeq === 1
+            ? "design/placeholders/figure-default.png"
+            : `images/figure-${importSeq}.png`,
+        created_at: Date.now(),
+        expires_at: Date.now() + 10 * 60_000,
+      },
+    ),
+  );
+}
 const fixtureOptions = new URLSearchParams(location.search);
 const oauthServerId = "00000000-0000-4000-8000-000000000042";
 const oauthName = fixtureOptions.has("oauth-long")
@@ -153,13 +189,15 @@ function command(): CommandApproval {
   };
 }
 if (!fixtureOptions.has("idle")) snapshot.commands?.push(command());
+// ?import: ChatGPT asked to save an image but did not hand it over (awaiting_file).
+if (fixtureOptions.has("import")) await modelImport();
 const probe = document.querySelector<HTMLOutputElement>("#fixture-probe");
 function observe() {
   if (probe)
     probe.textContent = `變更 ${counts.mutations} · 唯讀查詢 ${counts.lists} · 串流 ${counts.streams}${fixtureOptions.has("oauth") ? ` · 登入 ${counts.authStarts} · 登入查詢 ${counts.authQueries} · 取消 ${counts.authCancels} · 清除 ${counts.authForgets}` : ""}`;
 }
 function emit() {
-  const payload = encoder.encode(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
+  const payload = encoder.encode(`event: snapshot\ndata: ${JSON.stringify(frame())}\n\n`);
   for (const controller of streamControllers.keys()) controller.enqueue(payload);
   observe();
 }
@@ -178,6 +216,9 @@ const fixtureFetch = async (
     throw new Error("Synthetic fixture blocks real fetch");
   if (!online) throw new TypeError("Synthetic offline");
   if (!authorized) return Response.json({ message: "合成測試：配對已失效。" }, { status: 401 });
+  // Binary image routes first: their bodies are not JSON.
+  const imported = await imports.handle(new Request(target, init));
+  if (imported) return imported;
   const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
   const route = target.pathname.split("/").at(-1);
   if (route === "mcp-auth") {
@@ -293,7 +334,7 @@ const fixtureFetch = async (
           active = controller;
           streamControllers.set(controller, cleanup);
           controller.enqueue(
-            encoder.encode(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`),
+            encoder.encode(`event: snapshot\ndata: ${JSON.stringify(frame())}\n\n`),
           );
           init?.signal?.addEventListener("abort", abort, { once: true });
         },
@@ -307,9 +348,18 @@ const fixtureFetch = async (
   if (body.action === "list") {
     counts.lists++;
     observe();
-    return Response.json(route === "mcp" ? catalog : snapshot);
+    return Response.json(route === "mcp" ? catalog : frame());
   }
   counts.mutations++;
+  if (route === "approvals" && typeof body.import_id === "string") {
+    const decided = await imports.decide(body);
+    observe();
+    if (loseNextResponse) {
+      loseNextResponse = false;
+      throw new TypeError("Synthetic response lost after mutation");
+    }
+    return decided ?? Response.json({}, { status: 400 });
+  }
   if (route === "approvals") {
     const selected = snapshot.commands?.find((item) => item.id === body.command_id);
     if (selected) {
@@ -353,7 +403,7 @@ const fixtureFetch = async (
     throw new TypeError("Synthetic response lost after mutation");
   }
   emit();
-  return Response.json(route === "mcp" ? catalog : snapshot);
+  return Response.json(route === "mcp" ? catalog : frame());
 };
 globalThis.fetch = Object.assign(fixtureFetch, {
   preconnect() {
@@ -366,6 +416,12 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-fixture
       case "pending":
         snapshot.commands?.push(command());
         emit();
+        break;
+      case "import":
+        void modelImport().then(emit);
+        break;
+      case "lose-upload":
+        imports.loseNextUpload();
         break;
       case "offline":
         online = false;

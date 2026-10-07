@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./ui-state": "./src/ui-state.ts",
-    "./diff-lines": "./src/diff-lines.ts"
+    "./diff-lines": "./src/diff-lines.ts",
+    "./image-path": "./src/image-path.ts"
   },
   "dependencies": {
     "zod": "4.6.5"

@@ -18,7 +18,7 @@ import {
   diffCoversFiles,
   diffStatusPill,
   fileOperationLabel,
-  requestFragment,
+  requestMetaLabel,
   riskStrip,
   timeLimit,
   workspaceHue,
@@ -66,20 +66,9 @@ export function quote(text: string) {
 
 export function facts(item: ApprovalItem, view: DiffView): HTMLElement[] {
   if ("files" in item) return changeFacts(item, view);
+  // An image import has its own body (import-view.ts): target, verified preview and source.
+  if ("source_file_id" in item) return [];
   const list = el("dl", "k-dl");
-  if ("source_file_id" in item) {
-    list.append(
-      fact("來源", item.source_file_name ?? "ChatGPT 檔案"),
-      fact("儲存為", codebox(item.path)),
-      fact(
-        "內容",
-        item.byte_size === null
-          ? "等待圖片"
-          : `${item.mime_type} · ${item.width} × ${item.height} · ${(item.byte_size / 1024).toFixed(1)} KB`,
-      ),
-    );
-    return [list];
-  }
   const argv = "argv" in item ? item.argv : item.command;
   const directory = fact("工作目錄", codebox(item.absolute_cwd));
   const note = cwdNote(item);
@@ -223,12 +212,21 @@ function fileList(item: ChangeItem) {
 
 export function requestMeta(item: ApprovalItem, now: number) {
   const meta = el("p", "rq-meta sp-meta");
-  const request = el("span", undefined, "請求 ");
-  request.append(el("span", "k-mono", requestFragment(item)));
-  meta.append(
-    workspaceTag(item.workspace_name, workspaceHue(item.workspace_id)),
-    metaItem(request),
-    metaItem(`${clockTime(item.created_at, now)} 提出`),
-  );
+  const id = requestMetaLabel(item);
+  const request = el("span", undefined, `${id.label} `);
+  request.append(el("span", "k-mono", id.value));
+  const time = metaItem(`${clockTime(item.created_at, now)} 提出`);
+  // An import names its project under 專案 already; the tag would only repeat it, and the line
+  // then starts with its ID (no leading separator).
+  if ("source_file_id" in item) {
+    const first = el("span", "sp-meta__item");
+    first.append(request);
+    meta.append(first, time);
+  } else
+    meta.append(
+      workspaceTag(item.workspace_name, workspaceHue(item.workspace_id)),
+      metaItem(request),
+      time,
+    );
   return meta;
 }

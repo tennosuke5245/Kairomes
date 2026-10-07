@@ -101,6 +101,8 @@ export function activityHeadline(entry: ActivityEntry, snapshot?: ActivitySnapsh
     const shell = snapshot?.sessions.find((item) => item.id === entry.sessionId)?.shell;
     return { verb: "終端機", code: shell ?? title };
   }
+  // An image import names its target once, verbatim: 匯入圖片 design/cover.png.
+  if (entry.kind === "artifact_import" && entry.path) return { verb: title, code: entry.path };
   const read = entry.tool ? readVerbs[entry.tool] : undefined;
   if (entry.path && read && title === read[0]) return { verb: read[1], code: entry.path };
   // A title that already ends with the path ("讀取 src/main.ts") shows that path verbatim once.
@@ -128,8 +130,16 @@ function pendingExpiry(entry: ActivityEntry, snapshot?: ActivitySnapshot) {
   return undefined;
 }
 
+/** Waiting on the local user: a pending decision, or an image import that needs its image. */
+function waitsForUser(entry: ActivityEntry) {
+  return (
+    entry.state === "pending" ||
+    (entry.kind === "artifact_import" && entry.state === "awaiting_file")
+  );
+}
+
 function rowMeta(entry: ActivityEntry, snapshot: ActivitySnapshot | undefined, now: number) {
-  if (entry.state === "pending") {
+  if (waitsForUser(entry)) {
     const expires = pendingExpiry(entry, snapshot);
     if (expires === undefined) return undefined;
     const { text, urgency } = countdown(expires, now);
@@ -209,7 +219,7 @@ export function timelineRow(
 /** Rows that change every second (countdown, running timer) need a 1 s tick; others 10 s. */
 export function ticksEverySecond(entries: readonly ActivityEntry[], snapshot?: ActivitySnapshot) {
   return entries.some((entry) => {
-    if (entry.state === "pending") return true;
+    if (waitsForUser(entry)) return true;
     const command = entry.commandId
       ? snapshot?.commands?.find((item) => item.id === entry.commandId)
       : undefined;

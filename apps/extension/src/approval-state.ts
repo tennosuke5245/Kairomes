@@ -14,23 +14,40 @@ export type ApprovalItem =
 
 const ONGOING_STATES = ["applying", "starting", "running"];
 
+/** An image import is told apart by its always-present source_file_id key. */
+export function isImportItem<T extends object>(
+  item: T,
+): item is Extract<T, { source_file_id: unknown }> {
+  return "source_file_id" in item;
+}
+
+/**
+ * Still before a decision: `pending`, plus an image import that waits for its image
+ * (awaiting_file: it needs the user) or is still receiving it (preparing). Those two can be
+ * denied or cancelled but never approved; they belong in 需確認 all the same.
+ */
+export function awaitingDecision(item: { state: string } & object) {
+  return (
+    item.state === "pending" ||
+    ("source_file_id" in item && (item.state === "awaiting_file" || item.state === "preparing"))
+  );
+}
+
 /** 需確認 (awaiting a decision), 執行中 (approved and still working) and 最近 (finished). */
-export function splitApprovalItems<T extends { state: string }>(items: T[]) {
+export function splitApprovalItems<T extends { state: string } & object>(items: T[]) {
   return {
-    pending: items.filter((item) => item.state === "pending"),
+    pending: items.filter((item) => awaitingDecision(item)),
     ongoing: items.filter((item) => ONGOING_STATES.includes(item.state)),
-    recent: items.filter(
-      (item) => item.state !== "pending" && !ONGOING_STATES.includes(item.state),
-    ),
+    recent: items.filter((item) => !awaitingDecision(item) && !ONGOING_STATES.includes(item.state)),
   };
 }
 
 /** The 需確認 queue: soonest deadline first, so the most urgent request is at the top. */
-export function pendingQueue<T extends { state: string; expires_at: number; created_at: number }>(
-  items: readonly T[],
-) {
+export function pendingQueue<
+  T extends { state: string; expires_at: number; created_at: number } & object,
+>(items: readonly T[]) {
   return items
-    .filter((item) => item.state === "pending")
+    .filter((item) => awaitingDecision(item))
     .sort((a, b) => a.expires_at - b.expires_at || a.created_at - b.created_at);
 }
 
@@ -113,6 +130,8 @@ export function approvalDecisionObserved(
     return false;
   if (action === "deny") return current.state === "denied";
   if (action === "stop") return current.state === "stopped" || current.state === "cancelled";
+  // An approved import ends in a write result: written, refused at the target, or unknown.
+  if ("source_file_id" in current && ["conflict", "failed"].includes(current.state)) return true;
   return ["applying", "applied", "starting", "running", "succeeded", "exited"].includes(
     current.state,
   );
@@ -123,6 +142,23 @@ export function approvalReviewIdentity(item: ApprovalItem) {
   return JSON.stringify(item);
 }
 
+export type ApprovalBlock =
+  | "unavailable"
+  | "gone"
+  | "expired"
+  | "changed"
+  | "incomplete"
+  | "unknown"
+  /** An image import without verified bytes yet (awaiting_file or preparing). */
+  | "waiting"
+  /** A pending image whose bytes this panel has not loaded and verified yet. */
+  | "preview";
+
+/**
+ * Why a decision on the reviewed copy is not allowed now, or undefined. Approve needs the
+ * exact pending content (and, for an image, this panel's verified preview of it); deny also
+ * accepts an image import that is still waiting for its image.
+ */
 export function approvalDecisionBlock(
   reviewed: ApprovalItem,
   current: ApprovalItem | undefined,
@@ -130,14 +166,40 @@ export function approvalDecisionBlock(
   action: "approve" | "deny",
   now = Date.now(),
   uncertain = false,
-): "unavailable" | "gone" | "expired" | "changed" | "incomplete" | "unknown" | undefined {
+  previewReady = false,
+): ApprovalBlock | undefined {
   if (!available) return "unavailable";
-  if (current?.state !== "pending") return "gone";
-  if (current.expires_at <= now) return "expired";
+  if (!current || !awaitingDecision(current)) return "gone";
+  // The daemon keeps no deadline for a receiving import; its 60 s is a safety net only.
+  if (current.state !== "preparing" && current.expires_at <= now) return "expired";
   if (approvalReviewIdentity(reviewed) !== approvalReviewIdentity(current)) return "changed";
   if (uncertain) return "unknown";
-  if (action === "approve" && "files" in current && current.diff_truncated) return "incomplete";
+  if (action !== "approve") return undefined;
+  if (current.state !== "pending") return "waiting";
+  if ("files" in current && current.diff_truncated) return "incomplete";
+  if ("source_file_id" in current && !previewReady) return "preview";
   return undefined;
+}
+
+/**
+ * An import under review moves on by itself while it waits for its image: awaiting_file →
+ * preparing → pending (or back to awaiting_file after a refused image). The review may follow
+ * the same import, same target, only while nothing reviewable was shown yet; once the review
+ * holds pending bytes, any change needs 重新審閱.
+ */
+export function importReviewFollows(reviewed: ApprovalItem, current: ApprovalItem | undefined) {
+  return (
+    current !== undefined &&
+    "source_file_id" in reviewed &&
+    "source_file_id" in current &&
+    reviewed.state !== "pending" &&
+    awaitingDecision(current) &&
+    current.id === reviewed.id &&
+    current.request_id === reviewed.request_id &&
+    current.workspace_id === reviewed.workspace_id &&
+    current.path === reviewed.path &&
+    approvalReviewIdentity(current) !== approvalReviewIdentity(reviewed)
+  );
 }
 
 export function approvalsInWorkspace<T extends { workspace_id: string }>(

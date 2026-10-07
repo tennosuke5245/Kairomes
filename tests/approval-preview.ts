@@ -1,9 +1,21 @@
 import { ApprovalPanel } from "../apps/extension/src/approval-panel.ts";
-import { type ApprovalItem, splitApprovalItems } from "../apps/extension/src/approval-state.ts";
+import {
+  type ApprovalItem,
+  awaitingDecision,
+  isImportItem,
+  splitApprovalItems,
+} from "../apps/extension/src/approval-state.ts";
+import { imageHeader, sha256Hex } from "../apps/extension/src/image-file.ts";
+import { ImageIntake } from "../apps/extension/src/image-intake.ts";
+import { ImageUploadTracker } from "../apps/extension/src/image-upload.ts";
+import { ImportClient } from "../apps/extension/src/import-client.ts";
+import { ImportDialog } from "../apps/extension/src/import-dialog.ts";
 import { activeIndicator, needButton } from "../apps/extension/src/toolbar-state.ts";
 import type { ApprovalSession } from "../packages/protocol/src/activity.ts";
+import type { ArtifactImportApproval } from "../packages/protocol/src/artifact-import.ts";
 import type { CommandApproval } from "../packages/protocol/src/command.ts";
 import type { FileChangeApproval } from "../packages/protocol/src/file-change.ts";
+import { createSyntheticImports, syntheticImport } from "./import-fixture.ts";
 import {
   markConnected,
   syntheticAccess,
@@ -15,14 +27,20 @@ import {
   studyApprovalItems,
   studyWorkspaces,
 } from "./study-fixture-data.ts";
+import { syntheticFigureFile, syntheticFigurePng } from "./synthetic-image.ts";
 
 // Visual fixture only. This page has no credentials, bridge, or host execution capability.
 // Query flags: ?count=1|3|10, ?study=1, ?open=queue|running|recent|command|terminal|files|
-// reason|truncated, ?controls (state-change buttons).
+// reason|truncated, ?controls (state-change buttons). Image imports: ?imports=1 adds one in
+// every state; ?open=import-awaiting|import-uploaded|import-preparing|import-pending|
+// import-loading|import-mismatch|import-recent|import-applied|import-conflict|
+// import-uncertain|import-denied|import-failed|import-dialog|import-dialog-empty|import-overlay|
+// import-preview-required (the next approve is refused until the preview is read again).
 const container = document.querySelector<HTMLElement>("#approvals");
 if (!container) throw new Error("Missing preview container");
 const now = Date.now();
-const fixture = { id: "fixture", name: "側欄測試專案" };
+// A real UUID, so the import dialog's create passes the same schema as the daemon's.
+const fixture = { id: "0000f1f1-0000-4000-8000-00000000f1f1", name: "側欄測試專案" };
 const sessions: ApprovalSession[] = [
   {
     id: "00000000-0000-4000-8000-000000000001",
@@ -168,6 +186,9 @@ const history: ApprovalItem[] = [
 ];
 const query = new URLSearchParams(location.search);
 const study = query.get("study") === "1";
+const open = query.get("open");
+const withImports =
+  !study && (query.get("imports") === "1" || open?.startsWith("import-") === true);
 const requested = Number(query.get("count") ?? (study ? 10 : 3));
 const templates: ApprovalItem[] = [...sessions, ...commands, ...changes];
 const count = [1, 3, 10].includes(requested) ? requested : 3;
@@ -184,11 +205,159 @@ const pending: ApprovalItem[] = study
         expires_at: template.expires_at + Math.floor(index / templates.length) * 60_000,
       };
     });
-const open = query.get("open");
 if (open === "truncated")
   for (const item of pending) if ("files" in item) item.diff_truncated = true;
 const items: ApprovalItem[] = study ? pending : [...pending, ...structuredClone(history)];
 const workspaces = study ? [...studyWorkspaces] : [fixture];
+
+// Synthetic image imports: one in every state, served by the in-page stand-in daemon.
+const imports = createSyntheticImports({
+  workspaces: [
+    {
+      ...fixture,
+      folders: ["", "images", "design", "design/placeholders", "assets"],
+      existing: ["images/logo.png"],
+    },
+  ],
+  changed: () => setTimeout(render, 0),
+});
+imports.setSnapshot(() => ({ instanceId: "fixture", sessions: [], imports: imports.list() }));
+const uploads = new ImageUploadTracker();
+uploads.bind("fixture");
+const importClient = new ImportClient({
+  fetch: async (path, init) =>
+    (await imports.handle(new Request(new URL(path, location.origin), init))) ??
+    Response.json({ code: "VALIDATION" }, { status: 404 }),
+  uploads,
+  source: () => "fixture",
+});
+if (withImports) {
+  const base = (id: string) => ({
+    id: `${id}-0000-4000-8000-0000000000aa`,
+    workspace: fixture,
+    now,
+  });
+  const png = await syntheticFigurePng(1200, 750);
+  const version = await sha256Hex(png);
+  const header = imageHeader(png);
+  const verified = {
+    mime_type: "image/png" as const,
+    byte_size: png.length,
+    width: header?.width ?? 1200,
+    height: header?.height ?? 750,
+    version,
+    sha256_short: version.slice(0, 12),
+  };
+  const host = {
+    delivery: "host_file" as const,
+    source_file_id: "file-synthetic",
+    source_file_name: "ChatGPT Image 合成.png",
+  };
+  const seeded: [ArtifactImportApproval, Uint8Array?][] = [
+    [
+      syntheticImport(base("1a000001"), {
+        state: "awaiting_file",
+        expires_at: now + 9 * 60_000 + 12_000,
+      }),
+    ],
+    [
+      syntheticImport(base("1a000002"), {
+        ...host,
+        state: "preparing",
+        path: "assets/cover.png",
+        summary: "保存剛才生成的封面圖。",
+        expires_at: now + 50_000,
+      }),
+    ],
+    [
+      syntheticImport(base("1a000003"), {
+        ...host,
+        ...verified,
+        state: "pending",
+        path: "design/placeholders/hero-wide.png",
+        summary: "把橫幅示意圖存成首頁的預設插圖。",
+        expires_at: now + 8 * 60_000,
+        fingerprint: "d".repeat(64),
+      }),
+      png,
+    ],
+    [
+      syntheticImport(base("1a000004"), {
+        ...host,
+        ...verified,
+        state: "applying",
+        write_outcome: "unknown",
+        path: "design/hero-2x.png",
+      }),
+    ],
+    [
+      syntheticImport(base("1a000005"), {
+        ...verified,
+        state: "applied",
+        write_outcome: "written_verified",
+        applied_at: now - 95_000,
+        path: "images/team-photo.png",
+        summary: "從側欄匯入的圖片",
+        origin: "panel",
+      }),
+    ],
+    [
+      syntheticImport(base("1a000006"), {
+        ...host,
+        state: "conflict",
+        error_code: "FILE_EXISTS",
+        path: "images/logo.png",
+        created_at: now - 400_000,
+      }),
+    ],
+    [
+      syntheticImport(base("1a000007"), {
+        ...host,
+        ...verified,
+        state: "failed",
+        write_outcome: "unknown",
+        error_code: "WRITE_UNVERIFIED",
+        path: "design/banner.png",
+        created_at: now - 500_000,
+      }),
+    ],
+    [
+      syntheticImport(base("1a000008"), {
+        state: "denied",
+        denial_reason: "先不要放進 design 資料夾",
+        path: "design/draft.png",
+        created_at: now - 900_000,
+      }),
+    ],
+    [
+      syntheticImport(base("1a000009"), {
+        ...host,
+        state: "failed",
+        error_code: "FILE_DOWNLOAD_FAILED",
+        path: "assets/icon.webp",
+        created_at: now - 1_200_000,
+      }),
+    ],
+    [
+      syntheticImport(base("1a00000a"), {
+        state: "expired",
+        path: "images/old.png",
+        created_at: now - 1_800_000,
+      }),
+    ],
+    [
+      syntheticImport(base("1a00000b"), {
+        state: "cancelled",
+        path: "images/unused.jpg",
+        created_at: now - 2_400_000,
+      }),
+    ],
+  ];
+  for (const [item, bytes] of seeded) await imports.seed(item, bytes);
+  if (open === "import-loading") imports.holdPreviews();
+  if (open === "import-preview-required") imports.forgetNextReview();
+  if (open === "import-mismatch") imports.corruptPreviews();
+}
 let selectedWorkspace: string | null = workspaces[0]?.id ?? null;
 let available = true;
 const countButton = document.querySelector<HTMLButtonElement>("#approval-count");
@@ -199,8 +368,45 @@ const frame = document.querySelector<HTMLIFrameElement>("#workbench");
 const empty = document.querySelector<HTMLElement>("#workbench-empty");
 const status = document.querySelector<HTMLElement>("#approval-status");
 
+function showNotice(message: string, tone: string) {
+  const notice = document.querySelector<HTMLElement>("#panel-notice");
+  const text = document.querySelector<HTMLElement>("#panel-error");
+  if (!notice || !text) return;
+  text.textContent = message;
+  notice.dataset.tone = tone;
+  notice.hidden = !message;
+}
+
+function opener() {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && active !== document.body
+    ? active
+    : (countButton ?? undefined);
+}
+
 const panel = new ApprovalPanel(container, {
   decide: async (session, action, reason) => {
+    if (isImportItem(session)) {
+      const response = await imports.decide({
+        action,
+        import_id: session.id,
+        fingerprint: session.fingerprint,
+        ...(reason ? { reason } : {}),
+      });
+      if (response && !response.ok) {
+        const { code } = (await response.json()) as { code?: string };
+        throw Object.assign(
+          new Error(
+            code === "IMPORT_PREVIEW_REQUIRED"
+              ? "核准前須先在這裡載入並核對圖片預覽。"
+              : "請求未被接受。",
+          ),
+          { code },
+        );
+      }
+      render();
+      return;
+    }
     const live = items.find((item) => item.id === session.id);
     if (!live) return;
     if (study) studyApprovalDecision(live, action);
@@ -220,7 +426,9 @@ const panel = new ApprovalPanel(container, {
     render();
     setTimeout(render, 0);
   },
-  report: () => {},
+  // The coordinator's notice slot, reduced to one line for the fixture.
+  report: (message) => showNotice(message, "warning"),
+  inform: (message) => showNotice(message, "neutral"),
   change: (isOpen, tab) => {
     if (frame) frame.hidden = true;
     // The fixture has no workbench page: closing the queue shows the empty body state.
@@ -234,12 +442,71 @@ const panel = new ApprovalPanel(container, {
       )?.focus();
   },
   announce: (message) => status?.replaceChildren(document.createTextNode(message)),
+  imports: {
+    content: (item, signal) => importClient.content(item, signal),
+    upload: async (item, image) => {
+      await importClient.upload(item, image);
+      render();
+    },
+    uploadStatus: (item) => uploads.status("fixture", item.id),
+  },
+  // Focus returns to whatever opened the dialog (the 匯入圖片 button), like sidepanel.ts.
+  startImport: () => dialog.open({ returnFocus: opener() }),
+  canStartImport: () => withImports,
+  // The fixture has no workbench: say what would open instead.
+  openFile: (item) => showNotice(`會在工作台開啟 ${item.path}`, "neutral"),
+  refresh: async () => render(),
 });
+const dialog = new ImportDialog({
+  client: {
+    create: (input, signal) => importClient.create(input, signal),
+    upload: (item, image, signal) => importClient.upload(item, image, signal),
+    content: (item, signal) => importClient.content(item, signal),
+  },
+  workspaces: () => workspaces,
+  defaultWorkspace: () => selectedWorkspace,
+  available: () => available,
+  find: (id) => imports.list().find((item) => item.id === id),
+  decide: async (item, action) => {
+    const response = await imports.decide({
+      action,
+      import_id: item.id,
+      fingerprint: item.fingerprint,
+    });
+    if (response && !response.ok) throw new Error("請求未被接受。");
+    render();
+  },
+  finished: (id, approved, image) => panel.openItem(id, { approved, image }),
+  announce: (message) => status?.replaceChildren(document.createTextNode(message)),
+});
+const intake = new ImageIntake({
+  target: () => {
+    if (dialog.isOpen)
+      return {
+        offer: (file) => dialog.offer(file),
+        dropLabel: "放開以使用這張圖片",
+        ownZone: dialog.dropZone,
+      };
+    if (panel.acceptsImage)
+      return { offer: (file) => panel.offerImage(file), dropLabel: "放開以提供這張圖片" };
+    return withImports
+      ? {
+          offer: (file) => dialog.open({ file, returnFocus: opener() }),
+          dropLabel: "放開以匯入到專案",
+        }
+      : undefined;
+  },
+  notify: () => {},
+  unavailable: () => "配對後才能匯入圖片。",
+});
+document.body.append(intake.overlay);
 
 // Mirrors the coordinator's toolbar with the same pure helpers (tests/ cannot load it here).
 function render() {
-  panel.render(items, available, selectedWorkspace);
-  const { pending: waiting, ongoing } = splitApprovalItems(items);
+  uploads.observe("fixture", imports.list());
+  const all: ApprovalItem[] = [...imports.list(), ...items];
+  panel.render(all, available, selectedWorkspace);
+  const { pending: waiting, ongoing } = splitApprovalItems(all);
   if (countButton && countNumber) {
     const need = needButton(waiting.length);
     countButton.hidden = false;
@@ -264,11 +531,51 @@ if (activeCount) activeCount.onclick = () => panel.toggle("running");
 if (empty) empty.hidden = panel.isOpen;
 
 // Opening a view for screenshots only navigates; no decision is ever made programmatically.
-const clickRow = (match: (item: ApprovalItem) => boolean) => {
-  const target = items.find((item) => item.state === "pending" && match(item));
+const clickRow = (match: (item: ApprovalItem) => boolean, waiting = true) => {
+  const target = [...imports.list(), ...items].find(
+    (item) => (waiting ? awaitingDecision(item) : !awaitingDecision(item)) && match(item),
+  );
   container.querySelector<HTMLButtonElement>(`button.k-row[data-id="${target?.id}"]`)?.click();
 };
-if (open) {
+const importInState = (state: string, unknown?: boolean) => (item: ApprovalItem) =>
+  isImportItem(item) &&
+  item.state === state &&
+  (unknown === undefined || (item.write_outcome === "unknown") === unknown);
+if (open?.startsWith("import-")) {
+  const recent = [
+    "import-recent",
+    "import-applied",
+    "import-conflict",
+    "import-uncertain",
+    "import-denied",
+    "import-failed",
+  ];
+  panel.open(recent.includes(open) ? "recent" : "pending");
+  if (open === "import-awaiting" || open === "import-uploaded")
+    clickRow(importInState("awaiting_file"));
+  if (open === "import-preparing") clickRow(importInState("preparing"));
+  if (
+    ["import-pending", "import-loading", "import-mismatch", "import-preview-required"].includes(
+      open,
+    )
+  )
+    clickRow(importInState("pending"));
+  if (open === "import-applied") clickRow(importInState("applied"), false);
+  if (open === "import-conflict") clickRow(importInState("conflict"), false);
+  if (open === "import-uncertain") clickRow(importInState("failed", true), false);
+  if (open === "import-failed") clickRow(importInState("failed", false), false);
+  if (open === "import-denied") clickRow(importInState("denied"), false);
+  // The paste path, with a synthetic file: the same offer() a trusted paste reaches.
+  if (open === "import-uploaded")
+    panel.offerImage(await syntheticFigureFile("image.png", 1200, 750));
+  if (open === "import-dialog")
+    dialog.open({ file: await syntheticFigureFile("ChatGPT Image 合成示意.png") });
+  if (open === "import-dialog-empty") dialog.open();
+  if (open === "import-overlay") {
+    panel.close();
+    intake.hint();
+  }
+} else if (open) {
   panel.open(open === "running" || open === "recent" ? open : "pending");
   if (open === "command") clickRow((item) => "argv" in item);
   if (open === "terminal") clickRow((item) => "shell" in item);

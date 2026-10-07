@@ -214,9 +214,18 @@ async function startPairedWorkbench(artifactDownload?: ArtifactDownload) {
       body,
     });
   };
-  const content = (id: string, token = panelToken, origin = extensionOrigin) =>
+  const content = (
+    id: string,
+    token = panelToken,
+    origin: string | null = extensionOrigin,
+    extra: Record<string, string> = {},
+  ) =>
     fetch(`${connection.origin}/api/panel/imports/${id}/content`, {
-      headers: { Origin: origin, Authorization: `Bearer ${token}` },
+      headers: {
+        ...(origin === null ? {} : { Origin: origin }),
+        Authorization: `Bearer ${token}`,
+        ...extra,
+      },
     });
   return {
     connection,
@@ -259,6 +268,7 @@ test("an import without a file waits for the user's image; only the paired panel
     expect(slot).toMatchObject({
       state: "awaiting_file",
       delivery: "user_supplied",
+      origin: "tool",
       workspace_name: "測試專案",
       path: target,
       summary: "預設人物圖",
@@ -325,6 +335,28 @@ test("an import without a file waits for the user's image; only the paired panel
     expect((await w.content(started.id, w.connection.uiToken)).status).toBe(401);
     expect((await w.content(started.id, w.connection.mcpToken)).status).toBe(401);
     expect((await w.content(started.id, w.panelToken, w.connection.origin)).status).toBe(403);
+    // Chromium sends no Origin on a GET from the extension page (Sec-Fetch-Site: none); the
+    // panel token still decides. A same-origin page (the workbench) is refused, and so is any
+    // other token or a foreign Origin.
+    expect(
+      (await w.content(started.id, w.panelToken, null, { "Sec-Fetch-Site": "none" })).status,
+    ).toBe(200);
+    expect((await w.content(started.id, w.panelToken, null)).status).toBe(200);
+    for (const site of ["same-origin", "same-site", "cross-site"])
+      expect(
+        (await w.content(started.id, w.panelToken, null, { "Sec-Fetch-Site": site })).status,
+        site,
+      ).toBe(403);
+    expect((await w.content(started.id, w.connection.uiToken, null)).status).toBe(401);
+    expect(
+      (
+        await w.content(
+          started.id,
+          w.panelToken,
+          "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+      ).status,
+    ).toBe(403);
     expect((await w.content(crypto.randomUUID())).status).toBe(404);
     const postContent = await fetch(
       `${w.connection.origin}/api/panel/imports/${started.id}/content`,
@@ -334,6 +366,12 @@ test("an import without a file waits for the user's image; only the paired panel
       },
     );
     expect(postContent.status).toBe(405);
+    // Only the GET read may come without an Origin.
+    const originlessPost = await fetch(
+      `${w.connection.origin}/api/panel/imports/${started.id}/content`,
+      { method: "POST", headers: { Authorization: `Bearer ${w.panelToken}` } },
+    );
+    expect(originlessPost.status).toBe(403);
     // The workbench iframe route cannot read pending bytes.
     expect(
       (
@@ -401,6 +439,7 @@ test("the side panel starts its own import and every import route keeps the trus
     expect(slot).toMatchObject({
       state: "awaiting_file",
       delivery: "user_supplied",
+      origin: "panel",
       path: "panel.png",
     });
     const again = await w.panelPost("/api/panel/imports", body);

@@ -1363,6 +1363,48 @@ body.resizing-inspector * {
   min-width: 0;
   min-height: 0;
 }
+/* 從 ChatGPT 選擇圖片 (only when the host exposes its file helpers). */
+.hv-import {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--k-line);
+}
+.hv-import > .k-btn {
+  justify-self: start;
+}
+.hv-import__form {
+  display: grid;
+  gap: 4px;
+}
+.hv-import__form .k-label,
+.hv-import__form .k-hint,
+.hv-import__form .k-error {
+  margin: 0;
+}
+.hv-import__form .k-input {
+  overflow-wrap: anywhere;
+}
+/* The picked file's name (untrusted text, escapes visible) above where it will be saved. */
+.hv-import__file {
+  margin: 0 0 4px;
+  color: var(--k-ink-2);
+  font-size: var(--k-text-base);
+  overflow-wrap: anywhere;
+}
+.hv-import .k-notice:focus:not(:focus-visible) {
+  outline: 0;
+}
+.hv-import__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.hv-import .k-notice__body {
+  overflow-wrap: anywhere;
+}
 .hv-files {
   display: grid;
   flex: 1;

@@ -942,3 +942,377 @@ body.sp {
 .rq-reason .k-error {
   margin: 0;
 }
+
+/* ---------- Image import (ii-*): target, drop zone, verified preview, dialog ---------- */
+.rq-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin: 0 0 10px;
+  padding: 0 4px;
+}
+.rq-tools__hint {
+  flex: 1 1 140px;
+  min-width: 0;
+  color: var(--k-ink-2);
+}
+.rq-tools .k-btn {
+  flex: none;
+}
+.ii {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.ii > * {
+  min-width: 0;
+}
+.ii-target .k-dl__note {
+  font-size: var(--k-text-base);
+}
+/* 儲存為 spans the row; 專案 and 提出 share the next one, so the image starts higher. */
+.ii-target {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 16px;
+}
+.ii-target > :first-child {
+  grid-column: 1 / -1;
+}
+/* The project is a decision fact: full name at body size, wrapping, never ellipsized. */
+.ii-target .k-tag {
+  color: var(--k-ink-1);
+  font-size: var(--k-text-base);
+  white-space: normal;
+}
+.ii-target .rq-tag__name {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+/* The target path is the decision: full, wrapping, never shortened. */
+.ii-path {
+  font-family: var(--k-font-mono);
+  font-weight: var(--k-weight-strong);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.ii-stage {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+/* Focus parks here only while no action in the stage is usable; keyboard users still see it. */
+.ii-stage:focus:not(:focus-visible),
+.ii-dialog__status:focus:not(:focus-visible) {
+  outline: 0;
+}
+.ii-stage:focus-visible,
+.ii-dialog__status:focus-visible {
+  border-radius: var(--k-radius-sm);
+  outline-offset: 2px;
+}
+.ii-file {
+  display: none;
+}
+
+/* Drop zone: the instruction is the decision text, so it stays 14px and full contrast. */
+.ii-drop {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 20px 16px;
+  border: 1.5px dashed var(--k-line-control);
+  border-radius: var(--k-radius-md);
+  background: var(--k-surface);
+  text-align: center;
+}
+.ii-drop[data-compact] {
+  gap: 6px;
+  padding: 14px 12px;
+}
+.ii-drop[data-disabled] {
+  background: var(--k-surface-2);
+  color: var(--k-ink-2);
+}
+.ii-drop__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--k-radius-pill);
+  background: var(--k-brand-soft);
+  color: var(--k-brand-on);
+}
+.ii-drop[data-disabled] .ii-drop__icon {
+  background: var(--k-surface-3);
+  color: var(--k-ink-2);
+}
+.ii-drop__title {
+  max-width: 34em;
+  color: var(--k-ink-1);
+  font-weight: var(--k-weight-strong);
+  line-height: 1.6;
+}
+/* A menu item name or a key combo stays on one line. */
+.ii-nowrap {
+  white-space: nowrap;
+}
+.ii-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline: 2px;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+.ii-drop__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+}
+.ii-drop__or {
+  color: var(--k-ink-2);
+}
+.ii-drop__hint {
+  color: var(--k-ink-2);
+  font-size: var(--k-text-meta);
+}
+/* Files dragged over a zone that can take them (the dialog draws its own). */
+.ii-dialog[data-drag] .ii-drop,
+.ii-dialog[data-drag] .ii-frame {
+  border-style: solid;
+  border-color: var(--k-brand);
+  background: var(--k-brand-soft);
+}
+
+/* One status sentence with its icon; danger is an alert, the rest are polite. */
+.ii-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--tone-line);
+  border-radius: var(--k-radius-md);
+  background: var(--tone-soft);
+  color: var(--tone-on);
+}
+.ii-status > .k-icon {
+  flex: none;
+  color: var(--tone);
+}
+.ii-status__text {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: var(--k-weight-strong);
+  overflow-wrap: anywhere;
+}
+.ii-status .k-btn {
+  flex: none;
+}
+
+/* Preview: the whole image on a checkerboard, never cropped, never stretched. */
+.ii-figure {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+.ii-frame {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  max-height: 50vh;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-md);
+  background-color: var(--k-surface-2);
+  background-image:
+    linear-gradient(45deg, var(--k-surface-3) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--k-surface-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--k-surface-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--k-surface-3) 75%);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+.ii-frame[data-state] {
+  place-items: stretch;
+  align-content: center;
+  background-image: none;
+}
+/* Loading reads as plain text in the empty frame; a failure keeps its toned box. */
+.ii-frame[data-state="loading"] .ii-status {
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  color: var(--k-ink-2);
+}
+.ii-frame[data-state="loading"] .ii-status__text {
+  flex: 0 1 auto;
+  font-weight: var(--k-weight-regular);
+}
+.ii-canvas {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: calc(50vh - 22px);
+  object-fit: contain;
+}
+.ii-canvas[data-pixelated] {
+  image-rendering: pixelated;
+}
+/* 放大: the full panel width at any height (the page scrolls); small images scale up. */
+.ii-frame[data-zoom] {
+  max-height: none;
+  padding: 0;
+}
+.ii-frame[data-zoom] .ii-canvas {
+  width: 100%;
+  max-height: none;
+}
+.ii-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--k-ink-2);
+  font-size: var(--k-text-meta);
+}
+.ii-caption__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ii-thumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+}
+.ii-frame--thumb {
+  flex: none;
+  width: 72px;
+  height: 72px;
+  min-height: 0;
+  padding: 4px;
+}
+.ii-frame--thumb .ii-canvas {
+  max-height: 62px;
+}
+.ii-thumb__caption {
+  min-width: 0;
+  color: var(--k-ink-2);
+  font-size: var(--k-text-meta);
+  overflow-wrap: anywhere;
+}
+.ii-facts {
+  gap: 12px;
+}
+.ii-name {
+  overflow-wrap: anywhere;
+}
+.ii-tech {
+  margin-top: -4px;
+}
+.ii-tech__list {
+  gap: 10px;
+}
+.ii-tech__value {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Panel-wide drop target: covers the workbench iframe so a drop lands in trusted DOM. */
+.ii-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--k-z-toast);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--k-overlay);
+}
+.ii-overlay__card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 320px;
+  padding: 24px 20px;
+  border: 2px dashed var(--k-brand);
+  border-radius: var(--k-radius-lg);
+  background: var(--k-surface);
+  color: var(--k-ink-1);
+  text-align: center;
+  box-shadow: var(--k-shadow-3);
+}
+.ii-overlay__card > .k-icon {
+  color: var(--k-brand-on);
+}
+.ii-overlay[data-kind="blocked"] .ii-overlay__card {
+  border-color: var(--k-warning);
+}
+.ii-overlay[data-kind="blocked"] .ii-overlay__card > .k-icon {
+  color: var(--k-warning-on);
+}
+.ii-overlay__text {
+  font-size: var(--k-text-md);
+  font-weight: var(--k-weight-strong);
+  line-height: var(--k-leading-tight);
+}
+
+/* Standalone import dialog: the body scrolls, the actions stay reachable. */
+.ii-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.ii-dialog__body {
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  color: var(--k-ink-1);
+}
+.ii-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.ii-field .k-label,
+.ii-field .k-hint,
+.ii-field .k-error {
+  margin: 0;
+}
+.ii-select {
+  min-height: var(--k-control);
+  padding-right: 8px;
+}
+.ii-path-input {
+  min-height: 0;
+  resize: none;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.ii-path-input[aria-invalid="true"] {
+  border-color: var(--k-danger);
+}
+.ii-figure--dialog .ii-frame {
+  max-height: 32vh;
+}
+.ii-figure--dialog .ii-canvas {
+  max-height: calc(32vh - 22px);
+}
+.ii-dialog .k-dialog__actions .k-btn {
+  min-height: var(--k-control-lg);
+}

@@ -31,7 +31,13 @@ import {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
-import { focusSequence, unreadActivity, workspaceFilterMessage } from "./activity-model.ts";
+import {
+  focusSequence,
+  openArtifactMessage,
+  pasteCarriesImage,
+  unreadActivity,
+  workspaceFilterMessage,
+} from "./activity-model.ts";
 import { ActivityPanel, latestFocus, useActivity } from "./activity-panel.tsx";
 import { ArtifactPanel } from "./artifact-panel.tsx";
 import { createBridge } from "./bridge.ts";
@@ -50,6 +56,7 @@ import {
 } from "./file-model.ts";
 import { type FilesView, filesPane, filesResultPatch } from "./files-state.ts";
 import { isEditableTarget, readingKey, workbenchShortcut } from "./follow-model.ts";
+import { HostImageImport } from "./host-image-import-panel.tsx";
 import {
   type HostStatus,
   hostTabForView,
@@ -225,6 +232,10 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   const showActivityRef = useRef<(entry: ActivityEntry, openDetail?: boolean) => Promise<void>>(
     async () => {},
   );
+  /** The trusted panel's 檢查目前檔案: show one image of a mounted workspace. */
+  const openArtifactAtRef = useRef<(workspaceId: string, relative: string) => Promise<void>>(
+    async () => {},
+  );
   const workspace = workspaces.find((item) => item.id === selectedId);
   const historicalNames =
     workspaceNameHistory?.instanceId === activity.snapshot?.instanceId
@@ -272,6 +283,12 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     if (bridge.mode !== "workbench" || !trustedParent) return;
     const receive = (event: MessageEvent) => {
       if (event.source !== window.parent || event.origin !== parentOrigin) return;
+      const open = openArtifactMessage(event.data);
+      if (open) {
+        setNativeControls(true);
+        void openArtifactAtRef.current(open.workspaceId, open.path);
+        return;
+      }
       const message = workspaceFilterMessage(event.data);
       if (!message) return;
       setNativeControls(true);
@@ -297,6 +314,43 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
   useEffect(() => {
     if (following) readThrough.current = focusSequence(activity.snapshot, workspaceFilter);
   }, [activity.snapshot, following, workspaceFilter]);
+
+  // Files dragged over the embedded workbench: ask the trusted side panel to cover it, so the
+  // drop lands in the panel (which owns uploads) and never opens the file in this frame.
+  useEffect(() => {
+    if (bridge.mode !== "workbench" || !trustedParent) return;
+    let last = 0;
+    const hint = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "none";
+      if (Date.now() - last < 400) return;
+      last = Date.now();
+      postToParent({ type: "kairomes:file-drag", version: 1 });
+    };
+    const drop = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    };
+    // A copied image pasted here: the bytes stay in this frame (it never uploads); the trusted
+    // panel takes focus and asks for the same paste there. Text pastes are left alone.
+    const paste = (event: ClipboardEvent) => {
+      if (!event.isTrusted || !pasteCarriesImage(event.clipboardData)) return;
+      const typing = isEditableTarget(event.target as Element | null);
+      if (typing && event.clipboardData?.types.includes("text/plain")) return;
+      event.preventDefault();
+      postToParent({ type: "kairomes:file-paste", version: 1 });
+    };
+    window.addEventListener("dragenter", hint);
+    window.addEventListener("dragover", hint);
+    window.addEventListener("drop", drop);
+    window.addEventListener("paste", paste);
+    return () => {
+      window.removeEventListener("dragenter", hint);
+      window.removeEventListener("dragover", hint);
+      window.removeEventListener("drop", drop);
+      window.removeEventListener("paste", paste);
+    };
+  }, []);
 
   const activityAvailable = !!activity.snapshot && !activity.error;
   useEffect(() => {
@@ -934,16 +988,16 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     }
   }
 
-  async function openArtifact(relative: string) {
-    if (workspaceRemoved) return;
+  async function openArtifact(relative: string, workspaceId = selectedId) {
+    if (workspaceId === selectedId && workspaceRemoved) return;
     setView("artifact");
     const current = ++requestId.current;
     setBusy(true);
     setError("");
     try {
       const data = await readCurrentResult(
-        { kind: "artifact", workspaceId: selectedId, path: relative },
-        () => bridge.call("artifact_preview", { workspace_id: selectedId, path: relative }),
+        { kind: "artifact", workspaceId, path: relative },
+        () => bridge.call("artifact_preview", { workspace_id: workspaceId, path: relative }),
         () => current === requestId.current,
       );
       if (data?.kind === "artifact") {
@@ -957,6 +1011,30 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
       if (current === requestId.current) setBusy(false);
     }
   }
+
+  openArtifactAtRef.current = async (workspaceId, relative) => {
+    if (bridge.mode !== "workbench" || !isImagePath(relative)) return;
+    const live = liveWorkspacesRef.current ?? workspaces;
+    if (!live.some((item) => item.id === workspaceId)) {
+      setError("這個專案已不在工作台，無法開啟檔案。");
+      return;
+    }
+    // A file the user asked for: following the newest activity must not replace it.
+    pauseFollow();
+    const switching = workspaceId !== selectedId;
+    if (switching) {
+      automaticWorkspace.current = { id: workspaceId, browse: false };
+      setSelectedId(workspaceId);
+      setSnapshot(null);
+      setFile(null);
+      setSearch(null);
+    }
+    setSelectedEntry(undefined);
+    setUnavailableResult(undefined);
+    await openArtifact(relative, workspaceId);
+    // The file list of the newly selected project loads after the preview, not instead of it.
+    if (switching && selectedIdRef.current === workspaceId) void browse(workspaceId);
+  };
 
   async function runSearch(sensitive = caseSensitive) {
     if (workspaceRemoved) return;
@@ -1606,6 +1684,13 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
         {currentTab === "files" && (
           <div className="hv-files" data-open={fileDetailOpen ? "" : undefined}>
             <div className="hv-browser">
+              {bridge.mode === "host" && selectedId && (
+                <HostImageImport
+                  bridge={bridge}
+                  workspaceId={selectedId}
+                  folder={snapshot?.workspace.id === selectedId ? snapshot.path : ""}
+                />
+              )}
               <FileBrowser
                 tab={tab}
                 onTab={(next) => (next === "search" ? showSearch() : showFileList())}

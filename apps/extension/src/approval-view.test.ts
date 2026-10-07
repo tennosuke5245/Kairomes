@@ -18,13 +18,21 @@ import {
   diffStat,
   diffStatusPill,
   formatDuration,
+  importFileAction,
+  importOutcomeReason,
+  importRequester,
+  importSourceText,
+  isPanelImport,
   modelReason,
   outcomeReason,
+  preparingText,
   primaryLabel,
+  queueRow,
   quoteArgument,
   recentTime,
   relativeTime,
   requestFragment,
+  requestMetaLabel,
   riskStrip,
   runningMeta,
   stateView,
@@ -124,6 +132,7 @@ const image: ArtifactImportApproval = {
   message: null,
   artifact: null,
   delivery: "host_file",
+  origin: "tool",
   sha256_short: "dddddddddddd",
   upload_id: null,
   write_outcome: "not_written",
@@ -318,4 +327,120 @@ test("workspace hues are stable and within the five tokens", () => {
     expect(workspaceHue(id)).toBeGreaterThanOrEqual(1);
     expect(workspaceHue(id)).toBeLessThanOrEqual(5);
   }
+});
+
+test("an import waiting for its image says 等待圖片 (brand); receiving shows progress, not a deadline", () => {
+  const waiting = {
+    ...image,
+    state: "awaiting_file" as const,
+    version: null,
+    delivery: "user_supplied" as const,
+  };
+  const row = queueRow(waiting, "pending", 1_000);
+  expect(row.pill).toEqual({ tone: "brand", icon: "Tray", label: "等待圖片", spin: false });
+  expect(row.meta.map((part) => part.kind)).toEqual(["tag", "countdown"]);
+  const receiving = queueRow({ ...image, state: "preparing" }, "pending", 1_000);
+  expect(receiving.pill).toMatchObject({
+    tone: "running",
+    icon: "CircleNotch",
+    label: "準備中",
+    spin: true,
+  });
+  expect(receiving.meta[1]).toEqual({ kind: "text", text: "正在取得圖片…" });
+  expect(preparingText({ delivery: "user_supplied" })).toBe("正在接收圖片…");
+  // Pending bytes read like any other decision: the write scope, then the deadline.
+  expect(queueRow(image, "pending", 1_000).pill).toMatchObject({
+    label: "工作區內",
+    tone: "neutral",
+  });
+});
+
+test("import states use artifactImportLabel; an unknown write is 結果待確認, never 匯入失敗", () => {
+  const label = (patch: Partial<ArtifactImportApproval>) => stateView({ ...image, ...patch });
+  expect(label({ state: "applied", write_outcome: "written_verified" })).toMatchObject({
+    label: "已匯入",
+    dataTone: "success",
+  });
+  expect(label({ state: "failed", write_outcome: "unknown" })).toMatchObject({
+    label: "結果待確認",
+    dataTone: "warning",
+    icon: "Question",
+  });
+  expect(label({ state: "failed", write_outcome: "not_written" })).toMatchObject({
+    label: "匯入失敗",
+    dataTone: "danger",
+  });
+  expect(label({ state: "conflict" })).toMatchObject({
+    label: "目的檔案已存在",
+    dataTone: "danger",
+  });
+  expect(label({ state: "expired" })).toMatchObject({ label: "已過期", dataTone: "neutral" });
+});
+
+test("import outcomes are fixed sentences; the daemon's message is never shown", () => {
+  const reason = (patch: Partial<ArtifactImportApproval>) =>
+    importOutcomeReason({ ...image, message: "<b>raw daemon text https://x</b>", ...patch });
+  expect(reason({ state: "failed", write_outcome: "unknown" })).toEqual({
+    text: "無法確認是否已寫入；請先檢查目的檔案，不要重新匯入。",
+    tone: "warning",
+  });
+  expect(reason({ state: "conflict", error_code: "PARENT_NOT_FOUND" })?.text).toBe(
+    "找不到儲存資料夾，沒有寫入。",
+  );
+  expect(reason({ state: "conflict", error_code: "FILE_EXISTS" })?.text).toBe(
+    "同名檔案已存在，沒有覆寫。",
+  );
+  expect(reason({ state: "failed", error_code: "FILE_DOWNLOAD_FAILED" })?.text).toBe(
+    "無法從 ChatGPT 取得圖片，沒有寫入檔案。",
+  );
+  expect(reason({ state: "failed", error_code: "INVALID_IMAGE" })?.text).toContain(
+    "無法讀取這張圖片",
+  );
+  expect(reason({ state: "denied", denial_reason: "先不要" })?.text).toBe("你的說明：先不要");
+  expect(reason({ state: "applied", write_outcome: "written_verified" })).toBeUndefined();
+  for (const state of ["failed", "conflict", "expired", "cancelled", "applying"] as const)
+    expect(JSON.stringify(reason({ state }))).not.toContain("raw daemon text");
+  expect(outcomeReason({ ...image, state: "expired" })).toEqual({ text: "請求已到期，沒有寫入。" });
+});
+
+test("an import's source is named only once its bytes were verified", () => {
+  // Denied, cancelled or expired while waiting: no image ever arrived.
+  expect(importSourceText({ delivery: "user_supplied", version: null })).toBeUndefined();
+  // ChatGPT's download failed: there is no delivered image to name either.
+  expect(importSourceText({ delivery: "host_file", version: null })).toBeUndefined();
+  expect(importSourceText({ delivery: "host_file", version: "d".repeat(64) })).toBe(
+    "ChatGPT 交付的圖片",
+  );
+  expect(importSourceText({ delivery: "user_supplied", version: "d".repeat(64) })).toBe(
+    "你提供的圖片",
+  );
+});
+
+test("only the daemon's origin makes an import the user's own, never its summary", () => {
+  const lookalike = { ...image, delivery: "user_supplied" as const, summary: "從側欄匯入的圖片" };
+  expect(isPanelImport(lookalike)).toBe(false);
+  expect(importRequester(lookalike)).toBe("ChatGPT");
+  const own = { ...lookalike, origin: "panel" as const };
+  expect(isPanelImport(own)).toBe(true);
+  expect(importRequester(own)).toBe("你（側欄）");
+  expect(isPanelImport(command)).toBe(false);
+});
+
+test("the footer names an import's ID 匯入, matching 技術資訊; other requests say 請求", () => {
+  expect(requestMetaLabel(image)).toEqual({ label: "匯入", value: image.id.slice(0, 8) });
+  expect(requestMetaLabel(command)).toEqual({ label: "請求", value: "00000002" });
+});
+
+test("a finished import offers its file read-only: written, blocking, or of unknown outcome", () => {
+  const at = (patch: Partial<ArtifactImportApproval>) => importFileAction({ ...image, ...patch });
+  expect(at({ state: "applied", write_outcome: "written_verified" })).toEqual({
+    label: "檢查目前檔案",
+  });
+  expect(at({ state: "conflict", error_code: "FILE_EXISTS" })).toEqual({ label: "查看既有檔案" });
+  // A missing folder or a changed workspace has no file to show.
+  expect(at({ state: "conflict", error_code: "PARENT_NOT_FOUND" })).toBeUndefined();
+  expect(at({ state: "failed", write_outcome: "unknown" })).toEqual({ label: "檢查目的檔案" });
+  for (const state of ["pending", "denied", "expired", "cancelled", "applying"] as const)
+    expect(at({ state })).toBeUndefined();
+  expect(at({ state: "failed", write_outcome: "not_written" })).toBeUndefined();
 });
