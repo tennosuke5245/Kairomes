@@ -39,11 +39,15 @@ export function visibleActivity(snapshot?: ActivitySnapshot, workspaceId?: strin
   return [...latest.values()].sort((a, b) => b.seq - a.seq);
 }
 
-/** State and write outcome of an image import entry (older entries carry no outcome). */
+/**
+ * State, write outcome and error code of an image import entry (older entries carry no
+ * outcome or code), so a conflict reads the same cause as in the side panel.
+ */
 function importValue(entry: ActivityEntry) {
   return {
     state: entry.state as ArtifactImport["state"],
     write_outcome: entry.writeOutcome ?? "not_written",
+    error_code: entry.errorCode ?? null,
   } as const;
 }
 

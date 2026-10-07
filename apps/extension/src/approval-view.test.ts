@@ -5,6 +5,7 @@ import type {
   CommandApproval,
   FileChangeApproval,
 } from "@kairomes/protocol";
+import { workspaceHue as sharedWorkspaceHue } from "@kairomes/protocol/ui-state";
 import {
   approvalPreview,
   approvalRisk,
@@ -327,6 +328,9 @@ test("workspace hues are stable and within the five tokens", () => {
     expect(workspaceHue(id)).toBeGreaterThanOrEqual(1);
     expect(workspaceHue(id)).toBeLessThanOrEqual(5);
   }
+  // The same project has the same hue as in the workbench and on Desktop.
+  expect(workspaceHue).toBe(sharedWorkspaceHue);
+  expect(workspaceHue("3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b")).toBe(2);
 });
 
 test("an import waiting for its image says 等待圖片 (brand); receiving shows progress, not a deadline", () => {
@@ -374,7 +378,17 @@ test("import states use artifactImportLabel; an unknown write is 結果待確認
     label: "目的檔案已存在",
     dataTone: "danger",
   });
-  expect(label({ state: "expired" })).toMatchObject({ label: "已過期", dataTone: "neutral" });
+  // Only FILE_EXISTS means a file is there; a missing folder never reads 目的檔案已存在.
+  expect(label({ state: "conflict", error_code: "FILE_EXISTS" }).label).toBe("目的檔案已存在");
+  for (const code of ["PARENT_NOT_FOUND", "NOT_DIRECTORY"])
+    expect(label({ state: "conflict", error_code: code })).toMatchObject({
+      label: "找不到資料夾",
+      dataTone: "danger",
+    });
+  for (const code of ["WORKSPACE_CHANGED", "OUTSIDE_WORKSPACE", "IMPORT_CHANGED", "LINK_BLOCKED"])
+    expect(label({ state: "conflict", error_code: code }).label).toBe("儲存位置已變更");
+  // Same word as every other expired request (toneFor), never 已過期.
+  expect(label({ state: "expired" })).toMatchObject({ label: "已到期", dataTone: "neutral" });
 });
 
 test("import outcomes are fixed sentences; the daemon's message is never shown", () => {
@@ -384,12 +398,20 @@ test("import outcomes are fixed sentences; the daemon's message is never shown",
     text: "無法確認是否已寫入；請先檢查目的檔案，不要重新匯入。",
     tone: "warning",
   });
+  // The reason adds the outcome and next step; it never restates the pill.
   expect(reason({ state: "conflict", error_code: "PARENT_NOT_FOUND" })?.text).toBe(
-    "找不到儲存資料夾，沒有寫入。",
+    "沒有寫入；匯入不會建立資料夾，請改用既有資料夾。",
   );
   expect(reason({ state: "conflict", error_code: "FILE_EXISTS" })?.text).toBe(
-    "同名檔案已存在，沒有覆寫。",
+    "沒有覆寫既有檔案；要保存這張圖片，請改用其他檔名。",
   );
+  expect(reason({ state: "conflict", error_code: "WORKSPACE_CHANGED" })?.text).toBe(
+    "沒有寫入；請重新確認儲存位置後再匯入。",
+  );
+  for (const code of ["PARENT_NOT_FOUND", "FILE_EXISTS", "LINK_BLOCKED"]) {
+    const item = { ...image, state: "conflict" as const, error_code: code };
+    expect(importOutcomeReason(item)?.text).not.toContain(stateView(item).label);
+  }
   expect(reason({ state: "failed", error_code: "FILE_DOWNLOAD_FAILED" })?.text).toBe(
     "無法從 ChatGPT 取得圖片，沒有寫入檔案。",
   );

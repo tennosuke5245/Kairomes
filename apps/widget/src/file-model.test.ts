@@ -204,10 +204,10 @@ test("image sizes carry no thousands separator", () => {
   expect(formatDimensions(12000, 9000)).toBe("12000 × 9000");
 });
 
-test("sizes read like 2.1 KB and count UTF-8 bytes", () => {
+test("sizes read like 2.1 KiB, as on the side panel, and count UTF-8 bytes", () => {
   expect(formatBytes(980)).toBe("980 B");
-  expect(formatBytes(2150)).toBe("2.1 KB");
-  expect(formatBytes(150 * 1024)).toBe("150 KB");
-  expect(formatBytes(3.1 * 1024 * 1024)).toBe("3.1 MB");
+  expect(formatBytes(2150)).toBe("2.1 KiB");
+  expect(formatBytes(150 * 1024)).toBe("150 KiB");
+  expect(formatBytes(3.1 * 1024 * 1024)).toBe("3.1 MiB");
   expect(utf8Bytes("喵a")).toBe(4);
 });

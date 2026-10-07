@@ -3,6 +3,8 @@
 // artifact-imports.ts); these mirror its rules so a surface can explain a problem before it
 // sends anything. Error codes are the daemon's own.
 
+import { formatBytes } from "./ui-state.ts";
+
 export type ImageMime = "image/png" | "image/jpeg" | "image/webp";
 
 /** Same bounds as LIMITS.artifactBytes and LIMITS.importPixels (checked in a test). */
@@ -29,11 +31,30 @@ export function isImageMime(value: unknown): value is ImageMime {
 /** `PNG`, `JPEG`, `WebP`. */
 export const imageFormatName = (mime: ImageMime) => formatNames[mime];
 
+/** The import formats by name (`WebP`); any other image type by its upper-cased subtype (`GIF`). */
+export function imageTypeName(mime: string) {
+  return isImageMime(mime) ? imageFormatName(mime) : mime.replace(/^image\//, "").toUpperCase();
+}
+
+/**
+ * `1280 × 720 · PNG · 184 KiB`: one caption order for every surface, the size only when it is
+ * known. Pixel counts carry no thousands separator.
+ */
+export function imageCaption(value: {
+  width: number;
+  height: number;
+  mime: string;
+  bytes?: number;
+}) {
+  return [
+    `${Math.round(value.width)} × ${Math.round(value.height)}`,
+    imageTypeName(value.mime),
+    ...(value.bytes ? [formatBytes(value.bytes)] : []),
+  ].join(" · ");
+}
+
 /** The preferred extension for a format: `.png`, `.jpg`, `.webp`. */
 export const imageExtension = (mime: ImageMime) => extensions[mime][0] as string;
-
-/** Every extension the daemon accepts for a format, e.g. `.jpg` and `.jpeg`. */
-export const imageExtensions = (mime: ImageMime) => extensions[mime];
 
 /** `path.posix.extname`, lower-cased: the last dot of the last segment, never a leading one. */
 export function pathExtension(path: string) {

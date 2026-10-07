@@ -208,8 +208,9 @@ test("review diffs keep context next to a rewrite and parse into numbered lines"
     ).toEqual([
       ["long.txt", "modified", 1, 1],
       ["README.md", "modified", 1, 1],
-      ["src/new.ts", "added", 2, 0],
-      ["src/main.ts", "deleted", 0, 2],
+      // A whole-file hunk's final newline is not a line: "export {};\n" is +1, as in git.
+      ["src/new.ts", "added", 1, 0],
+      ["src/main.ts", "deleted", 0, 1],
     ]);
     expect(
       parsed.files[0]?.lines

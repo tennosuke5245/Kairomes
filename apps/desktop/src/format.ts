@@ -128,15 +128,8 @@ export function pairingRemaining(
   return Math.max(0, receivedAt + lifetime * SECOND - now);
 }
 
-/** Deterministic decorative hue for a workspace: ws-1 … ws-5 (the name is always shown too). */
-export function workspaceHue(workspaceId: string): 1 | 2 | 3 | 4 | 5 {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < workspaceId.length; index++) {
-    hash ^= workspaceId.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (((hash >>> 0) % 5) + 1) as 1 | 2 | 3 | 4 | 5;
-}
+/** Deterministic decorative hue ws-1 … ws-5, the same function as the side panel and workbench. */
+export { workspaceHue } from "@kairomes/protocol/ui-state";
 
 /** First visible character of a project name, upper-cased for Latin names. */
 export function avatarLetter(name: string): string {

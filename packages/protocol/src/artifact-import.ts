@@ -214,10 +214,21 @@ export const artifactImportLabels: Record<ArtifactImportState, string> = {
   applied: "已匯入",
   denied: "已拒絕",
   cancelled: "已取消",
-  expired: "已過期",
+  expired: "已到期",
   conflict: "目的檔案已存在",
   failed: "匯入失敗",
 };
+
+/**
+ * A conflict wrote nothing, but its cause differs: only FILE_EXISTS (or an entry without a
+ * code) means a file is already there. A missing folder or a destination that changed under
+ * the request gets its own label, so the pill never contradicts the reason line.
+ */
+export function artifactImportConflictLabel(code: string | null | undefined) {
+  if (!code || code === "FILE_EXISTS") return artifactImportLabels.conflict;
+  if (code === "PARENT_NOT_FOUND" || code === "NOT_DIRECTORY") return "找不到資料夾";
+  return "儲存位置已變更";
+}
 
 /**
  * State to display. `failed` with write_outcome=unknown means a file may exist at the target,
@@ -229,10 +240,28 @@ export function artifactImportDisplayState(
   return value.state === "failed" && value.write_outcome === "unknown" ? "uncertain" : value.state;
 }
 
-/** Status label from state and write_outcome; use instead of `artifactImportLabels[state]`. */
-export function artifactImportLabel(value: Pick<ArtifactImport, "state" | "write_outcome">) {
+/**
+ * Status label from state, write_outcome and (for a conflict) error_code; use instead of
+ * `artifactImportLabels[state]`.
+ */
+export function artifactImportLabel(
+  value: Pick<ArtifactImport, "state" | "write_outcome"> & { error_code?: string | null },
+) {
   const state = artifactImportDisplayState(value);
-  return state === "uncertain" ? "結果待確認" : artifactImportLabels[state];
+  if (state === "uncertain") return "結果待確認";
+  if (state === "conflict") return artifactImportConflictLabel(value.error_code);
+  return artifactImportLabels[state];
+}
+
+/**
+ * Still before a decision: pending, waiting for the user's image (awaiting_file, which needs
+ * the user) or still receiving it (preparing). Those two can be denied or cancelled but never
+ * approved. The side panel, the workbench and the Companion all count these under 需確認.
+ */
+export function artifactImportAwaitingDecision(value: { state: string }) {
+  return (
+    value.state === "awaiting_file" || value.state === "preparing" || value.state === "pending"
+  );
 }
 
 /** Imports that still hold a slot: waiting for an image, preparing, pending or writing. */

@@ -74,7 +74,7 @@ export function facts(item: ApprovalItem, view: DiffView): HTMLElement[] {
   const note = cwdNote(item);
   if (note) directory.append(el("p", "k-dl__note", note));
   list.append(
-    "argv" in item ? fact("執行檔", codebox(item.executable)) : fact("Shell", codebox(item.shell)),
+    "argv" in item ? fact("執行檔", codebox(item.executable)) : fact("殼層", codebox(item.shell)),
     fact(`參數（${argv.length} 個）`, argvList(argv)),
     directory,
   );

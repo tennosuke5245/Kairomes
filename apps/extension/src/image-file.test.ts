@@ -93,7 +93,7 @@ test("sizes and the one-line image summary use binary units", () => {
   expect(formatBytes(8126)).toBe("7.9 KiB");
   expect(formatBytes(25 * 1024 * 1024)).toBe("25.0 MiB");
   expect(imageSummary({ mime: "image/png", width: 128, height: 128, size: 8126 })).toBe(
-    "PNG · 128 × 128 · 7.9 KiB",
+    "128 × 128 · PNG · 7.9 KiB",
   );
 });
 

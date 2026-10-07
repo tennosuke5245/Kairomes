@@ -242,6 +242,7 @@ export class ActivityStore {
       title: `匯入圖片 · ${artifactImportLabel(value)}`,
       state: value.state,
       writeOutcome: value.write_outcome,
+      errorCode: value.error_code ?? undefined,
       updatedAt: this.now(),
       message: value.message ?? undefined,
     });

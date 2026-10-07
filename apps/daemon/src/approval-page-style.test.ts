@@ -21,7 +21,7 @@ test("the diff renders as rows through textContent and a truncated diff is not a
   expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML|document\.write/);
   expect(script).not.toContain("<pre");
   expect(script).toContain("row.dataset.kind = entry.kind");
-  expect(script).toContain("diffRows(text, files)");
+  expect(script).toContain("diffRows(text, files, truncated)");
   expect(script).toContain("quoted(value)");
   expect(script).toContain("session.diff_truncated) button.disabled = true");
   expect(script).toContain("if (!event.isTrusted) return;");

@@ -1,4 +1,5 @@
 import type { Artifact } from "@kairomes/protocol";
+import { imageTypeName } from "@kairomes/protocol/image-path";
 import { ImageIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
@@ -11,13 +12,13 @@ import { iconProps } from "./ui-icons.tsx";
 /** Below this size an image is enlarged with crisp pixels instead of shown as a dot. */
 const TINY_IMAGE = 64;
 
-/** 1280 × 720 · PNG · 184 KB */
+/** 1280 × 720 · PNG · 184 KiB, in the same order and units as the side panel. */
 export function artifactCaption(
   artifact: Pick<Artifact, "width" | "height" | "mime_type" | "byte_size">,
 ) {
   return [
     formatDimensions(artifact.width, artifact.height),
-    artifact.mime_type.replace("image/", "").toUpperCase(),
+    imageTypeName(artifact.mime_type),
     formatBytes(artifact.byte_size),
   ];
 }

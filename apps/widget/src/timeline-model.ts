@@ -1,5 +1,5 @@
 import type { ActivityEntry, ActivitySnapshot } from "@kairomes/protocol";
-import type { UiState } from "@kairomes/protocol/ui-state";
+import { type UiState, workspaceHue } from "@kairomes/protocol/ui-state";
 import { activityState, activityTitle } from "./activity-model.ts";
 import { commandMeta, commandReason, formatArgv } from "./command-model.ts";
 import { type CountdownUrgency, countdown, formatDuration, relativeTime } from "./time-format.ts";
@@ -44,15 +44,8 @@ export interface TimelineRow {
 /** Number of rows added per 顯示更早; every retained entry is reachable by paging. */
 export const TIMELINE_PAGE = 40;
 
-/** Decorative workspace hue 1–5 (FNV-1a over UTF-16 units); the name is always beside it. */
-export function workspaceHue(id: string) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < id.length; index++) {
-    hash ^= id.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return ((hash >>> 0) % 5) + 1;
-}
+/** Decorative workspace hue 1–5, the same function as the side panel and Desktop. */
+export { workspaceHue };
 
 const readVerbs: Partial<Record<NonNullable<ActivityEntry["tool"]>, [string, string]>> = {
   // [daemon default title, verb used when the path is known]

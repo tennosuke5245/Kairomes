@@ -4,7 +4,12 @@ import {
   artifactImportLabel,
 } from "@kairomes/protocol";
 import { parseUnifiedDiff } from "@kairomes/protocol/diff-lines";
-import { toneFor, type UiDataTone, type UiStateKind } from "@kairomes/protocol/ui-state";
+import {
+  toneFor,
+  type UiDataTone,
+  type UiStateKind,
+  workspaceHue,
+} from "@kairomes/protocol/ui-state";
 import { formatRemaining, spokenRemaining } from "./access-state.ts";
 import type { ApprovalBlock, ApprovalItem } from "./approval-state.ts";
 import type { PanelIcon } from "./icons.ts";
@@ -358,13 +363,15 @@ export function importOutcomeReason(
     case "uncertain":
       return { text: "無法確認是否已寫入；請先檢查目的檔案，不要重新匯入。", tone: "warning" };
     case "conflict":
+      // The pill already names the cause (artifactImportConflictLabel); this line adds the
+      // outcome and what to do next instead of restating it.
       return {
         text:
-          code === "PARENT_NOT_FOUND"
-            ? "找不到儲存資料夾，沒有寫入。"
+          code === "PARENT_NOT_FOUND" || code === "NOT_DIRECTORY"
+            ? "沒有寫入；匯入不會建立資料夾，請改用既有資料夾。"
             : code === "FILE_EXISTS" || !code
-              ? "同名檔案已存在，沒有覆寫。"
-              : "儲存位置已變更，沒有寫入。",
+              ? "沒有覆寫既有檔案；要保存這張圖片，請改用其他檔名。"
+              : "沒有寫入；請重新確認儲存位置後再匯入。",
         tone: "danger",
       };
     case "failed":
@@ -472,12 +479,8 @@ export function diffCoversFiles(
   return [...parsedPaths].sort().every((path, index) => path === expected[index]);
 }
 
-/** Decorative workspace hue 1–5 (spec §2.2); the name is always shown beside it. */
-export function workspaceHue(workspaceId: string) {
-  let hash = 0;
-  for (const character of workspaceId) hash = (hash * 31 + (character.codePointAt(0) ?? 0)) >>> 0;
-  return (hash % 5) + 1;
-}
+/** Decorative workspace hue 1–5, the same function as the workbench and Desktop. */
+export { workspaceHue };
 
 /** The host platform wording for the risk strip. */
 export function isWindowsHost(userAgent: string) {

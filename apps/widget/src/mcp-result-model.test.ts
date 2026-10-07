@@ -151,7 +151,8 @@ test("tiny images grow by a whole factor to 64px; others keep their natural size
   expect(imageBox(64, 2)).toEqual({ width: 64, height: 2, tiny: false });
   expect(imageBox(1280, 720)).toEqual({ width: 1280, height: 720, tiny: false });
   expect(imageCaption({ width: 1280, height: 720, mimeType: "image/png", bytes: 188_416 })).toBe(
-    "1280 × 720 · PNG · 184 KB",
+    "1280 × 720 · PNG · 184 KiB",
   );
-  expect(imageCaption({ width: 1, height: 1, mimeType: "image/webp" })).toBe("1 × 1 · WEBP");
+  expect(imageCaption({ width: 1, height: 1, mimeType: "image/webp" })).toBe("1 × 1 · WebP");
+  expect(imageCaption({ width: 1, height: 1, mimeType: "image/gif" })).toBe("1 × 1 · GIF");
 });

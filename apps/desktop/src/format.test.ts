@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { workspaceHue as sharedWorkspaceHue } from "@kairomes/protocol/ui-state";
 import {
   APPROVAL_SOON_MS,
   avatarLetter,
@@ -102,6 +103,8 @@ test("workspace hues are stable per id and the avatar uses the first character",
   expect(new Set(Array.from({ length: 40 }, (_, index) => workspaceHue(`id-${index}`))).size).toBe(
     5,
   );
+  // Same function as the side panel and workbench, so a project keeps its colour everywhere.
+  expect(workspaceHue).toBe(sharedWorkspaceHue);
   expect(avatarLetter("kairomes")).toBe("K");
   expect(avatarLetter("  個人筆記")).toBe("個");
   expect(avatarLetter("")).toBe("?");

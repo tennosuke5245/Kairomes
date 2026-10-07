@@ -36,6 +36,8 @@ export interface ActivityEntry {
   importId?: string;
   /** Image imports only: label `failed` with `unknown` as 結果待確認 (artifactImportLabel). */
   writeOutcome?: ArtifactImportWriteOutcome;
+  /** Image imports only: the fixed error code, so a conflict names its cause (never the message). */
+  errorCode?: string;
   resultId?: string;
   message?: string;
 }

@@ -14,8 +14,8 @@ type ParsedFile = {
   lines: { kind: string; text: string; label?: string }[];
 };
 type Helpers = {
-  parseDiff(text: string): ParsedFile[];
-  diffRows(text: string, files: readonly { path: string }[]): Row[];
+  parseDiff(text: string, truncated?: boolean): ParsedFile[];
+  diffRows(text: string, files: readonly { path: string }[], truncated?: boolean): Row[];
   quoted(value: string): string;
   fileLine(file: { operation: string; path: string }): string;
   visibleSegments(text: string): { text: string; escape?: true }[];
@@ -26,8 +26,8 @@ const helpers = new Function(
   `${approvalPageScript}\nreturn { parseDiff, diffRows, quoted, visibleSegments, fileLine };`,
 )() as Helpers;
 
-const shared = (text: string) =>
-  parseUnifiedDiff(text).files.map((file) => ({
+const shared = (text: string, truncated = false) =>
+  parseUnifiedDiff(text, { truncated }).files.map((file) => ({
     path: file.path,
     ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
     status: file.status,
@@ -111,8 +111,41 @@ test("the inline parser stays in parity with the shared diff parser", () => {
     ].join("\n"),
     "+added\n-removed\n kept\nnot a diff line",
     "",
+    // Final newline rows of review hunks: dropped by both parsers, kept when only one side of
+    // a replacement ends in a newline, and kept as the last row of a cut diff.
+    [
+      "--- a/notes.md",
+      "+++ b/notes.md",
+      "@@ exact replacement 1 @@",
+      "--- dash item",
+      "-",
+      "+-- dashed item",
+      "+",
+      "@@ exact replacement 2 @@",
+      "-x",
+      "-",
+      "+y",
+      "",
+      "--- a/gone.md",
+      "+++ /dev/null",
+      "@@ delete file @@",
+      "-first",
+      "-",
+      "",
+      "--- /dev/null",
+      "+++ b/new.md",
+      "@@ create file @@",
+      "+# New",
+      "+",
+      "+",
+    ].join("\n"),
   ];
-  for (const text of corpus) expect(helpers.parseDiff(text)).toEqual(shared(text));
+  for (const text of corpus) {
+    expect(helpers.parseDiff(text)).toEqual(shared(text));
+    expect(helpers.parseDiff(text, true)).toEqual(shared(text, true));
+  }
+  const created = helpers.parseDiff(corpus.at(-1) ?? "").at(-1);
+  expect(created?.lines.map((line) => line.text)).toEqual(["@@ create file @@", "# New", ""]);
 });
 
 test("every content row of a real review diff is shown, with its file", async () => {
@@ -156,12 +189,14 @@ test("every content row of a real review diff is shown, with its file", async ()
       "新檔案",
       "替換 1",
     ]);
-    // Each content line of the raw diff appears exactly once as an add/del/context row.
+    // Each content line of the raw diff appears exactly once as an add/del/context row. The
+    // only rows not shown are a new file's final bare "+": its last newline, not a line.
     const content = prepared.diff.split("\n").filter((line, index, all) => {
       const header =
         /^(--- |\+\+\+ )/.test(line) &&
         (index === 0 || all[index - 1] === "" || /^--- /.test(all[index - 1] ?? ""));
-      return line !== "" && !line.startsWith("@@") && !header;
+      const newline = line === "+" && (all[index + 1] ?? "") === "";
+      return line !== "" && !line.startsWith("@@") && !header && !newline;
     });
     expect(
       rows

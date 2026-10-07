@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ActivityEntry, ActivitySnapshot, Command } from "@kairomes/protocol";
+import { workspaceHue as sharedWorkspaceHue } from "@kairomes/protocol/ui-state";
 import { newActivityLabel, ticksEverySecond, timelineRow, workspaceHue } from "./timeline-model.ts";
 
 const one = "10000000-0000-4000-8000-000000000001";
@@ -253,6 +254,8 @@ test("workspace hue is stable, in 1–5, and spreads ids", () => {
   );
   for (const hue of hues) expect(hue >= 1 && hue <= 5).toBe(true);
   expect(hues.size).toBe(5);
+  // Same function as the side panel and Desktop, so a project keeps its colour everywhere.
+  expect(workspaceHue).toBe(sharedWorkspaceHue);
 });
 
 test("a one-second tick only while a countdown or running timer is visible", () => {

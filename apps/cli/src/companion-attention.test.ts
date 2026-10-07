@@ -46,6 +46,39 @@ test("pending summary keeps counts per workspace and nothing else", () => {
     expect(text).not.toContain(secret);
 });
 
+test("an image import waiting for its image counts under 需確認 like on the side panel", () => {
+  const now = 2_000_000;
+  const item = (state: string, extra: object = {}) => ({
+    state,
+    workspace_id: first,
+    expires_at: now + 600_000,
+    source_file_id: null,
+    ...extra,
+  });
+  const summary = pendingSummary(
+    {
+      sessions: [item("awaiting_file")],
+      commands: [item("preparing")],
+      changes: [],
+      imports: [
+        item("awaiting_file", { expires_at: now + 300_000 }),
+        item("preparing"),
+        item("pending"),
+        item("applying"),
+        item("applied"),
+        item("awaiting_file", { expires_at: now - 1 }),
+      ],
+    },
+    now,
+  );
+  // Only imports use the extra states; a malformed command or session state still is not 需確認.
+  expect(summary).toMatchObject({
+    total: 3,
+    byKind: [{ kind: "import", workspace_id: first, count: 3 }],
+    earliestExpiresAt: new Date(now + 300_000).toISOString(),
+  });
+});
+
 test("pending summary reports the earliest deadline among live requests only", () => {
   const now = 5_000_000;
   const item = (expires_at: unknown) => ({ state: "pending", workspace_id: first, expires_at });

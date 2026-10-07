@@ -855,6 +855,9 @@ export class ArtifactImportManager {
     job.urls = [];
     if (job.released) return;
     job.prepared?.data.fill(0);
+    // Drop the buffer too: a finished import stays retained for poll, and a zeroed buffer
+    // still counts against memory, so `holding` would no longer bound what is resident.
+    job.prepared = undefined;
     job.reviewed.clear();
     job.released = true;
   }

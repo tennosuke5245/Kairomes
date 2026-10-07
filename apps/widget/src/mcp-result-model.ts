@@ -1,8 +1,8 @@
 // MCP result card (design spec §5.4, C12): pure data for the ChatGPT result card. No DOM;
 // mcp-result-view.ts turns this into nodes and mounts them with textContent only.
 import type { McpCall } from "@kairomes/protocol";
+import { imageCaption as sharedImageCaption } from "@kairomes/protocol/image-path";
 import { toneFor, type UiState } from "@kairomes/protocol/ui-state";
-import { formatBytes, formatDimensions } from "./file-model.ts";
 
 /** Nested levels shown in a JSON tree; deeper objects show only their size. */
 export const JSON_TREE_DEPTH = 4;
@@ -154,16 +154,12 @@ export function imageBox(width: number, height: number, min = TINY_IMAGE) {
   return { width: w * scale, height: h * scale, tiny: true };
 }
 
-/** 1280 × 720 · PNG · 184 KB (the size only when it is known). */
+/** 1280 × 720 · PNG · 184 KiB (the size only when it is known), as on every surface. */
 export function imageCaption(image: {
   width: number;
   height: number;
   mimeType: string;
   bytes?: number;
 }) {
-  return [
-    formatDimensions(image.width, image.height),
-    image.mimeType.replace("image/", "").toUpperCase(),
-    ...(image.bytes ? [formatBytes(image.bytes)] : []),
-  ].join(" · ");
+  return sharedImageCaption({ ...image, mime: image.mimeType });
 }

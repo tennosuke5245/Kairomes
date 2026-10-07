@@ -2,6 +2,7 @@
 // check the card without a DOM; mountView creates elements with textContent only (never
 // innerHTML) and allows a fixed attribute list. The card never calls back to the server.
 import type { Artifact, McpCall } from "@kairomes/protocol";
+import { imageTypeName } from "@kairomes/protocol/image-path";
 import type { UiState, UiStateIcon } from "@kairomes/protocol/ui-state";
 import { copyAnnouncement } from "./copy.ts";
 import { CARD_ICON_PATHS, type CardIcon, K_MARK_PATHS } from "./icon-paths.ts";
@@ -117,7 +118,7 @@ function figure(
     text(
       "figcaption",
       "mr-img__caption",
-      size ? imageCaption(size) : image.mimeType.replace("image/", "").toUpperCase(),
+      size ? imageCaption(size) : imageTypeName(image.mimeType),
     ),
   ]);
 }

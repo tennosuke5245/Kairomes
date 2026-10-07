@@ -574,6 +574,40 @@ test("awaiting and pending imports expire and release their bytes", async () => 
   expect(await Bun.file(path.join(f.root, "late.png")).exists()).toBe(false);
 });
 
+test("finished imports drop their image bytes so only holding imports stay in memory", async () => {
+  const held = () =>
+    [...(manager as unknown as { jobs: Map<string, { prepared?: unknown }> }).jobs.values()].filter(
+      (job) => job.prepared !== undefined,
+    ).length;
+  const ready = async (target: string) => {
+    const started = await request({ path: target });
+    await settled(started.image_import.id);
+    expect(view(started.image_import.id).state).toBe("pending");
+    return started.image_import.id;
+  };
+
+  const applied = await ready("applied.png");
+  expect(held()).toBe(1);
+  await approve(applied);
+  expect(view(applied).state).toBe("applied");
+  const denied = await ready("denied.png");
+  await manager.decide(denied, review(denied)?.fingerprint ?? "", false);
+  const conflict = await ready("conflict.png");
+  await writeFile(path.join(f.root, "conflict.png"), "already here");
+  await approve(conflict);
+  expect(view(conflict).state).toBe("conflict");
+  const expiring = await ready("expired.png");
+  clock += IMAGE_IMPORT_LIMITS.pendingMs;
+  manager.maintain();
+  expect(view(expiring).state).toBe("expired");
+  // More finished imports than `holding` allows, all retained for poll, none holding bytes.
+  for (let index = 0; index < IMAGE_IMPORT_LIMITS.holding + 2; index++)
+    manager.cancel(await ready(`cancelled-${index}.png`));
+  expect(manager.approvals().length).toBeGreaterThan(IMAGE_IMPORT_LIMITS.holding);
+  expect(held()).toBe(0);
+  expect(() => manager.content(applied, panel)).toThrow();
+});
+
 test("a lost approval response is reconciled from the snapshot and never writes twice", async () => {
   const started = await request();
   const id = started.image_import.id;
@@ -688,6 +722,48 @@ test("the activity log names the action 匯入圖片 with its path and never the
     expect(service.activity.list().find((item) => item.importId === id)?.title).toBe(
       "匯入圖片 · 已取消",
     );
+  } finally {
+    await service.close();
+  }
+});
+
+test("a conflict's activity entry names its own cause, never 目的檔案已存在 for a missing folder", async () => {
+  const service = new ToolService(f.registry, false, {
+    artifactDownload: async () => Buffer.from(onePixelPng),
+  });
+  try {
+    await mkdir(path.join(f.root, "design/new"), { recursive: true });
+    const result = await service.call(
+      "image_import_request",
+      {
+        workspace_id: f.workspace.id,
+        request_id: crypto.randomUUID(),
+        path: "design/new/x.png",
+        summary: "保存設計圖",
+        file: { download_url: url("conflict"), file_id: "file_conflict" },
+      },
+      "mcp",
+    );
+    const id = (result.structuredContent as { image_import: { id: string } }).image_import.id;
+    await until(
+      () => service.imports.poll(id).image_import.state,
+      (state) => state === "pending",
+    );
+    // The folder disappears after the request was verified; the approved write finds no parent.
+    await rm(path.join(f.root, "design/new"), { recursive: true });
+    const fingerprint = service.imports.approvals().find((item) => item.id === id)?.fingerprint;
+    service.imports.content(id, panel).data.fill(0);
+    await service.imports.decide(id, fingerprint ?? "", true, undefined, panel);
+    expect(service.imports.poll(id).image_import).toMatchObject({
+      state: "conflict",
+      error_code: "PARENT_NOT_FOUND",
+      write_outcome: "not_written",
+    });
+    expect(service.activity.list().find((item) => item.importId === id)).toMatchObject({
+      state: "conflict",
+      errorCode: "PARENT_NOT_FOUND",
+      title: "匯入圖片 · 找不到資料夾",
+    });
   } finally {
     await service.close();
   }

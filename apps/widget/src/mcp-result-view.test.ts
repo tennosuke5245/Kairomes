@@ -128,7 +128,7 @@ test("artifact previews and empty results stay one short card", () => {
   };
   const shown = texts(artifactView(artifact, [png]));
   expect(shown).toEqual(
-    expect.arrayContaining(["圖片預覽", "cover.png", "assets", "128 × 128 · PNG · 7.9 KB"]),
+    expect.arrayContaining(["圖片預覽", "cover.png", "assets", "128 × 128 · PNG · 7.9 KiB"]),
   );
   expect(texts(artifactView(artifact, []))).toContain(
     "圖片沒有送到這張卡片；請在 Kairomes 工作台查看。",

@@ -1,4 +1,8 @@
-import type { ActivityEntry, ActivitySnapshot } from "@kairomes/protocol";
+import {
+  type ActivityEntry,
+  type ActivitySnapshot,
+  artifactImportAwaitingDecision,
+} from "@kairomes/protocol";
 import {
   ArrowUpIcon,
   ChatCircleDotsIcon,
@@ -173,7 +177,7 @@ export function ActivityPanel({
     (item) =>
       // Same 需確認 as the side panel: an image import waiting for its image counts too.
       (item.state === "pending" ||
-        ("source_file_id" in item && ["awaiting_file", "preparing"].includes(item.state))) &&
+        ("source_file_id" in item && artifactImportAwaitingDecision(item))) &&
       (!workspaceId || item.workspace_id === workspaceId),
   ).length;
   const live = liveStatus(following);

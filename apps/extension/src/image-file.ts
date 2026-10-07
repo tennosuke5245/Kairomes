@@ -3,10 +3,11 @@ import {
   IMAGE_IMPORT_MAX_PIXELS,
   IMAGE_IMPORT_MAX_SIDE,
   type ImageMime,
-  imageFormatName,
+  imageCaption,
   imagePathProblemText,
   parentFolder,
 } from "@kairomes/protocol/image-path";
+import { formatBytes } from "@kairomes/protocol/ui-state";
 
 // Pure checks for an image the local user drops, pastes or chooses in the panel. They mirror
 // the daemon's structural checks so the panel can refuse early with one clear sentence; the
@@ -214,21 +215,20 @@ export async function prepareImage(file: Blob & { name?: string }): Promise<Prep
   };
 }
 
-/** `512 B`, `7.9 KiB`, `1.2 MiB` (binary units, as the 25 MiB limit is stated). */
-export function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
-}
+/** `512 B`, `7.9 KiB`, `1.2 MiB`: the shared formatter, so the workbench reads the same size. */
+export { formatBytes };
 
-/** `PNG · 1200 × 800 · 245.1 KiB`: format, pixel size and file size from verified values. */
+/**
+ * `1200 × 800 · PNG · 245 KiB`: pixel size, format and file size from verified values, in the
+ * same order and units as the workbench caption.
+ */
 export function imageSummary(value: {
   mime: ImageMime;
   width: number;
   height: number;
   size: number;
 }) {
-  return `${imageFormatName(value.mime)} · ${value.width} × ${value.height} · ${formatBytes(value.size)}`;
+  return imageCaption({ ...value, bytes: value.size });
 }
 
 /** Where an import error belongs in a form: the target path, the image, or the whole step. */

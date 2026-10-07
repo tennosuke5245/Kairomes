@@ -2,9 +2,10 @@
 // cannot load modules. approval-page-script.test.ts evaluates this exact text.
 //
 // `parseDiff` mirrors parseUnifiedDiff from @kairomes/protocol/diff-lines (without line
-// numbers) and the test keeps both in parity. `diffRows` turns a review diff into display rows
-// and never drops a line: inside a hunk every row is content, whatever its prefix, and when the
-// parsed files do not match the reviewed files exactly every raw line is shown instead.
+// numbers) and the test keeps both in parity, including the final newline row of a review hunk
+// that both drop. `diffRows` turns a review diff into display rows and never drops a line:
+// inside a hunk every row is content, whatever its prefix, and when the parsed files do not
+// match the reviewed files exactly every raw line is shown instead.
 // `fileLine` labels one reviewed file. `quoted` shows one argv element unambiguously (empty,
 // spaces, controls, bidi marks) and `visibleSegments` splits text so invisible or reordering
 // characters render as escapes.
@@ -34,7 +35,7 @@ const operationLabels = {edit: '修改', write: '寫入', delete: '刪除'};
 function fileLine(file) {
   return (Object.hasOwn(operationLabels, file.operation) ? operationLabels[file.operation] : String(file.operation)) + ' ' + file.path;
 }
-function parseDiff(text) {
+function parseDiff(text, truncated) {
   const rows = String(text || '').split(/\r?\n/);
   if (rows[rows.length - 1] === '') rows.pop();
   const standardHunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -162,10 +163,36 @@ function parseDiff(text) {
       if (hunk.counted) { hunk.oldLeft--; hunk.newLeft--; }
     } else target.lines.push({kind: 'meta', text: row});
   }
+  // A review hunk's final bare +/- row is the text's last newline, not an empty line (the same
+  // rule as withoutReviewNewlines in diff-lines.ts). A replacement keeps both rows unless the
+  // old and new text both end in a newline; the last row of a cut diff is always kept.
+  const reviewHunk = /^@@ (?:exact replacement \d+(?: · all matches)?|create file|delete file) @@$/;
+  files.forEach((entry, fileIndex) => {
+    const lines = entry.lines;
+    const cut = truncated === true && fileIndex === files.length - 1;
+    const bare = (index) => index >= 0 && lines[index].text === '' && !(cut && index === lines.length - 1);
+    const drop = new Set();
+    for (let start = 0; start < lines.length; start++) {
+      if (lines[start].kind !== 'hunk' || !reviewHunk.test(lines[start].text)) continue;
+      let end = start + 1;
+      while (end < lines.length && lines[end].kind !== 'hunk') end++;
+      let lastAdd = -1, lastDel = -1;
+      for (let index = start + 1; index < end; index++) {
+        if (lines[index].kind === 'add') lastAdd = index;
+        else if (lines[index].kind === 'del') lastDel = index;
+      }
+      const header = lines[start].text;
+      if (header === '@@ create file @@') { if (lastAdd === end - 1 && bare(lastAdd)) drop.add(lastAdd); }
+      else if (header === '@@ delete file @@') { if (lastDel === end - 1 && bare(lastDel)) drop.add(lastDel); }
+      else if (bare(lastDel) && bare(lastAdd)) { drop.add(lastDel); drop.add(lastAdd); }
+      start = end - 1;
+    }
+    if (drop.size) entry.lines = lines.filter((_, index) => !drop.has(index));
+  });
   return files;
 }
-function diffRows(text, reviewed) {
-  const files = parseDiff(text);
+function diffRows(text, reviewed, truncated) {
+  const files = parseDiff(text, truncated);
   const expected = (reviewed || []).map((entry) => entry.path).sort();
   const parsed = files.map((entry) => entry.path).sort();
   // The sections must cover exactly the reviewed files; otherwise show every raw line.

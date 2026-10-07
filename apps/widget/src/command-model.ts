@@ -150,7 +150,7 @@ export interface Fact {
   mono?: boolean;
 }
 
-/** 2.1 KB · 52 行 for the retained output; 最近 … when the daemon or the client clipped it. */
+/** 2.1 KiB · 52 行 for the retained output; 最近 … when the daemon or the client clipped it. */
 export function outputSize(result: CommandResult) {
   const text = result.stdout + result.stderr;
   if (!text) return result.output_complete ? "沒有輸出" : undefined;

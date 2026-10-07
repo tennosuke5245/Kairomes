@@ -99,7 +99,7 @@ function diff(text, truncated, files) {
   const box = node('div', 'diff');
   box.setAttribute('role', 'region');
   box.setAttribute('aria-label', '差異');
-  for (const entry of diffRows(text, files)) {
+  for (const entry of diffRows(text, files, truncated)) {
     const row = node('div', 'line');
     row.dataset.kind = entry.kind;
     if (entry.kind === 'add' || entry.kind === 'del') row.append(node('span', 'sign', entry.kind === 'add' ? '+' : '-'));
@@ -150,7 +150,7 @@ async function refresh() {
           fact(facts, '參數（' + session.argv.length + ' 個）', argv(session.argv));
           fact(facts, '時限', node('p', '', '只允許這一次，最多 ' + session.timeout_ms / 1000 + ' 秒'));
         } else {
-          fact(facts, 'Shell', JSON.stringify(session.command));
+          fact(facts, '殼層', JSON.stringify(session.command));
           fact(facts, '時限', node('p', '', '互動式終端機 15 分鐘'));
         }
       }

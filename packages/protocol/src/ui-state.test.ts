@@ -7,9 +7,18 @@ import {
 } from "./artifact-import.ts";
 import type { Command } from "./command.ts";
 import type { FileChange } from "./file-change.ts";
+import { imageCaption } from "./image-path.ts";
 import type { TerminalSession } from "./index.ts";
 import type { McpServerSummary } from "./mcp-host.ts";
-import { dataToneFor, iconSpriteId, toneFor, type UiStateKind, type UiTone } from "./ui-state.ts";
+import {
+  dataToneFor,
+  formatBytes,
+  iconSpriteId,
+  toneFor,
+  type UiStateKind,
+  type UiTone,
+  workspaceHue,
+} from "./ui-state.ts";
 
 // Every protocol state per kind, so a new enum value fails here until it gets a row.
 const commandStates: Command["state"][] = [
@@ -144,6 +153,21 @@ describe("toneFor", () => {
     );
   });
 
+  test("an import conflict names its own cause and expiry reads 已到期 like every request", () => {
+    const conflict = (error_code?: string | null) =>
+      artifactImportLabel({ state: "conflict", write_outcome: "not_written", error_code });
+    expect(conflict()).toBe("目的檔案已存在");
+    expect(conflict(null)).toBe("目的檔案已存在");
+    expect(conflict("FILE_EXISTS")).toBe("目的檔案已存在");
+    expect(conflict("PARENT_NOT_FOUND")).toBe("找不到資料夾");
+    expect(conflict("NOT_DIRECTORY")).toBe("找不到資料夾");
+    for (const code of ["WORKSPACE_CHANGED", "OUTSIDE_WORKSPACE", "IMPORT_CHANGED", "LINK_BLOCKED"])
+      expect(conflict(code)).toBe("儲存位置已變更");
+    const expired = { state: "expired", write_outcome: "not_written" } as const;
+    expect(artifactImportLabel(expired)).toBe(toneFor("command", "expired").label);
+    expect(artifactImportLabel(expired)).toBe("已到期");
+  });
+
   test("activity entries map directly from their kind and state", () => {
     const entry = (kind: ActivityEntry["kind"], state: ActivityEntry["state"]) =>
       toneFor(kind, state).tone;
@@ -229,4 +253,27 @@ test("sprite ids are kebab-case Phosphor names", () => {
   expect(iconSpriteId("XCircle")).toBe("ph-x-circle");
   expect(iconSpriteId("SignIn")).toBe("ph-sign-in");
   expect(iconSpriteId("Tray")).toBe("ph-tray");
+});
+
+test("workspace hue is FNV-1a mod 5, one value per project on every surface", () => {
+  expect(workspaceHue("3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b")).toBe(2);
+  expect(workspaceHue("00000000-0000-4000-8000-000000000020")).toBe(1);
+  expect(workspaceHue("11111111-1111-4111-8111-111111111111")).toBe(5);
+  for (const id of ["", "a", "專案", crypto.randomUUID()]) {
+    expect(workspaceHue(id)).toBeGreaterThanOrEqual(1);
+    expect(workspaceHue(id)).toBeLessThanOrEqual(5);
+  }
+});
+
+test("byte sizes use binary units, as the 25 MiB import limit is stated", () => {
+  expect(formatBytes(980)).toBe("980 B");
+  expect(formatBytes(250_983)).toBe("245 KiB");
+  expect(formatBytes(150 * 1024)).toBe("150 KiB");
+  expect(formatBytes(25 * 1024 * 1024)).toBe("25.0 MiB");
+  expect(formatBytes(-1)).toBe("0 B");
+  // One caption order on every surface: pixel size, format, file size.
+  expect(imageCaption({ width: 1200, height: 800, mime: "image/png", bytes: 250_983 })).toBe(
+    "1200 × 800 · PNG · 245 KiB",
+  );
+  expect(imageCaption({ width: 1, height: 1, mime: "image/webp" })).toBe("1 × 1 · WebP");
 });

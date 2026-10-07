@@ -1,4 +1,5 @@
 import {
+  artifactImportAwaitingDecision,
   type CompanionPendingKind,
   type CompanionPendingSummary,
   parseVersion,
@@ -50,8 +51,12 @@ export function pendingSummary(body: unknown, now = Date.now()): CompanionPendin
     for (const item of items) {
       if (!item || typeof item !== "object") continue;
       const { state, workspace_id, expires_at } = item as Record<string, unknown>;
-      if (state !== "pending" || typeof workspace_id !== "string" || !UUID.test(workspace_id))
-        continue;
+      // Same 需確認 as the side panel and workbench: an image import that waits for the user's
+      // image (awaiting_file) or is still receiving it (preparing) needs the user too.
+      const waiting =
+        typeof state === "string" &&
+        (kind === "import" ? artifactImportAwaitingDecision({ state }) : state === "pending");
+      if (!waiting || typeof workspace_id !== "string" || !UUID.test(workspace_id)) continue;
       if (typeof expires_at === "number" && expires_at <= now) continue;
       counts.set(workspace_id, (counts.get(workspace_id) ?? 0) + 1);
       const entry = kinds.get(`${kind}:${workspace_id}`) ?? { kind, workspace_id, count: 0 };

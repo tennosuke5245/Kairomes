@@ -1,6 +1,7 @@
 import {
   type ApprovalSession,
   type ArtifactImportApproval,
+  artifactImportAwaitingDecision,
   type CommandApproval,
   DenialReasonSchema,
   type FileChangeApproval,
@@ -27,10 +28,7 @@ export function isImportItem<T extends object>(
  * denied or cancelled but never approved; they belong in 需確認 all the same.
  */
 export function awaitingDecision(item: { state: string } & object) {
-  return (
-    item.state === "pending" ||
-    ("source_file_id" in item && (item.state === "awaiting_file" || item.state === "preparing"))
-  );
+  return item.state === "pending" || (isImportItem(item) && artifactImportAwaitingDecision(item));
 }
 
 /** 需確認 (awaiting a decision), 執行中 (approved and still working) and 最近 (finished). */

@@ -17,53 +17,12 @@ export const DIFF_STATUS: Record<DiffFileStatus, { label: string; tone?: "warnin
   renamed: { label: "重新命名" },
 };
 
-const REVIEW_HUNK = /^@@ (?:exact replacement \d+(?: · all matches)?|create file|delete file) @@$/;
-
 /**
- * workspace-core review hunks (exact replacement, create, delete) prefix every element of
- * text.split("\n"), so a text that ends in a newline adds one final bare "-" or "+" row. That
- * row is the newline itself, not an empty line: it is dropped and the counts follow. The last
- * row of a cut diff is kept, since its text may continue past the cut. (Focused `@@ N @@`
- * hunks share the final newline as context, so they never carry such a row.)
+ * The widget's parse of a change diff: the shared parser, which also drops the final newline
+ * row of a review hunk, so the workbench and the side panel show the same rows and counts.
  */
-export function withoutReviewNewlines(parsed: ParsedDiff): ParsedDiff {
-  let droppedAdditions = 0;
-  let droppedDeletions = 0;
-  const files = parsed.files.map((file) => {
-    let review = false;
-    const lines = file.lines.filter((line, index, all) => {
-      if (line.kind === "hunk") {
-        review = REVIEW_HUNK.test(line.text);
-        return true;
-      }
-      return (
-        !review ||
-        (line.kind !== "add" && line.kind !== "del") ||
-        line.text !== "" ||
-        all[index + 1]?.kind === line.kind ||
-        (file.truncated && index === all.length - 1)
-      );
-    });
-    if (lines.length === file.lines.length) return file;
-    const count = (rows: readonly DiffLine[], kind: DiffLine["kind"]) =>
-      rows.filter((row) => row.kind === kind).length;
-    const additions = file.additions - (count(file.lines, "add") - count(lines, "add"));
-    const deletions = file.deletions - (count(file.lines, "del") - count(lines, "del"));
-    droppedAdditions += file.additions - additions;
-    droppedDeletions += file.deletions - deletions;
-    return { ...file, lines, additions, deletions };
-  });
-  return {
-    ...parsed,
-    files,
-    additions: parsed.additions - droppedAdditions,
-    deletions: parsed.deletions - droppedDeletions,
-  };
-}
-
-/** The widget's parse of a change diff: the shared parser, minus review newline rows. */
 export function parseChangeDiff(diff: string, truncated: boolean) {
-  return withoutReviewNewlines(parseUnifiedDiff(diff, { truncated }));
+  return parseUnifiedDiff(diff, { truncated });
 }
 
 /** Rows per file kept even when the shared budget is spent. */

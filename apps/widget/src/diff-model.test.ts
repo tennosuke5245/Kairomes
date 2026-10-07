@@ -120,8 +120,8 @@ test("a text ending in a newline adds no empty -/+ row and no count", () => {
     ["add", "body"],
   ]);
   expect(parsed.files[1]?.lines.map((line) => line.oldLine)).toEqual([undefined, 1, 2]);
-  // The shared parser still sees the raw rows; only the widget's view drops them.
-  expect(parseUnifiedDiff(prepared).additions).toBe(6);
+  // The side panel's shared parser gives the same rows and counts as the workbench.
+  expect(parseUnifiedDiff(prepared)).toEqual(parsed);
   // Focused hunks share the final newline as context and are left alone.
   const focused = ["--- a/a.ts", "+++ b/a.ts", "@@ 2 @@", " one", "-", "+two", " three"].join("\n");
   expect(parseChangeDiff(focused, false)).toEqual(parseUnifiedDiff(focused));

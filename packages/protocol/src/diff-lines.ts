@@ -9,6 +9,10 @@
 //   @@ N @@                                                           (first changed line)
 // Files are joined with a blank line. A truncated diff stays marked as truncated so the
 // caller can keep it non-approvable.
+//
+// Review hunks prefix every element of text.split("\n"), so a text that ends in a newline
+// carries one final bare "+" or "-" row: the newline itself, not an empty line. The parser
+// drops that row (see withoutReviewNewlines) so every surface counts a file of N lines as +N.
 
 export type DiffLineKind = "add" | "del" | "context" | "hunk" | "meta";
 
@@ -107,6 +111,51 @@ function hunkLabel(row: string) {
   const standard = standardHunk.exec(row);
   if (standard) return `第 ${Number(standard[3]) || Number(standard[1]) || 1} 行起`;
   return undefined;
+}
+
+const reviewHunk = /^@@ (?:exact replacement \d+(?: · all matches)?|create file|delete file) @@$/;
+
+/**
+ * Drops the final newline row of each workspace-core review hunk and returns how many add and
+ * del rows it removed. A whole-file hunk (create, delete) ends with the file's last newline. An
+ * exact replacement drops its two newline rows only when both the old and the new text end in
+ * a newline; a replacement that adds or removes a newline keeps them, so the change stays
+ * visible. The last row of a cut diff is kept, since its text may continue past the cut.
+ * Focused `@@ N @@` and standard hunks share the final newline as context and are left alone.
+ * The legacy approval page (approval-page-script.ts) applies the same rule.
+ */
+function withoutReviewNewlines(file: DiffFile) {
+  const drop = new Set<number>();
+  const lines = file.lines;
+  const bare = (index: number) =>
+    index >= 0 && lines[index]?.text === "" && !(file.truncated && index === lines.length - 1);
+  for (let start = 0; start < lines.length; start++) {
+    const header = lines[start];
+    if (header?.kind !== "hunk" || !reviewHunk.test(header.text)) continue;
+    let end = start + 1;
+    while (end < lines.length && lines[end]?.kind !== "hunk") end++;
+    let lastAdd = -1;
+    let lastDel = -1;
+    for (let index = start + 1; index < end; index++) {
+      if (lines[index]?.kind === "add") lastAdd = index;
+      else if (lines[index]?.kind === "del") lastDel = index;
+    }
+    if (header.text === "@@ create file @@") {
+      if (lastAdd === end - 1 && bare(lastAdd)) drop.add(lastAdd);
+    } else if (header.text === "@@ delete file @@") {
+      if (lastDel === end - 1 && bare(lastDel)) drop.add(lastDel);
+    } else if (bare(lastDel) && bare(lastAdd)) {
+      drop.add(lastDel);
+      drop.add(lastAdd);
+    }
+    start = end - 1;
+  }
+  if (!drop.size) return;
+  for (const index of drop) {
+    if (lines[index]?.kind === "add") file.additions--;
+    else file.deletions--;
+  }
+  file.lines = lines.filter((_, index) => !drop.has(index));
 }
 
 /**
@@ -286,6 +335,7 @@ export function parseUnifiedDiff(text: string, options: { truncated?: boolean } 
   const truncated = options.truncated === true;
   const last = files.at(-1);
   if (truncated && last) last.truncated = true;
+  for (const item of files) withoutReviewNewlines(item);
   return {
     files,
     additions: files.reduce((sum, item) => sum + item.additions, 0),

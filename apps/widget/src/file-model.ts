@@ -163,19 +163,8 @@ export function hitStartLine(line: number) {
   return Math.max(1, line - 5);
 }
 
-/** 980 B, 12.4 KB, 3.1 MB (1024 based, one decimal below 100). */
-export function formatBytes(bytes: number) {
-  const value = Math.max(0, bytes);
-  if (value < 1024) return `${value} B`;
-  const units = ["KB", "MB", "GB"];
-  let scaled = value / 1024;
-  let unit = 0;
-  while (scaled >= 1024 && unit < units.length - 1) {
-    scaled /= 1024;
-    unit++;
-  }
-  return `${scaled < 100 ? scaled.toFixed(1) : Math.round(scaled)} ${units[unit]}`;
-}
+/** 980 B, 12.4 KiB, 3.1 MiB: the shared formatter, so the side panel reads the same size. */
+export { formatBytes } from "@kairomes/protocol/ui-state";
 
 /** Image size as 1280 × 720: pixel counts carry no thousands separator. */
 export function formatDimensions(width: number, height: number) {
