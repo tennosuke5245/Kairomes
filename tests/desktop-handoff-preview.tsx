@@ -19,7 +19,7 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", {
 const controls = document.createElement("aside");
 controls.setAttribute("aria-label", "Desktop 純合成測試控制");
 controls.style.cssText =
-  "position:fixed;right:6px;bottom:6px;z-index:500;padding:6px;background:white;border:1px solid #ccc;font-size:14px";
+  "position:fixed;right:6px;bottom:6px;z-index:500;padding:6px;background:white;color:black;border:1px solid #ccc;font-size:14px";
 const details = document.createElement("details");
 const summary = document.createElement("summary");
 summary.textContent = "Desktop 合成測試";

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { diagnosticSummary } from "../../../packages/protocol/src/diagnostics.ts";
 import type { HandoffInput } from "../../../packages/protocol/src/handoff.ts";
@@ -53,6 +54,15 @@ export const DESKTOP_STATUS_EVENT = "desktop-status";
 export const CONFIRM_RESTART_EVENT = "desktop-confirm-restart";
 /** Browser previews dispatch this DOM event on window to simulate the tray request. */
 export const DEMO_CONFIRM_RESTART_EVENT = "kairomes-demo:confirm-restart";
+/** Rust: the first close of the window, which the UI answers with the one-time tray hint. */
+export const CLOSE_HINT_EVENT = "desktop-close-hint";
+/** Browser previews dispatch this DOM event on window to simulate the first close. */
+export const DEMO_CLOSE_HINT_EVENT = "kairomes-demo:close-hint";
+/**
+ * Browser previews dispatch this CustomEvent on window to simulate dragging folders over the
+ * window: `detail` is a FolderDrop. Only synthetic paths are ever used.
+ */
+export const DEMO_FOLDER_DROP_EVENT = "kairomes-demo:folder-drop";
 /** Polling interval when Tauri events are unavailable (browser preview or fixtures). */
 export const STATUS_POLL_INTERVAL_MS = 2000;
 
@@ -122,24 +132,21 @@ export function subscribeDesktopStatus(
   };
 }
 
-/**
- * The tray asked to restart the local runtime. Show a confirmation, then call
- * `performAction("restart_runtime")` only if the user agrees. Returns an unsubscribe function.
- */
-export function onConfirmRestart(callback: () => void): () => void {
+/** A payload-free host event, or its DOM stand-in in browser previews. Returns an unsubscribe. */
+function onHostSignal(event: string, demoEvent: string, callback: () => void): () => void {
   let active = true;
   if (!inTauri()) {
     const handler = () => {
       if (active) callback();
     };
-    globalThis.addEventListener?.(DEMO_CONFIRM_RESTART_EVENT, handler);
+    globalThis.addEventListener?.(demoEvent, handler);
     return () => {
       active = false;
-      globalThis.removeEventListener?.(DEMO_CONFIRM_RESTART_EVENT, handler);
+      globalThis.removeEventListener?.(demoEvent, handler);
     };
   }
   let unlisten: (() => void) | undefined;
-  listen(CONFIRM_RESTART_EVENT, () => {
+  listen(event, () => {
     if (active) callback();
   }).then(
     (stop) => {
@@ -152,6 +159,28 @@ export function onConfirmRestart(callback: () => void): () => void {
     active = false;
     unlisten?.();
   };
+}
+
+/**
+ * The tray asked to restart the local runtime. Show a confirmation, then call
+ * `performAction("restart_runtime")` only if the user agrees. Returns an unsubscribe function.
+ */
+export function onConfirmRestart(callback: () => void): () => void {
+  return onHostSignal(CONFIRM_RESTART_EVENT, DEMO_CONFIRM_RESTART_EVENT, callback);
+}
+
+/**
+ * The window was closed for the first time on this machine and is still showing. Say once that
+ * Kairomes keeps running in the tray, then call `hideMainWindow()`. Every later close hides the
+ * window without asking. Returns an unsubscribe function.
+ */
+export function onCloseHint(callback: () => void): () => void {
+  return onHostSignal(CLOSE_HINT_EVENT, DEMO_CLOSE_HINT_EVENT, callback);
+}
+
+/** Hides the window to the tray; Kairomes keeps running. */
+export async function hideMainWindow(): Promise<void> {
+  if (inTauri()) await invoke("hide_main_window");
 }
 
 export async function getLocalMcpCommand(): Promise<string> {
@@ -186,14 +215,67 @@ export async function openExternal(target: ExternalTarget): Promise<void> {
   if (inTauri()) await invoke("open_external", { target });
 }
 
-export async function chooseWorkspaceFolder(): Promise<string | null> {
-  if (!inTauri()) return null;
+/** Folders picked in the OS dialog (several at once); empty when the user cancels. */
+export async function chooseWorkspaceFolders(): Promise<string[]> {
+  if (!inTauri()) return [];
   const selected = await open({
     directory: true,
-    multiple: false,
+    multiple: true,
     title: "選擇要加入 Kairomes 的專案資料夾",
   });
-  return typeof selected === "string" ? selected : null;
+  const list = Array.isArray(selected) ? selected : typeof selected === "string" ? [selected] : [];
+  return list.filter((path): path is string => typeof path === "string" && path.length > 0);
+}
+
+/** Files or folders dragged over the window; paths arrive only with enter and drop. */
+export type FolderDrop =
+  | { type: "enter"; paths: string[] }
+  | { type: "over" }
+  | { type: "drop"; paths: string[] }
+  | { type: "leave" };
+
+/**
+ * Tells the 專案 page about folders dragged onto the window. Uses the webview's own drag and
+ * drop events (event listen only, already allowed by core:default); the host still validates
+ * every path when it is added. Returns an unsubscribe function.
+ */
+export function onFolderDrop(handler: (drop: FolderDrop) => void): () => void {
+  let active = true;
+  if (!inTauri()) {
+    const listener = (event: Event) => {
+      if (active && event instanceof CustomEvent) handler(event.detail as FolderDrop);
+    };
+    globalThis.addEventListener?.(DEMO_FOLDER_DROP_EVENT, listener);
+    return () => {
+      active = false;
+      globalThis.removeEventListener?.(DEMO_FOLDER_DROP_EVENT, listener);
+    };
+  }
+  let unlisten: (() => void) | undefined;
+  const paths = (value: unknown) =>
+    Array.isArray(value) ? value.filter((path): path is string => typeof path === "string") : [];
+  // Fixtures that stand in for Tauri have no webview metadata; drag and drop is then off.
+  Promise.resolve()
+    .then(() =>
+      getCurrentWebview().onDragDropEvent((event) => {
+        if (!active) return;
+        const payload = event.payload;
+        if (payload.type === "enter" || payload.type === "drop")
+          handler({ type: payload.type, paths: paths(payload.paths) });
+        else handler({ type: payload.type });
+      }),
+    )
+    .then(
+      (stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      },
+      () => undefined,
+    );
+  return () => {
+    active = false;
+    unlisten?.();
+  };
 }
 
 export async function addWorkspace(path: string, name?: string): Promise<WorkspaceSummary> {

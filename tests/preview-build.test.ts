@@ -64,7 +64,7 @@ test("surfaces load the shared tokens and components before their own stylesheet
     ["/widget", ".signal-workbench {"],
     ["/host-viewer", ".hv {"],
     ["/mcp-result", ".mr-card {"],
-    ["/desktop-handoff", "--canvas: var(--k-bg)"],
+    ["/desktop-handoff", ".desk-side {"],
   ] as const) {
     const { html } = await page(path);
     const tokens = html.indexOf("--k-bg:");
@@ -73,9 +73,9 @@ test("surfaces load the shared tokens and components before their own stylesheet
     expect(components, path).toBeGreaterThan(tokens);
     expect(html.indexOf(own), path).toBeGreaterThan(components);
   }
-  // Desktop stays on the light token set until it is migrated; the side panel follows the OS.
+  // Both migrated surfaces follow the OS theme: no light pin on either.
   expect(htmlTag((await page("/setup")).html)).not.toContain("data-theme");
-  expect(htmlTag((await page("/desktop-handoff")).html)).toContain('data-theme="light"');
+  expect(htmlTag((await page("/desktop-handoff")).html)).not.toContain("data-theme");
 });
 
 test("theme and motion flags reach iframes and keep hashed styles valid", async () => {

@@ -10,7 +10,8 @@ const COMPONENTS = "packages/ui-tokens/components.css";
 const SIDE_PANEL = ["apps/extension/sidepanel.css", "apps/extension/mcp-panel.css"];
 const WIDGET = "apps/widget/src/styles.css";
 const MCP_RESULT = "apps/widget/src/mcp-result.css";
-const GUARDED_STYLESHEETS = [TOKENS, COMPONENTS, ...SIDE_PANEL, WIDGET, MCP_RESULT];
+const DESKTOP = "apps/desktop/src/styles.css";
+const GUARDED_STYLESHEETS = [TOKENS, COMPONENTS, ...SIDE_PANEL, WIDGET, MCP_RESULT, DESKTOP];
 const MIN_FONT_PX = 12;
 
 type Rule = { at: string[]; selector: string; declarations: Map<string, string> };
@@ -305,5 +306,42 @@ describe("guarded stylesheets", () => {
     const legacy =
       /\.(?:topbar|body-grid|sidebar|main-panel|view-tabs|chat-composer|welcome|workspace-picker|section-label|icon-button|accent-button|error-banner|connection|result-card|result-header|result-status|signal-diff|full-diff|inspector-(?:heading|status|section|callout|primary|technical|command|error)|signal-file|signal-search|editor-code|line-numbers|search-result|file-row|command-(?:toolbar|output|argv)|terminal-(?:toolbar|footer|screen)|output-preview|result-excerpt)(?![\w-])/;
     expect(selectors.filter((selector) => legacy.test(selector))).toEqual([]);
+  });
+});
+
+describe("Desktop stylesheet", () => {
+  const desktopCss = async () => (await read(DESKTOP)).replace(/\/\*[\s\S]*?\*\//g, "");
+
+  test("takes every colour from tokens and keeps no legacy alias or theme pin", async () => {
+    const css = await desktopCss();
+    expect(css.match(/#[0-9a-f]{3,8}\b/gi) ?? []).toEqual([]);
+    expect(css.match(/\b(?:rgba?|hsla?)\(/gi) ?? []).toEqual([]);
+    // Every var() is a --k-* token or the [data-tone] plumbing; the alias block is gone.
+    expect(css.match(/var\(--(?!k-|tone\)|tone-(?:soft|on|line)\))[\w-]+/g) ?? []).toEqual([]);
+    expect(css).not.toMatch(/color-scheme\s*:/);
+    const html = await read("apps/desktop/index.html");
+    expect(html.match(/<html\b[^>]*>/)?.[0]).not.toContain("data-theme");
+  });
+
+  test("sizes text only from the type scale, so nothing drops below the 13px meta size", async () => {
+    const rules = parseCss(await desktopCss());
+    const sizes = rules.flatMap((rule) =>
+      ["font-size", "font"].flatMap((name) => {
+        const value = rule.declarations.get(name);
+        return value ? [`${rule.selector} { ${name}: ${value} }`] : [];
+      }),
+    );
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(sizes.filter((size) => !/var\(--k-text-(?:meta|base|md|lg|xl)\)/.test(size))).toEqual(
+      [],
+    );
+  });
+
+  test("has no narrow-screen layouts the 820px window cannot reach", async () => {
+    const rules = parseCss(await desktopCss());
+    const widths = rules.flatMap((rule) => rule.at).filter((at) => /max-width|min-width/.test(at));
+    expect(widths).toEqual([]);
+    // One focus treatment comes from components.css; the old translucent ring is gone.
+    expect(rules.some((rule) => rule.declarations.get("outline")?.includes("3px"))).toBe(false);
   });
 });
