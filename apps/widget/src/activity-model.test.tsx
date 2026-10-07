@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 import type { ActivityEntry, ActivitySnapshot, CommandResult } from "@kairomes/protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  activityLabel,
+  activityFilterCounts,
+  activityState,
   activityTitle,
+  filterActivity,
   unreadActivity,
   visibleActivity,
   workspaceFilterMessage,
@@ -145,7 +147,7 @@ test("operation status is rendered once; native approval counts are not duplicat
     state: "applied",
   };
   expect(activityTitle(change)).toBe("更新設定");
-  expect(activityLabel(change)).toBe("已套用");
+  expect(activityState(change).label).toBe("已套用");
   expect(activityTitle({ ...entry, title: "真實名稱 · 已成功", state: "completed" })).toBe(
     "真實名稱 · 已成功",
   );
@@ -157,13 +159,15 @@ test("operation status is rendered once; native approval counts are not duplicat
       following={false}
       unread={2}
       nativeControls
-      onFollow={() => {}}
+      onResume={() => {}}
       onSelect={() => {}}
       workspaceName={() => "專案"}
+      now={0}
     />,
   );
   expect(html.match(/已套用/g)?.length).toBe(1);
-  expect(html).toContain("最新 2");
+  expect(html).toContain("有 2 則新動態 · 回到最新");
+  expect(html).toContain("已暫停跟隨");
   expect(html).not.toContain("ChatGPT 即時操作");
   expect(html).not.toContain("上方核准卡");
 });
@@ -293,4 +297,87 @@ test("exit zero is evidence only after final output has been drained without omi
   const html = renderToStaticMarkup(<CommandOutput result={result} error="" />);
   expect(html).toContain("執行時結果");
   expect(html).not.toContain("目前版本通過");
+});
+
+test("filters bucket changes, host commands and danger results; unread ignores the filter", () => {
+  const entries: ActivityEntry[] = [
+    {
+      ...entry,
+      id: "change",
+      kind: "file_change",
+      tool: undefined,
+      changeId: "c",
+      state: "applied",
+      seq: 30,
+      focusSeq: 30,
+    },
+    {
+      ...entry,
+      id: "import",
+      kind: "artifact_import",
+      tool: "artifact_import_request",
+      importId: "i",
+      state: "conflict",
+      seq: 29,
+      focusSeq: 29,
+    },
+    {
+      ...entry,
+      id: "run",
+      kind: "command",
+      tool: undefined,
+      commandId: "r",
+      state: "failed",
+      seq: 28,
+      focusSeq: 28,
+    },
+    {
+      ...entry,
+      id: "shell",
+      kind: "terminal",
+      tool: undefined,
+      sessionId: "s",
+      state: "running",
+      seq: 27,
+      focusSeq: 27,
+    },
+    { ...entry, id: "mcp", tool: "mcp_tool_call", state: "failed", seq: 26, focusSeq: 26 },
+    {
+      ...entry,
+      id: "denied",
+      kind: "command",
+      tool: undefined,
+      commandId: "d",
+      state: "denied",
+      seq: 25,
+      focusSeq: 25,
+    },
+    entry,
+  ];
+  const visible = visibleActivity({ ...snapshot, entries });
+  expect(filterActivity(visible, "all").map((item) => item.id)).toEqual(
+    visible.map((item) => item.id),
+  );
+  expect(filterActivity(visible, "changes").map((item) => item.id)).toEqual(["change", "import"]);
+  expect(filterActivity(visible, "commands").map((item) => item.id)).toEqual([
+    "run",
+    "shell",
+    "denied",
+  ]);
+  // 失敗 is the danger tone only: a denial or an open terminal is not a failure.
+  expect(filterActivity(visible, "failed").map((item) => item.id)).toEqual([
+    "import",
+    "run",
+    "mcp",
+  ]);
+  expect(activityFilterCounts(visible)).toEqual({ all: 7, changes: 2, commands: 3, failed: 3 });
+  // Filtering is a view over the visible list; follow math keeps using every entry.
+  expect(unreadActivity({ ...snapshot, entries }, 26, one)).toBe(4);
+  expect(activityState(entries[3] as ActivityEntry).label).toBe("可接收輸入");
+  expect(
+    activityTitle({ ...entry, kind: "command", title: "bun · 已成功", state: "succeeded" }),
+  ).toBe("bun");
+  expect(
+    activityTitle({ ...entry, kind: "terminal", title: "pwsh · 可接收輸入", state: "running" }),
+  ).toBe("pwsh");
 });

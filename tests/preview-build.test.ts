@@ -62,8 +62,8 @@ test("surfaces load the shared tokens and components before their own stylesheet
     ["/setup", ".sp-toolbar"],
     ["/settings", ".mcp-filters"],
     ["/widget", ".signal-workbench {"],
-    ["/host-viewer", ".chatgpt-workbench {"],
-    ["/mcp-result", ".result-card"],
+    ["/host-viewer", ".hv {"],
+    ["/mcp-result", ".mr-card {"],
     ["/desktop-handoff", "--canvas: var(--k-bg)"],
   ] as const) {
     const { html } = await page(path);

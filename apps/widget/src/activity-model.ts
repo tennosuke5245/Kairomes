@@ -6,6 +6,7 @@ import {
   fileChangeLabels,
   terminalLabels,
 } from "@kairomes/protocol";
+import { toneFor, type UiState } from "@kairomes/protocol/ui-state";
 
 const observedTools = new Set([
   "artifact_preview",
@@ -36,28 +37,60 @@ export function visibleActivity(snapshot?: ActivitySnapshot, workspaceId?: strin
   return [...latest.values()].sort((a, b) => b.seq - a.seq);
 }
 
-export function activityLabel(entry: ActivityEntry) {
-  if (entry.kind === "command" && entry.state in commandLabels)
-    return entry.state === "succeeded"
-      ? "已結束"
-      : commandLabels[entry.state as keyof typeof commandLabels];
-  if (entry.kind === "terminal" && entry.state in terminalLabels)
-    return terminalLabels[entry.state as keyof typeof terminalLabels];
-  if (entry.kind === "file_change" && entry.state in fileChangeLabels)
-    return fileChangeLabels[entry.state as keyof typeof fileChangeLabels];
-  if (entry.kind === "artifact_import" && entry.state in artifactImportLabels)
-    return artifactImportLabels[entry.state as keyof typeof artifactImportLabels];
-  return entry.state === "working" ? "處理中" : entry.state === "failed" ? "未完成" : "已完成";
+/** One status system (design spec §3): tone, icon and label come from toneFor. */
+export function activityState(entry: ActivityEntry): UiState {
+  return toneFor(entry.kind, entry.state);
+}
+
+const own = (table: Record<string, string>, key: string) =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
+
+/** The status suffix the daemon appends to tracked work (activity.ts in apps/daemon). */
+function daemonStatusLabel(entry: ActivityEntry) {
+  if (entry.kind === "command") return own(commandLabels, entry.state);
+  if (entry.kind === "terminal") return own(terminalLabels, entry.state);
+  if (entry.kind === "file_change") return own(fileChangeLabels, entry.state);
+  if (entry.kind === "artifact_import") return own(artifactImportLabels, entry.state);
+  return undefined;
 }
 
 /** Current daemon titles include their status suffix. Render that status once. */
 export function activityTitle(entry: ActivityEntry) {
-  const label =
-    entry.kind === "command" && entry.state === "succeeded"
-      ? commandLabels.succeeded
-      : activityLabel(entry);
-  const suffix = ` · ${label}`;
-  return entry.title.endsWith(suffix) ? entry.title.slice(0, -suffix.length) : entry.title;
+  const label = daemonStatusLabel(entry);
+  const suffix = label ? ` · ${label}` : "";
+  return suffix && entry.title.endsWith(suffix)
+    ? entry.title.slice(0, -suffix.length)
+    : entry.title;
+}
+
+export type ActivityFilter = "all" | "changes" | "commands" | "failed";
+export const ACTIVITY_FILTERS: readonly { id: ActivityFilter; label: string }[] = [
+  { id: "all", label: "全部" },
+  { id: "changes", label: "變更" },
+  { id: "commands", label: "命令" },
+  { id: "failed", label: "失敗" },
+];
+
+/** 變更 writes the workspace; 命令 runs on the host; 失敗 is any danger-toned result. */
+export function matchesActivityFilter(entry: ActivityEntry, filter: ActivityFilter) {
+  if (filter === "changes") return entry.kind === "file_change" || entry.kind === "artifact_import";
+  if (filter === "commands") return entry.kind === "command" || entry.kind === "terminal";
+  if (filter === "failed") return activityState(entry).tone === "danger";
+  return true;
+}
+
+/** Filters an already visible list. Unread and follow math stay on the unfiltered list. */
+export function filterActivity(entries: readonly ActivityEntry[], filter: ActivityFilter) {
+  return filter === "all"
+    ? [...entries]
+    : entries.filter((entry) => matchesActivityFilter(entry, filter));
+}
+
+export function activityFilterCounts(entries: readonly ActivityEntry[]) {
+  const counts: Record<ActivityFilter, number> = { all: 0, changes: 0, commands: 0, failed: 0 };
+  for (const entry of entries)
+    for (const { id } of ACTIVITY_FILTERS) if (matchesActivityFilter(entry, id)) counts[id]++;
+  return counts;
 }
 
 export function focusSequence(snapshot?: ActivitySnapshot, workspaceId?: string | null) {

@@ -1,9 +1,38 @@
-import { type Command, type CommandResult, commandActive, commandLabels } from "@kairomes/protocol";
+import { type Command, type CommandResult, commandActive } from "@kairomes/protocol";
+import { toneFor } from "@kairomes/protocol/ui-state";
+import { TerminalIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
+import {
+  commandFacts,
+  commandNeverRan,
+  formatArgv,
+  notRunReason,
+  tailText,
+  workspaceCwd,
+} from "./command-model.ts";
+import {
+  ArgvText,
+  CopyButton,
+  CwdMeta,
+  FactsStrip,
+  InspectorHead,
+  PendingNotice,
+  StatusLine,
+  TechDetails,
+  WorkspaceTag,
+} from "./detail-parts.tsx";
+import { friendlyError } from "./errors.ts";
+import { DONE_TAIL, LIVE_TAIL, OutputView } from "./output-view.tsx";
+import { RecordList, type SubBack, SubBar, useListReturn } from "./record-list.tsx";
+import { commandRecord } from "./record-model.ts";
 import { commandEvidence, outputEvidence } from "./result-evidence.ts";
 import { requireCommandResult } from "./result-identity.ts";
+import { relativeTime } from "./time-format.ts";
+import { workspaceHue } from "./timeline-model.ts";
 import { ResultError } from "./tool-result.ts";
+import { iconProps } from "./ui-icons.tsx";
+import { useNow } from "./use-now.ts";
 
 export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65536) {
   const [state, setState] = useState<{ id: string; result?: CommandResult; error: string }>({
@@ -21,11 +50,7 @@ export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65
       clippedErr = false,
       backoff = 1000;
     setState({ id, error: "" });
-    const tail = (text: string) => {
-      const cut = Math.max(0, text.length - limit);
-      const first = text.charCodeAt(cut);
-      return text.slice(cut + (first >= 0xdc00 && first <= 0xdfff ? 1 : 0));
-    };
+    const tail = (text: string) => tailText(text, limit).text;
     const poll = async () => {
       try {
         const data = await bridge.call("command_poll", {
@@ -60,7 +85,7 @@ export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65
         setState((previous) => ({
           id,
           result: previous.id === id ? previous.result : undefined,
-          error: cause instanceof Error ? cause.message : "無法讀取命令結果。",
+          error: friendlyError(cause, "無法讀取命令結果。"),
         }));
         if (cause instanceof ResultError && cause.code === "COMMAND_NOT_FOUND") return;
         timer = setTimeout(() => void poll(), backoff);
@@ -78,47 +103,131 @@ export function useCommandOutput(bridge: WorkbenchBridge, id: string, limit = 65
     : { result: undefined, error: "" };
 }
 
+/**
+ * The output of one command: error, then the `.k-output` tail (none while pending). A command
+ * that never ran has no output, so it shows why instead.
+ */
 export function CommandOutput({
+  command = undefined,
   result,
   error,
-  evidence = true,
+  tail,
 }: {
+  /** The live record; it decides whether the command ever ran before a result loads. */
+  command?: Command;
   result?: CommandResult;
   error: string;
-  evidence?: boolean;
+  tail?: number;
 }) {
-  const hasStdout = Boolean(result?.stdout || result?.stdout_truncated);
-  const hasStderr = Boolean(result?.stderr || result?.stderr_truncated);
+  const record = command ?? result?.command;
+  if (record && commandNeverRan(record))
+    return (
+      <p className="insp-reason" data-tone={toneFor("command", record.state).dataTone}>
+        {notRunReason(record)}
+      </p>
+    );
+  const running = !!result && commandActive(result.command);
+  const evidence = result ? outputEvidence(result, !!error) : undefined;
+  // A finished run is labelled as a run-time result: exit 0 never vouches for current files.
+  const status = running
+    ? evidence
+    : [evidence === "輸出完整" ? undefined : evidence, "執行時結果"].filter(Boolean).join(" · ");
   return (
     <>
-      {error && <p role="alert">{error}</p>}
-      {evidence && result && result.command.state !== "pending" && (
-        <p
-          className="result-evidence"
-          role="status"
-          data-evidence={commandEvidence(result, !!error) ? "complete" : "unconfirmed"}
-        >
-          {outputEvidence(result, !!error)} · 執行時結果
+      {error && (
+        <p className="k-notice" data-tone="danger" role="alert">
+          <WarningCircleIcon {...iconProps("lg")} />
+          <span className="k-notice__body">{error}</span>
         </p>
       )}
-      {result?.command.message && <p role="status">{result.command.message}</p>}
-      {!hasStdout && !hasStderr && !error && result?.command.state !== "pending" && (
-        <p className="muted">{result ? "沒有輸出。" : "正在讀取輸出…"}</p>
+      {!result ? (
+        !error && <StatusLine>正在讀取輸出…</StatusLine>
+      ) : result.command.state === "pending" ? null : (
+        <OutputView
+          stdout={result.stdout}
+          stderr={result.stderr}
+          tail={tail ?? (running ? LIVE_TAIL : DONE_TAIL)}
+          status={status}
+          evidence={commandEvidence(result, !!error) ? "complete" : "unconfirmed"}
+          numbered={!result.stdout_truncated && !result.stderr_truncated}
+          empty={result.output_complete ? "沒有輸出。" : "等待輸出…"}
+        />
       )}
-      {hasStdout && (
-        <section aria-label="標準輸出">
-          <h3>輸出</h3>
-          {result?.stdout_truncated && <p className="muted">僅顯示最近輸出。</p>}
-          <pre className="command-output">{result?.stdout || " "}</pre>
-        </section>
-      )}
-      {hasStderr && (
-        <section aria-label="錯誤輸出">
-          <h3>錯誤輸出</h3>
-          {result?.stderr_truncated && <p className="muted">僅顯示最近錯誤輸出。</p>}
-          <pre className="command-output command-stderr">{result?.stderr || " "}</pre>
-        </section>
-      )}
+    </>
+  );
+}
+
+function CommandDetail({
+  command,
+  result,
+  error,
+  now,
+  workspaceName,
+  actionError,
+  cancelBusy,
+  onCancel,
+}: {
+  command: Command;
+  result?: CommandResult;
+  error: string;
+  now: number;
+  workspaceName?: (id: string) => string | undefined;
+  actionError: string;
+  cancelBusy: boolean;
+  /** Cancel is the only negative action the workbench offers for a command. */
+  onCancel?(): void;
+}) {
+  const argv = formatArgv(command.argv);
+  const workspace = workspaceName?.(command.workspace_id);
+  const reason = command.message?.trim();
+  const state = toneFor("command", command.state);
+  return (
+    <>
+      <InspectorHead
+        icon="command"
+        verb="執行"
+        code={<ArgvText argv={command.argv} />}
+        state={state}
+        meta={[
+          workspace && <WorkspaceTag name={workspace} hue={workspaceHue(command.workspace_id)} />,
+          relativeTime(command.created_at, now),
+          <CwdMeta key="cwd" cwd={workspaceCwd(command.cwd)} />,
+        ]}
+        actions={
+          <>
+            <CopyButton text={() => argv} label="複製指令" iconOnly />
+            {onCancel && (
+              <button
+                type="button"
+                className="k-btn k-btn--danger-quiet k-btn--sm"
+                disabled={cancelBusy}
+                onClick={onCancel}
+              >
+                {cancelBusy ? "取消中…" : "取消命令"}
+              </button>
+            )}
+          </>
+        }
+      />
+      <div className="insp-body">
+        {actionError && (
+          <p className="k-notice" data-tone="danger" role="alert">
+            <WarningCircleIcon {...iconProps("lg")} />
+            <span className="k-notice__body">{actionError}</span>
+          </p>
+        )}
+        {command.state === "pending" && <PendingNotice />}
+        {reason &&
+          (state.tone === "danger" || state.tone === "warning") &&
+          !commandNeverRan(command) && (
+            <p className="insp-reason" data-tone={state.dataTone}>
+              {reason}
+            </p>
+          )}
+        <FactsStrip facts={commandFacts(command, result, now)} />
+        <CommandOutput command={command} result={result} error={error} />
+        <TechDetails rows={[["命令編號", command.id]]} />
+      </div>
     </>
   );
 }
@@ -128,19 +237,37 @@ export function CommandPanel({
   workspaceId,
   liveCommands,
   focus,
+  workspaceName,
+  onSubBack,
 }: {
   bridge: WorkbenchBridge;
-  workspaceId: string;
+  /** Scope of the list; null lists every project (rows then carry a workspace tag). */
+  workspaceId: string | null;
   liveCommands?: Command[];
+  /** An empty id opens the list; any other id opens that command's detail. */
   focus?: { id: string; seq: number };
+  workspaceName?: (id: string) => string | undefined;
+  /** The workbench heading takes over the way back to 全部命令. */
+  onSubBack?(value: SubBack | undefined): void;
 }) {
   const [listed, setListed] = useState<Command[]>([]);
   const [selected, setSelected] = useState(focus?.id ?? "");
+  const [listMode, setListMode] = useState(!focus?.id);
+  const [fromList, setFromList] = useState(false);
+  const listReturn = useListReturn({
+    open: fromList && !listMode,
+    label: "返回全部命令",
+    back: () => setListMode(true),
+    onSubBack,
+  });
   const [listError, setListError] = useState("");
   const [actionError, setActionError] = useState({ id: "", message: "" });
   const [busyId, setBusyId] = useState("");
   useEffect(() => {
-    if (focus) setSelected(focus.id);
+    if (!focus) return;
+    setSelected(focus.id);
+    setListMode(!focus.id);
+    setFromList(false);
   }, [focus]);
   const hasLive = liveCommands !== undefined;
   useEffect(() => {
@@ -154,7 +281,7 @@ export function CommandPanel({
         if (data.kind === "commands") setListed(data.commands);
         setListError("");
       } catch (cause) {
-        if (!stopped) setListError(cause instanceof Error ? cause.message : "無法讀取命令清單。");
+        if (!stopped) setListError(friendlyError(cause, "無法讀取命令清單。"));
       }
       if (!stopped) timer = setTimeout(() => void poll(), 2000);
     };
@@ -165,10 +292,10 @@ export function CommandPanel({
     };
   }, [bridge, hasLive]);
   const commands = (liveCommands ?? listed)
-    .filter((c) => c.workspace_id === workspaceId)
+    .filter((c) => !workspaceId || c.workspace_id === workspaceId)
     .sort((a, b) => b.created_at - a.created_at);
-  const selectedCommand = selected ? commands.find((c) => c.id === selected) : commands[0];
-  const id = selectedCommand?.id ?? "";
+  const selectedCommand = selected ? commands.find((c) => c.id === selected) : undefined;
+  const id = listMode ? "" : (selectedCommand?.id ?? "");
   const currentActionError = actionError.id === id ? actionError.message : "";
   const { result, error } = useCommandOutput(bridge, id);
   // A final SSE snapshot can arrive before the next output page. Never briefly
@@ -177,72 +304,78 @@ export function CommandPanel({
     selectedCommand && !commandActive(selectedCommand)
       ? selectedCommand
       : (result?.command ?? selectedCommand);
+  const now = useNow(listMode ? commands.some(commandActive) : !!current && commandActive(current));
+  const cancel = async () => {
+    setBusyId(id);
+    setActionError({ id, message: "" });
+    try {
+      await bridge.call("command_cancel", { command_id: id });
+    } catch (cause) {
+      setActionError({
+        id,
+        message: friendlyError(cause, "取消結果尚未確認，請等待狀態更新。"),
+      });
+    } finally {
+      setBusyId("");
+    }
+  };
   return (
-    <section className="command-panel" aria-label="一次性命令">
-      <div className="command-toolbar">
-        <select
-          aria-label="選擇命令"
-          value={id}
-          disabled={!commands.length}
-          onChange={(e) => {
-            setSelected(e.target.value);
-            setActionError({ id: e.target.value, message: "" });
-          }}
-        >
-          {!commands.length && <option value="">尚無命令</option>}
-          {commands.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.argv[0]} · {c.id.slice(0, 8)} · {commandLabels[c.state]}
-            </option>
-          ))}
-        </select>
-        {current && commandActive(current) && (
-          <button
-            type="button"
-            className="text-button danger"
-            disabled={!!busyId}
-            onClick={async () => {
-              setBusyId(id);
-              setActionError({ id, message: "" });
-              try {
-                await bridge.call("command_cancel", { command_id: id });
-              } catch (cause) {
-                setActionError({
-                  id,
-                  message:
-                    cause instanceof Error ? cause.message : "取消結果尚未確認，請等待狀態更新。",
-                });
-              } finally {
-                setBusyId("");
-              }
-            }}
-          >
-            {busyId === id ? "取消中…" : "取消命令"}
-          </button>
-        )}
-      </div>
-      <div className="command-content">
-        {(listError || currentActionError) && <p role="alert">{listError || currentActionError}</p>}
-        {!current ? (
-          <h2>{selected ? "命令詳情已無法取得" : "尚無命令"}</h2>
-        ) : (
-          <>
-            <h2 role="status">
-              {current.state === "succeeded" ? "已結束" : commandLabels[current.state]}
-              {current.exit_code !== null ? ` · Exit ${current.exit_code}` : ""}
-            </h2>
-            <p className="muted">
-              起始位置：{current.cwd || "工作區根目錄"} · 最多 {current.timeout_ms / 1000} 秒
-              {current.started_at && current.ended_at
-                ? ` · 耗時 ${((current.ended_at - current.started_at) / 1000).toFixed(2)} 秒`
-                : ""}
-            </p>
-            <pre className="command-argv">{JSON.stringify(current.argv, null, 2)}</pre>
-            {current.state === "pending" && <p className="pending-indicator">請在原生側欄核准。</p>}
-            <CommandOutput result={result} error={error} />
-          </>
-        )}
-      </div>
+    <section ref={listReturn.container} className="wb-panel" aria-label="一次性命令">
+      {listError && (
+        <p className="k-notice wb-panel__notice" data-tone="danger" role="alert">
+          <WarningCircleIcon {...iconProps("lg")} />
+          <span className="k-notice__body">{listError}</span>
+        </p>
+      )}
+      {listMode ? (
+        <div className="insp-body">
+          {commands.length ? (
+            <RecordList
+              label="命令"
+              items={commands.map((command) => ({
+                id: command.id,
+                row: commandRecord(command, { now, workspaceName }),
+              }))}
+              currentId={selected}
+              onOpen={(next) => {
+                listReturn.opened(next);
+                setSelected(next);
+                setListMode(false);
+                setFromList(true);
+                setActionError({ id: next, message: "" });
+              }}
+            />
+          ) : (
+            <div className="k-empty wb-empty">
+              <span className="k-empty__icon" aria-hidden="true">
+                <TerminalIcon {...iconProps("xl")} />
+              </span>
+              <h3 className="k-empty__title">還沒有命令</h3>
+              <p className="k-empty__text">ChatGPT 要執行命令時會列在這裡。</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {listReturn.subBar && <SubBar {...listReturn.subBar} />}
+          {!current ? (
+            <div className="insp-body">
+              <StatusLine>命令詳情已無法取得。</StatusLine>
+            </div>
+          ) : (
+            <CommandDetail
+              command={current}
+              result={result}
+              error={error}
+              now={now}
+              workspaceName={workspaceName}
+              actionError={currentActionError}
+              cancelBusy={!!busyId}
+              onCancel={commandActive(current) ? () => void cancel() : undefined}
+            />
+          )}
+        </>
+      )}
     </section>
   );
 }

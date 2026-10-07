@@ -13,12 +13,25 @@ const workspace: Workspace = {
   name: "宿主順序合成專案",
   capabilities: ["read"],
 };
-const snapshot: Snapshot = {
+// A.txt keeps the delayed-read order check; the other entries only fill the synthetic view.
+const folders: Record<string, Snapshot["entries"]> = {
+  "": [
+    { name: "docs", path: "docs", kind: "directory" },
+    { name: "A.txt", path: "A.txt", kind: "file" },
+    { name: "README.md", path: "README.md", kind: "file" },
+  ],
+  docs: [{ name: "guide.md", path: "docs/guide.md", kind: "file" }],
+};
+const snapshot = (path: string): Snapshot => ({
   kind: "snapshot",
   workspace,
-  path: "",
-  entries: [{ name: "A.txt", path: "A.txt", kind: "file" }],
+  path: Object.hasOwn(folders, path) ? path : "",
+  entries: structuredClone(folders[Object.hasOwn(folders, path) ? path : ""] ?? []),
   truncated: false,
+});
+const contents: Record<string, string> = {
+  "README.md": "# 宿主順序合成專案\n\n這是合成的說明文字，用來檢查檔案檢視。\n只含虛構內容。",
+  "docs/guide.md": "合成指南：沒有真實內容。",
 };
 const file = (path: string, content: string): FileResult => ({
   kind: "file",
@@ -27,7 +40,7 @@ const file = (path: string, content: string): FileResult => ({
   content,
   version: (path === "A.txt" ? "1" : "2").repeat(64),
   start_line: 1,
-  total_lines: 1,
+  total_lines: content.split("\n").length,
   next_line: null,
   truncated: false,
   redacted: false,
@@ -85,8 +98,13 @@ export function createBridge(): WorkbenchBridge {
     async call(name, args = {}) {
       if (closed) throw new Error("合成測試已結束。");
       if (name === "workspace_list") return { kind: "workspaces", workspaces: [workspace] };
-      if (name === "workspace_snapshot") return structuredClone(snapshot);
-      if (name === "file_read") return delayed(file("A.txt", "舊讀取 A"));
+      if (name === "workspace_snapshot") return snapshot(String(args.path ?? ""));
+      if (name === "file_read") {
+        const path = String(args.path ?? "");
+        const content = Object.hasOwn(contents, path) ? contents[path] : undefined;
+        return content === undefined ? delayed(file("A.txt", "舊讀取 A")) : file(path, content);
+      }
+      if (name === "command_list") return { kind: "commands", commands: [] };
       if (name === "file_search")
         return delayed({
           kind: "search",
@@ -117,7 +135,7 @@ export function createBridge(): WorkbenchBridge {
             read: true,
             write: false,
             terminal: false,
-            command: false,
+            command: true,
             mcp_mount: true,
             artifact: true,
           },
@@ -127,9 +145,6 @@ export function createBridge(): WorkbenchBridge {
     async fullscreen() {},
     async updateModelContext() {
       return true;
-    },
-    async sendMessage() {
-      throw new Error("合成測試沒有聊天宿主。");
     },
     async askAbout() {
       throw new Error("合成測試沒有聊天宿主。");

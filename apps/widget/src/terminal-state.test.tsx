@@ -50,6 +50,25 @@ test("a late pending/running poll cannot undo authoritative progress or a stoppe
   expect(currentTerminalSession(running, result.session)?.state).toBe("exited");
 });
 
+test("clipping keeps whole lines: the first retained row is never half a line", () => {
+  const text = Array.from({ length: 400 }, (_, index) => `第 ${index + 1} 行：純合成終端輸出`).join(
+    "\n",
+  );
+  const kept = appendTerminalText({ text: "", clipped: false }, { ...result, text }, 4000);
+  expect(kept.clipped).toBe(true);
+  expect(kept.text.length).toBeLessThanOrEqual(4000);
+  expect(kept.text.startsWith("第 ")).toBe(true);
+  expect(text.endsWith(kept.text)).toBe(true);
+  expect(text.split("\n")).toContain(kept.text.split("\n")[0] ?? "");
+  // A cut that lands on a line start keeps that line; one long line is cut inside it.
+  expect(
+    appendTerminalText({ text: "ab\n", clipped: false }, { ...result, text: "cd\nef" }, 5).text,
+  ).toBe("cd\nef");
+  expect(
+    appendTerminalText({ text: "", clipped: false }, { ...result, text: "abcdefgh" }, 3).text,
+  ).toBe("fgh");
+});
+
 test("terminal preview reports server omissions and local clipping even after later complete pages", () => {
   const clipped = appendTerminalText(
     { text: "older", clipped: false },
@@ -71,6 +90,12 @@ test("terminal preview reports server omissions and local clipping even after la
   expect(terminalOutputEvidence(result, false, true)).toBe("輸出待確認");
   const html = renderToStaticMarkup(<TerminalOutput result={result} clipped />);
   expect(html.match(/輸出部分保留/g)?.length).toBe(1);
+  // Numbers counted from a cut would be false, so a clipped tail shows none.
+  expect(html).toContain('data-numbers="off"');
+  expect(html).not.toMatch(/class="k-output__ln">\d/);
+  expect(renderToStaticMarkup(<TerminalOutput result={result} />)).toMatch(
+    /class="k-output__ln">1</,
+  );
   expect(html).not.toContain("輸出已讀完");
   expect(html).not.toContain("目前版本通過");
 });

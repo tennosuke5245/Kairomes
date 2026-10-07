@@ -193,6 +193,7 @@ export const PREVIEW_PATHS = [
   "/approvals",
   "/settings",
   "/widget",
+  "/widget?timeline=1",
   "/reading",
   "/terminal",
   "/host-viewer",
@@ -279,12 +280,12 @@ export async function createPreviewPages(bundles: PreviewBundles) {
   // Same order as scripts/build-widget.ts: tokens, components, xterm, widget styles.
   const widgetCss = `${uiCss}\n${await read("apps/widget/node_modules/@xterm/xterm/css/xterm.css")}\n${await read("apps/widget/src/styles.css")}`;
   const mcpResultCss = `${uiCss}\n${await read("apps/widget/src/mcp-result.css")}`;
-  const mcpResultPage = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kairomes 合成 MCP 成果</title><style>:root{--kairomes-logo:url("data:image/png;base64,${logo}")} ${mcpResultCss}</style></head><body><div id="root"></div><script type="module">${bundles.mcpResult}</script></body></html>`;
+  const mcpResultPage = `<!doctype html><html lang="zh-Hant-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kairomes 合成 MCP 成果</title><style>${mcpResultCss}</style></head><body><div id="root"></div><script type="module">${bundles.mcpResult}</script></body></html>`;
   const resultIdentityPage = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kairomes 合成成果身份</title><style>${widgetCss}</style></head><body><div id="root"></div><script type="module">${bundles.resultIdentity}</script></body></html>`;
   const terminalControls =
-    '<aside style="position:fixed;bottom:0;right:0;z-index:500;background:white;border:1px solid #ccc;padding:4px" aria-label="合成終端測試"><details><summary>終端測試</summary><button id="fixture-terminal-stop">終端結束</button><button id="fixture-terminal-remove">移除選擇</button><output id="terminal-fixture-probe"></output></details></aside>';
+    '<aside style="position:fixed;bottom:0;right:0;z-index:500;background:white;color:#000;color-scheme:light;border:1px solid #ccc;padding:4px" aria-label="合成終端測試"><details><summary>終端測試</summary><button id="fixture-terminal-stop">終端結束</button><button id="fixture-terminal-remove">移除選擇</button><output id="terminal-fixture-probe"></output></details></aside>';
   const widget = (controls: boolean, embedded = false, terminal = false) =>
-    `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="kairomes-mode" content="workbench">${embedded ? '<meta name="kairomes-parent-origin" content="chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">' : ""}<title>Kairomes 合成側欄測試</title><style>:root{--kairomes-logo:url("data:image/png;base64,${logo}")} ${widgetCss}</style></head><body>${controls ? '<aside style="position:fixed;bottom:4px;right:4px;z-index:200;background:white;border:1px solid #ccc;padding:4px" aria-label="合成閱讀測試"><details><summary>閱讀測試</summary><button id="fixture-new-event">新增活動</button><button id="fixture-fail-read">下一次讀取失敗</button><button id="fixture-unmount">解除掛載</button></details></aside>' : ""}${terminal ? terminalControls : ""}<div id="root"></div><script type="module">${bundles.widget}</script></body></html>`;
+    `<!doctype html><html lang="zh-Hant-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="kairomes-mode" content="workbench">${embedded ? '<meta name="kairomes-parent-origin" content="chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">' : ""}<title>Kairomes 合成側欄測試</title><style>${widgetCss}</style></head><body>${controls ? '<aside style="position:fixed;bottom:4px;right:4px;z-index:200;background:white;color:#000;color-scheme:light;border:1px solid #ccc;padding:4px" aria-label="合成閱讀測試"><details><summary>閱讀測試</summary><button id="fixture-new-event">新增活動</button><button id="fixture-fail-read">下一次讀取失敗</button><button id="fixture-unmount">解除掛載</button></details></aside>' : ""}${terminal ? terminalControls : ""}<div id="root"></div><script type="module">${bundles.widget}</script></body></html>`;
   // Synthetic MessageEvents exercise the actual receiver's source/origin gates.
   // This is deliberately not a real Extension-origin end-to-end test.
   const embedded = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>合成導覽來源驗證</title><body style="margin:0"><div id="fixture-navigation"><button data-case="origin">錯誤來源</button><button data-case="window">錯誤視窗</button><button data-case="version">錯誤版本</button><button data-case="valid">有效來源</button></div><iframe id="fixture-frame" src="/embedded-widget" title="合成嵌入工作台" style="width:100%;height:calc(100vh - 40px);border:0"></iframe><script>for (const button of document.querySelectorAll('[data-case]')) button.onclick=()=>{const target=document.querySelector('iframe').contentWindow;const kind=button.dataset.case;target.dispatchEvent(new target.MessageEvent('message',{source:kind==='window'?target:window,origin:kind==='origin'?'https://invalid.example':'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',data:{type:'kairomes:workspace-filter',version:kind==='version'?2:1,workspaceId:'00000000-0000-4000-8000-000000000020'}}));};</script></body></html>`;
@@ -355,7 +356,7 @@ export async function createPreviewPages(bundles: PreviewBundles) {
       "</nav>",
       '<a href="/study-material?material=alpha" target="_blank">人工 α</a><a href="/study-material?material=beta" target="_blank">人工 β</a></nav>',
     );
-  const hostViewerPage = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kairomes 宿主順序合成檢查</title><style>${widgetCss}</style><body><aside aria-label="內部合成控制"><button id="host-viewer-file">送入宿主檔案 B</button><button id="host-viewer-catalog">更新工具清單</button><button id="host-viewer-release">完成舊讀取</button><output id="host-viewer-probe"></output></aside><div id="root"></div><script type="module">${bundles.hostViewer}</script></body></html>`;
+  const hostViewerPage = `<!doctype html><html lang="zh-Hant-TW"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kairomes 宿主順序合成檢查</title><style>${widgetCss}</style><body><aside style="position:fixed;top:50%;right:4px;z-index:200;background:white;color:#000;color-scheme:light;border:1px solid #ccc;padding:4px" aria-label="內部合成控制"><details><summary>宿主順序測試</summary><button id="host-viewer-file">送入宿主檔案 B</button><button id="host-viewer-catalog">更新工具清單</button><button id="host-viewer-release">完成舊讀取</button><output id="host-viewer-probe"></output></details></aside><div id="root"></div><script type="module">${bundles.hostViewer}</script></body></html>`;
   const pages: Record<string, string> = {
     "/host-viewer": hostViewerPage,
     // Stand-in workbench for the coordinator fixtures; it follows the parent's preview theme.
@@ -479,6 +480,6 @@ export async function startPreviewServer(
 if (import.meta.main) {
   const preview = await startPreviewServer();
   console.log(
-    `Synthetic sidebar fixture: port ${preview.server.port}; /study-control /setup /approvals /settings /widget /reading /host-viewer /terminal?terminal=1 /handoff /desktop-handoff /embedded /panel-flow /panel-http /results-identity /mcp-result. Every page accepts ?theme=light|dark and ?motion=reduce. No host or credentials.`,
+    `Synthetic sidebar fixture: port ${preview.server.port}; /study-control /setup /approvals /settings /widget(?timeline=1|connect=hold|connect=fail) /reading /host-viewer /terminal?terminal=1 /handoff /desktop-handoff /embedded /panel-flow /panel-http /results-identity /mcp-result. Every page accepts ?theme=light|dark and ?motion=reduce. No host or credentials.`,
   );
 }

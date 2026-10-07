@@ -3,17 +3,27 @@ import { ResultError } from "../apps/widget/src/tool-result.ts";
 import type {
   ActivitySnapshot,
   Artifact,
+  Command,
   CommandResult,
+  FileChange,
   FileChangeResult,
   FileResult,
+  McpCall,
   TerminalResult,
   TerminalSession,
   ToolData,
   Workspace,
 } from "../packages/protocol/src/index.ts";
-import { VERSION } from "../packages/protocol/src/index.ts";
+import { commandLabels, VERSION } from "../packages/protocol/src/index.ts";
 import { studyWorkspaces } from "./study-fixture-data.ts";
 import { StudyWidgetController } from "./study-widget-state.ts";
+import {
+  changeDiff,
+  commandOutput,
+  fileContent,
+  folder,
+  searchMatches,
+} from "./workbench-fixture-content.ts";
 
 // Pure UI fixture: no credentials, real filesystem, tool execution or ChatGPT host.
 const studyFixture = new URLSearchParams(location.search).get("study") === "1";
@@ -34,7 +44,8 @@ const file: FileResult = {
   content: 'export const message = "Kairomes";\n',
   version: "1".repeat(64),
   start_line: 1,
-  total_lines: 1,
+  // As the daemon reports it: the final newline counts as a second, empty line.
+  total_lines: 2,
   next_line: null,
   truncated: false,
   redacted: false,
@@ -317,6 +328,207 @@ if (studyFixture) {
     ],
   };
 }
+// ?timeline=1: a dense, synthetic timeline (every state, three time groups, paging) for
+// visual checks of the workbench list. Commands and changes are records only; nothing runs.
+const timelineFixture = new URLSearchParams(location.search).get("timeline") === "1";
+if (timelineFixture) {
+  const now = Date.now();
+  const minute = 60_000;
+  const today = (hour: number, minutes: number) => {
+    const at = new Date(now);
+    at.setHours(hour, minutes, 0, 0);
+    // Keep "today" rows inside today but older than the 剛剛 window, whatever the clock says.
+    return Math.min(at.getTime(), now - 20 * minute);
+  };
+  const id = (index: number) => `00000010-0000-4000-8000-${String(index).padStart(12, "0")}`;
+  const record = (
+    index: number,
+    argv: string[],
+    state: Command["state"],
+    times: Partial<Command>,
+  ) =>
+    ({
+      id: id(index),
+      request_id: id(index + 100),
+      workspace_id: workspace.id,
+      cwd: "",
+      argv,
+      timeout_ms: 120_000,
+      state,
+      created_at: now - 3 * minute,
+      started_at: null,
+      ended_at: null,
+      expires_at: now + 5 * minute,
+      exit_code: null,
+      signal: null,
+      message: null,
+      ...times,
+    }) satisfies Command;
+  const commands = [
+    record(1, ["bun", "test"], "running", { started_at: now - 14_000 }),
+    record(2, ["bun", "run", "check"], "pending", { expires_at: now + 252_000 }),
+    record(3, ["bun", "test", "--filter", "render"], "failed", {
+      started_at: today(15, 12) - 4_200,
+      ended_at: today(15, 12),
+      exit_code: 1,
+      message: "1 個測試未通過",
+    }),
+    record(4, ["bun", "run", "lint"], "succeeded", {
+      started_at: today(14, 41) - 1_800,
+      ended_at: today(14, 41),
+      exit_code: 0,
+    }),
+    record(5, ["rm", "-rf", "dist"], "denied", { workspace_id: second.id }),
+  ];
+  const change = (index: number, summary: string, state: FileChange["state"], files: string[]) =>
+    ({
+      id: id(index),
+      request_id: id(index + 100),
+      workspace_id: index === 7 ? second.id : workspace.id,
+      summary,
+      state,
+      created_at: now - 2 * minute,
+      applied_at: null,
+      expires_at: now + 580_000,
+      message: null,
+      files: files.map((path) => ({
+        operation: "edit" as const,
+        path,
+        before_version: null,
+        after_version: null,
+      })),
+    }) satisfies FileChange;
+  const changes = [
+    change(6, "修改 2 個檔案", "pending", ["src/main.ts", "src/view.ts"]),
+    change(7, "套用 3 個檔案", "conflict", ["docs/a.md", "docs/b.md", "docs/c.md"]),
+  ];
+  const session: TerminalSession = {
+    id: id(8),
+    workspace_id: second.id,
+    cwd: "",
+    shell: "powershell",
+    mode: "host-pty",
+    state: "exited",
+    created_at: today(13, 5) - 6 * minute,
+    expires_at: 0,
+    cols: 80,
+    rows: 24,
+    exit_code: 0,
+  };
+  type Entry = ActivitySnapshot["entries"][number];
+  const entry = (seq: number, value: Partial<Entry>): Entry => ({
+    id: `timeline-${seq}`,
+    seq,
+    focusSeq: seq,
+    source: "mcp",
+    kind: "tool",
+    title: "讀取檔案",
+    state: "completed",
+    updatedAt: now,
+    workspaceId: workspace.id,
+    ...value,
+  });
+  const commandEntry = (seq: number, command: Command, updatedAt: number) =>
+    entry(seq, {
+      kind: "command",
+      commandId: command.id,
+      workspaceId: command.workspace_id,
+      title: `${command.argv[0]} · ${commandLabels[command.state]}`,
+      state: command.state,
+      updatedAt,
+      message: command.message ?? undefined,
+    });
+  const older = Array.from({ length: 48 }, (_, index) =>
+    entry(80 - index, {
+      id: `timeline-old-${index}`,
+      tool: "file_read",
+      path: `src/module-${String(index + 1).padStart(2, "0")}.ts`,
+      resultId: `result-old-${index}`,
+      updatedAt: now - (26 + index) * 60 * minute,
+      workspaceId: index % 3 ? workspace.id : second.id,
+    }),
+  );
+  snapshot = {
+    ...snapshot,
+    seq: 100,
+    commands,
+    changes,
+    sessions: [session],
+    entries: [
+      commandEntry(99, commands[0] as Command, now - 30_000),
+      commandEntry(98, commands[1] as Command, now - 60_000),
+      entry(97, {
+        kind: "file_change",
+        changeId: changes[0]?.id,
+        title: "修改 2 個檔案 · 等待核准",
+        state: "pending",
+        updatedAt: now - 70_000,
+      }),
+      entry(96, {
+        id: "read-3",
+        tool: "file_read",
+        path: "src/main.ts",
+        resultId: "result-3",
+        updatedAt: now - 2 * minute,
+      }),
+      commandEntry(95, commands[2] as Command, today(15, 12)),
+      entry(94, {
+        kind: "file_change",
+        changeId: changes[1]?.id,
+        workspaceId: second.id,
+        title: "套用 3 個檔案 · 檔案已變更",
+        state: "conflict",
+        updatedAt: today(14, 58),
+      }),
+      commandEntry(93, commands[3] as Command, today(14, 41)),
+      commandEntry(92, commands[4] as Command, today(14, 20)),
+      entry(91, {
+        kind: "terminal",
+        sessionId: session.id,
+        workspaceId: second.id,
+        title: "powershell · 已結束",
+        state: "exited",
+        updatedAt: today(13, 5),
+      }),
+      entry(90, {
+        tool: "mcp_tool_call",
+        title: "github · search_issues",
+        workspaceId: undefined,
+        state: "failed",
+        message: "遠端工具回報錯誤：查詢逾時。",
+        resultId: "result-mcp",
+        updatedAt: today(12, 30),
+      }),
+      entry(89, {
+        id: "search-approval",
+        tool: "file_search",
+        title: "搜尋「approval」",
+        resultId: "result-search",
+        updatedAt: today(12, 20),
+      }),
+      ...older,
+    ],
+  };
+}
+// The timeline's github · search_issues row: a failed downstream MCP call, so the preview shows
+// the 呼叫參數 and 結構化結果 disclosures instead of falling back to the file fixture.
+const mcpCallFixture: McpCall = {
+  kind: "mcp_call",
+  request_id: "00000010-0000-4000-8000-000000000090",
+  catalog_revision: "fixture-1",
+  tool: {
+    ref: "github.search_issues",
+    server_id: "00000010-0000-4000-8000-000000000091",
+    server_name: "github",
+    name: "search_issues",
+  },
+  is_error: true,
+  arguments_preview: { query: "label:bug is:open", per_page: 20 },
+  duration_ms: 30_012,
+  content: [{ type: "text", text: "遠端工具回報錯誤：查詢逾時。" }],
+  structured_content: { error: { code: "timeout", retry_after: 30 } },
+  truncated: false,
+};
 const studyBaseline = structuredClone(snapshot);
 
 export function createBridge(): WorkbenchBridge {
@@ -344,7 +556,7 @@ export function createBridge(): WorkbenchBridge {
   let held: { id: string; release: (late?: boolean) => void; cancel: () => void } | undefined;
   let releaseTimer: ReturnType<typeof setTimeout> | undefined;
   const selectedTerminalId = () =>
-    document.querySelector<HTMLSelectElement>('select[aria-label="選擇終端機"]')?.value ||
+    document.querySelector<HTMLElement>(".wb-terminal[data-terminal-id]")?.dataset.terminalId ||
     primaryTerminalId;
   const observe = () => {
     const probe = document.querySelector<HTMLOutputElement>("#terminal-fixture-probe");
@@ -492,7 +704,9 @@ export function createBridge(): WorkbenchBridge {
             seq,
             entries: [
               {
-                ...snapshot.entries[0],
+                // The newest file read is the template, so every fixture adds a visible read.
+                ...(snapshot.entries.find((item) => item.tool === "file_read") ??
+                  snapshot.entries[0]),
                 id: `read-${seq}`,
                 resultId: `result-${seq}`,
                 seq,
@@ -568,10 +782,27 @@ export function createBridge(): WorkbenchBridge {
         }
         if (commandFixture && id === commandResultId)
           return structuredClone(studyFixture ? studyCommand : command);
+        if (timelineFixture && id === "result-mcp") return structuredClone(mcpCallFixture);
+        if (timelineFixture && id === "result-search")
+          return {
+            kind: "search",
+            workspace_id: workspace.id,
+            query: "approval",
+            case_sensitive: false,
+            matches: searchMatches("approval", false),
+            truncated: false,
+            scanned_files: 6,
+            skipped_files: 0,
+          };
         return structuredClone(artifactFixture ? artifact : file);
       },
     },
-    async connect() {},
+    async connect() {
+      // ?connect=hold|fail shows the loading and error shells (no host, nothing is contacted).
+      const mode = new URLSearchParams(location.search).get("connect");
+      if (mode === "fail") throw new Error("請使用終端機輸出的完整預覽網址開啟本頁。");
+      if (mode === "hold") await new Promise<never>(() => {});
+    },
     async close() {
       dispose();
     },
@@ -586,14 +817,80 @@ export function createBridge(): WorkbenchBridge {
       const response = await fetch("/kairomes-k-128.png");
       return URL.createObjectURL(await response.blob());
     },
-    async sendMessage() {
-      throw new Error("合成測試沒有聊天宿主");
-    },
     async askAbout() {
       throw new Error("合成測試沒有聊天宿主");
     },
     async call(name, args = {}): Promise<ToolData> {
       if (closed) throw new Error("合成測試已結束。");
+      if (timelineFixture) {
+        // Dense synthetic content for the workbench preview; nothing touches a disk or a host.
+        if (name === "workspace_snapshot") {
+          const path = String(args.path ?? "");
+          return {
+            kind: "snapshot",
+            workspace: args.workspace_id === second.id ? second : workspace,
+            path,
+            entries: folder(path),
+            truncated: false,
+          };
+        }
+        if (name === "file_read") {
+          const lines = Number(args.max_lines ?? 150);
+          const page = fileContent(String(args.path), Number(args.start_line ?? 1), lines);
+          return {
+            ...file,
+            ...page,
+            workspace_id: String(args.workspace_id),
+            path: String(args.path),
+            next_line: page.start_line + lines <= page.total_lines ? page.start_line + lines : null,
+          };
+        }
+        if (name === "artifact_preview")
+          return { ...artifact, workspace_id: String(args.workspace_id), path: String(args.path) };
+        if (name === "file_search") {
+          const caseSensitive = args.case_sensitive === true;
+          return {
+            kind: "search",
+            workspace_id: String(args.workspace_id),
+            query: String(args.query ?? ""),
+            case_sensitive: caseSensitive,
+            matches: searchMatches(String(args.query ?? ""), caseSensitive),
+            truncated: false,
+            scanned_files: 6,
+            skipped_files: 0,
+          };
+        }
+        if (name === "command_poll") {
+          const found = snapshot.commands?.find((item) => item.id === args.command_id);
+          if (!found) throw new ResultError("合成命令不存在。", "COMMAND_NOT_FOUND");
+          const output = commandOutput(found);
+          const out = Number(args.stdout_cursor ?? 0);
+          const err = Number(args.stderr_cursor ?? 0);
+          const active = ["pending", "starting", "running"].includes(found.state);
+          return {
+            kind: "command",
+            command: structuredClone(found),
+            stdout: output.stdout.slice(out),
+            stderr: output.stderr.slice(err),
+            stdout_cursor: output.stdout.length,
+            stderr_cursor: output.stderr.length,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            has_more: false,
+            output_complete: !active,
+          };
+        }
+        if (name === "file_change_poll") {
+          const found = snapshot.changes?.find((item) => item.id === args.change_id);
+          if (!found) throw new ResultError("合成變更不存在。", "FILE_CHANGE_NOT_FOUND");
+          return {
+            kind: "file_change",
+            change: structuredClone(found),
+            diff: changeDiff(found),
+            diff_truncated: false,
+          };
+        }
+      }
       if (name === "workspace_list")
         return {
           kind: "workspaces",
@@ -682,7 +979,7 @@ export function createBridge(): WorkbenchBridge {
           id === primaryTerminalId &&
           result.session.state === "running" &&
           !delayedOnce &&
-          document.querySelector(".terminal-panel")
+          document.querySelector(".wb-terminal")
         ) {
           delayedOnce = true;
           return new Promise<TerminalResult>((resolve, reject) => {

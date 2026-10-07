@@ -9,6 +9,7 @@ import {
   VERSION,
 } from "@kairomes/protocol";
 import { App } from "@modelcontextprotocol/ext-apps";
+import { hostTheme } from "./host-model.ts";
 import { decodeResult, ResultError } from "./tool-result.ts";
 
 export interface WorkbenchBridge {
@@ -19,7 +20,6 @@ export interface WorkbenchBridge {
   connect(onResult: (data: ToolData) => void): Promise<void>;
   call(name: ToolName, args?: Record<string, unknown>): Promise<ToolData>;
   fullscreen(): Promise<void>;
-  sendMessage(message: string): Promise<void>;
   updateModelContext?(text: string, structuredContent?: Record<string, unknown>): Promise<boolean>;
   askAbout(workspaceId: string, filePath: string): Promise<void>;
   close(): Promise<void>;
@@ -126,9 +126,6 @@ export function createBridge(): WorkbenchBridge {
         if (document.fullscreenElement) await document.exitFullscreen();
         else await document.documentElement.requestFullscreen();
       },
-      async sendMessage() {
-        throw new Error("本機預覽不會連線到 ChatGPT；請在 ChatGPT 中開啟工作台後再送出訊息。");
-      },
       async updateModelContext() {
         return false;
       },
@@ -139,12 +136,14 @@ export function createBridge(): WorkbenchBridge {
     };
   }
   const app = new App({ name: "Kairomes Workbench", version: VERSION }, {});
-  const setTheme = (theme?: string) => {
+  // The host theme drives the token theme (tokens.css keys on data-theme). Until it arrives,
+  // or for any value other than light/dark, the OS preference applies.
+  const setTheme = (value: unknown) => {
+    const theme = hostTheme(value);
     if (theme) document.documentElement.dataset.theme = theme;
   };
-  const sendMessage = async (message: string) => {
-    const text = message.trim();
-    if (!text) throw new Error("請先輸入要交給 ChatGPT 的訊息。");
+  /** 請 ChatGPT 說明: one fixed request the user starts with a click; never sent on its own. */
+  const sendMessage = async (text: string) => {
     if (!app.getHostCapabilities()?.message?.text)
       throw new Error("此宿主不支援從工作台傳送文字，請使用原生對話輸入框。");
     const result = await app.sendMessage(
@@ -174,7 +173,6 @@ export function createBridge(): WorkbenchBridge {
     async fullscreen() {
       await app.requestDisplayMode({ mode: "fullscreen" });
     },
-    sendMessage,
     async updateModelContext(text, structuredContent) {
       if (!app.getHostCapabilities()?.updateModelContext?.text) return false;
       await app.updateModelContext(
