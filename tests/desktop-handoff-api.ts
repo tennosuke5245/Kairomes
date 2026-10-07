@@ -1,4 +1,4 @@
-import type { DesktopSnapshot } from "../apps/desktop/src/model.ts";
+import type { WireDesktopSnapshot } from "../apps/desktop/src/model.ts";
 import { HandoffInputSchema } from "../packages/protocol/src/handoff.ts";
 import { VERSION } from "../packages/protocol/src/index.ts";
 import { createHandoffStudyApi } from "./handoff-study-api.ts";
@@ -27,7 +27,8 @@ export function createDesktopHandoffApi() {
   const report = () => {
     for (const listener of listeners) listener(probe());
   };
-  const snapshot = (): DesktopSnapshot => ({
+  // Shaped like an older Companion on purpose: the API layer fills the newer fields.
+  const snapshot = (): WireDesktopSnapshot => ({
     credentialConfigured: false,
     tunnelClientInstalled: false,
     runtime: { state: "running", owned: false, message: "純合成本機狀態" },

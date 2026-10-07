@@ -34,19 +34,23 @@ import {
   addWorkspace,
   chooseWorkspaceFolder,
   configureExtension,
+  type DesktopAction,
   forgetRuntimeApiKey,
   getDesktopStatus,
   getLocalMcpCommand,
+  onConfirmRestart,
   openExternal,
   performAction,
   removeWorkspace,
   saveRuntimeApiKey,
+  subscribeDesktopStatus,
 } from "./api.ts";
 import { HandoffFlow } from "./handoff-flow.tsx";
 import { handoffInvalidReason } from "./handoff-session.ts";
 import {
   type DesktopSnapshot,
   deriveDesktopView,
+  newerSnapshot,
   type PrimaryAction,
   type WorkspaceSummary,
 } from "./model.ts";
@@ -54,10 +58,13 @@ import {
 type Route = "overview" | "projects" | "connection" | "diagnostics";
 
 const initialSnapshot: DesktopSnapshot = {
+  version: "",
+  sequence: 0,
   credentialConfigured: false,
   tunnelClientInstalled: true,
   runtime: { state: "starting", owned: true, message: "正在啟動本機服務。" },
   companion: null,
+  versionMismatch: false,
 };
 
 function StateIcon({ tone }: { tone: ReturnType<typeof deriveDesktopView>["tone"] }) {
@@ -362,7 +369,7 @@ export function App() {
     try {
       const next = await getDesktopStatus();
       if (revision !== refreshRevision.current) return;
-      setSnapshot(next);
+      setSnapshot((current) => newerSnapshot(current, next));
       setStatusCurrent(true);
     } catch (caught) {
       if (revision !== refreshRevision.current) return;
@@ -371,11 +378,30 @@ export function App() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 1800);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  useEffect(
+    () =>
+      subscribeDesktopStatus(
+        (next) => {
+          setSnapshot((current) => newerSnapshot(current, next));
+          setStatusCurrent(true);
+        },
+        (caught) => {
+          setStatusCurrent(false);
+          setNotice(caught.message);
+        },
+      ),
+    [],
+  );
+
+  // Interim wiring until the confirmation dialog lands: the tray never restarts directly.
+  useEffect(
+    () =>
+      onConfirmRestart(() => {
+        setRoute("diagnostics");
+        setNotice("重新啟動會停止終端機並收回自主授權；確認後按「重新啟動本機服務」。");
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (route !== "connection") return;
@@ -398,7 +424,7 @@ export function App() {
     };
   }, [route]);
 
-  const run = async (action: string, successMessage = "") => {
+  const run = async (action: DesktopAction, successMessage = "") => {
     if (busyAction) return;
     setBusyAction(action);
     setNotice("");

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import {
   type ActivitySnapshot,
+  FileChangeResultSchema,
   type PanelSnapshot,
   readSnapshots,
   TerminalResultSchema,
@@ -416,3 +417,222 @@ test("MCP activity follows exact targets while native approval has independent, 
     await f.dispose();
   }
 }, 20000);
+
+test("panel frames stay under the 2 MiB stream limit with twelve retained ~180 KiB diffs", async () => {
+  const f = await fixture();
+  const extensionId = "a".repeat(32);
+  const extensionOrigin = `chrome-extension://${extensionId}`;
+  const app = await startWorkbench(
+    f.registry,
+    "<html><head><!--KAIROMES_MODE--></head></html>",
+    0,
+    extensionId,
+  );
+  const client = new Client({ name: "panel-frame-test", version: "1" });
+  const abort = new AbortController();
+  let reading: Promise<void> | undefined;
+  try {
+    const c = await readWorkbenchConnection(f.state);
+    const post = (route: string, token: string, body: unknown = {}, origin = c.origin) =>
+      fetch(`${c.origin}${route}`, {
+        method: "POST",
+        headers: {
+          Origin: origin,
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+        signal: abort.signal,
+      });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`${c.origin}/api/mcp`), {
+        requestInit: { headers: { Authorization: `Bearer ${c.mcpToken}` } },
+      }),
+    );
+    const pairLink = await (
+      await post("/api/pairing/create", c.adminToken, { extensionId })
+    ).json();
+    const fragment = new URLSearchParams(new URL(pairLink.pairingUrl).hash.slice(1));
+    const panel = await (
+      await post(
+        "/api/panel/pair",
+        "",
+        { code: fragment.get("code"), instanceId: c.instanceId },
+        extensionOrigin,
+      )
+    ).json();
+    const frames: PanelSnapshot[] = [];
+    let largest = 0;
+    let streamError: unknown;
+    // readSnapshots enforces the 2 MiB frame limit; an oversized frame ends the stream.
+    reading = readSnapshots<PanelSnapshot>(
+      await post("/api/panel/stream", panel.panelToken, {}, extensionOrigin),
+      (data) => {
+        largest = Math.max(largest, Buffer.byteLength(JSON.stringify(data)));
+        frames.push(data);
+      },
+      abort.signal,
+    ).catch((error) => {
+      streamError = error;
+    });
+    await until(() => frames.length > 0);
+
+    // Each batch creates three ~60 KB files, so its review diff is about 180 KiB.
+    const content = Array.from({ length: 600 }, (_, line) =>
+      `line ${line} of the panel frame size fixture `.padEnd(99, "x"),
+    ).join("\n");
+    const ids: string[] = [];
+    for (let batch = 0; batch < 12; batch++) {
+      const result = FileChangeResultSchema.parse(
+        (
+          await client.callTool({
+            name: "file_change_request",
+            arguments: {
+              workspace_id: f.workspace.id,
+              request_id: crypto.randomUUID(),
+              summary: `大型變更 ${batch}`,
+              changes: [0, 1, 2].map((file) => ({
+                operation: "write",
+                path: `large-${batch}-${file}.txt`,
+                content,
+              })),
+            },
+          })
+        ).structuredContent,
+      );
+      ids.push(result.change.id);
+      // Only four may wait at once; finish the first eight so twelve stay retained.
+      if (batch < 4) {
+        const review = (
+          (await (
+            await post(
+              "/api/panel/approvals",
+              panel.panelToken,
+              { action: "list" },
+              extensionOrigin,
+            )
+          ).json()) as PanelSnapshot
+        ).changes?.find((item) => item.id === result.change.id);
+        expect(review?.diff.length).toBeGreaterThan(180_000);
+        expect(
+          (
+            await post(
+              "/api/panel/approvals",
+              panel.panelToken,
+              {
+                action: "deny",
+                change_id: result.change.id,
+                fingerprint: review?.fingerprint,
+                reason: "拆成較小批次",
+              },
+              extensionOrigin,
+            )
+          ).status,
+        ).toBe(200);
+      } else if (batch < 8) {
+        await client.callTool({
+          name: "file_change_cancel",
+          arguments: { change_id: result.change.id },
+        });
+      }
+    }
+    // A pending command and terminal join the frame so every kind is checked for expiry.
+    await client.callTool({
+      name: "command_request",
+      arguments: {
+        workspace_id: f.workspace.id,
+        request_id: crypto.randomUUID(),
+        argv: ["bun", "-e", "console.log('never runs')"],
+        timeout_ms: 5000,
+      },
+    });
+    await client.callTool({
+      name: "terminal_start",
+      arguments: {
+        workspace_id: f.workspace.id,
+        shell: process.platform === "win32" ? "cmd" : "bash",
+      },
+    });
+    await until(
+      () =>
+        !!streamError ||
+        ((frames.at(-1)?.changes?.length === 12 &&
+          frames.at(-1)?.commands?.[0]?.state === "pending" &&
+          frames.at(-1)?.sessions[0]?.state === "pending") ??
+          false),
+    );
+    expect(streamError).toBeUndefined();
+    expect(largest).toBeLessThan(2 * 1024 * 1024);
+    const latest = frames.at(-1) as PanelSnapshot;
+    const changes = latest.changes ?? [];
+    expect(changes.map((item) => item.id).sort()).toEqual([...ids].sort());
+    for (const change of changes) {
+      if (change.state === "pending") {
+        expect(change.diff_available).toBe(true);
+        expect(change.diff.length).toBeGreaterThan(180_000);
+        expect(change.diff).toContain(`+${content.split("\n").at(-1)}`);
+      } else {
+        expect(["denied", "cancelled"]).toContain(change.state);
+        expect(change).toMatchObject({ diff: "", diff_available: false });
+        expect(change.files).toHaveLength(3);
+        expect(change.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+      }
+    }
+    expect(changes.filter((item) => item.state === "pending")).toHaveLength(4);
+    expect(
+      changes.filter((item) => item.denial_reason === "拆成較小批次").map((item) => item.id),
+    ).toEqual(ids.slice(0, 4));
+    // The approvals response uses the same slim snapshot.
+    const listed = await (
+      await post("/api/panel/approvals", panel.panelToken, { action: "list" }, extensionOrigin)
+    ).text();
+    expect(Buffer.byteLength(listed)).toBeLessThan(2 * 1024 * 1024);
+
+    // Every pending item carries its approval deadline for countdowns.
+    const now = Date.now();
+    const pending = [
+      ...changes,
+      ...(latest.commands ?? []),
+      ...latest.sessions,
+      ...(latest.imports ?? []),
+    ].filter((item) => item.state === "pending");
+    expect(pending).toHaveLength(6);
+    for (const item of pending) {
+      expect(typeof item.expires_at).toBe("number");
+      expect(item.expires_at).toBeGreaterThan(now);
+      expect(item.expires_at).toBeLessThanOrEqual(now + 5 * 60_000);
+    }
+
+    // So does every autonomy grant. File autonomy applies the four waiting batches.
+    const granted = await post(
+      "/api/panel/access",
+      panel.panelToken,
+      { action: "enable", workspace_id: f.workspace.id, level: "files", minutes: 15 },
+      extensionOrigin,
+    );
+    expect(granted.status).toBe(200);
+    await until(
+      () =>
+        !!streamError ||
+        ((frames.at(-1)?.accessGrants?.length === 1 &&
+          frames.at(-1)?.changes?.every((item) => item.state !== "pending")) ??
+          false),
+    );
+    expect(streamError).toBeUndefined();
+    const grant = frames.at(-1)?.accessGrants?.[0];
+    expect(grant?.level).toBe("files");
+    expect(grant?.expires_at).toBeGreaterThan(now + 14 * 60_000);
+    expect(grant?.expires_at).toBeLessThanOrEqual(Date.now() + 15 * 60_000);
+    await until(
+      () => frames.at(-1)?.changes?.filter((item) => item.state === "applied").length === 4,
+    );
+    expect(frames.at(-1)?.changes?.every((item) => !item.diff_available && !item.diff)).toBe(true);
+    expect(largest).toBeLessThan(2 * 1024 * 1024);
+  } finally {
+    abort.abort();
+    await reading;
+    await client.close();
+    await app.close();
+    await f.dispose();
+  }
+}, 30_000);

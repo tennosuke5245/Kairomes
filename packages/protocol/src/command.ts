@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DenialReasonSchema } from "./approval.ts";
 
 const CommandStateSchema = z.enum([
   "pending",
@@ -22,10 +23,13 @@ const CommandSchema = z.object({
   created_at: z.number(),
   started_at: z.number().nullable(),
   ended_at: z.number().nullable(),
+  /** Epoch milliseconds; the approval deadline while pending, then the run deadline. */
   expires_at: z.number(),
   exit_code: z.number().int().nullable(),
   signal: z.string().nullable(),
   message: z.string().nullable(),
+  /** Present only on a denied command whose local user typed a reason. */
+  denial_reason: DenialReasonSchema.optional(),
 });
 export type Command = z.infer<typeof CommandSchema>;
 export interface CommandApproval extends Command {
@@ -52,6 +56,10 @@ export const CommandListSchema = z.object({
 });
 export type CommandResult = z.infer<typeof CommandResultSchema>;
 const Cursor = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0);
+/** Longest long poll for command_poll and terminal_poll; stays below the relay's 30 s timeout. */
+export const POLL_WAIT_MAX_MS = 20_000;
+/** Optional long-poll wait shared by command_poll and terminal_poll; 0 keeps a plain poll. */
+export const PollWaitMs = z.number().int().min(0).max(POLL_WAIT_MAX_MS).default(0);
 export const CommandInputs = {
   command_request: z
     .object({
@@ -72,7 +80,12 @@ export const CommandInputs = {
     .strict(),
   command_list: z.object({}).strict(),
   command_poll: z
-    .object({ command_id: z.string().uuid(), stdout_cursor: Cursor, stderr_cursor: Cursor })
+    .object({
+      command_id: z.string().uuid(),
+      stdout_cursor: Cursor,
+      stderr_cursor: Cursor,
+      wait_ms: PollWaitMs,
+    })
     .strict(),
   command_cancel: z.object({ command_id: z.string().uuid() }).strict(),
 };

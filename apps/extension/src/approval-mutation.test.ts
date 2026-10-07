@@ -19,6 +19,7 @@ const request: FileChangeApproval = {
   files: [],
   diff: "",
   diff_truncated: false,
+  diff_available: true,
 };
 
 function unresolved() {

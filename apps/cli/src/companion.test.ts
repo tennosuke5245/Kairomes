@@ -2,7 +2,12 @@ import { expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadWidget, readWorkbenchConnection, startWorkbench } from "@kairomes/daemon";
-import { type ActivitySnapshot, type PanelSnapshot, readSnapshots } from "@kairomes/protocol";
+import {
+  type ActivitySnapshot,
+  type PanelSnapshot,
+  readSnapshots,
+  VERSION,
+} from "@kairomes/protocol";
 import { WorkspaceRegistry } from "@kairomes/workspace-core";
 import { fixture } from "../../../tests/fixtures.ts";
 import { readCompanionConnection, startCompanionApplication } from "./companion.ts";
@@ -145,7 +150,18 @@ test("Companion automatically takes over when an external workbench disappears",
         body: JSON.stringify(body),
       });
 
-    expect((await (await request({})).json()).workbench.state).toBe("external");
+    const attached = await (await request({})).json();
+    expect(attached.workbench.state).toBe("external");
+    expect(attached.workbenchVersion).toBe(VERSION);
+    expect(attached.versionMismatch).toBe(false);
+    // Pending counts come from the admin list; grants of an external process stay unknown.
+    expect(attached.attention).toEqual({
+      pending: { total: 0, byWorkspace: [] },
+      grants: null,
+      grantsKnown: false,
+      lastMcpRequestAt: null,
+      pairedPanels: 0,
+    });
     await external.close();
     externalClosed = true;
     registry.close();
@@ -153,6 +169,8 @@ test("Companion automatically takes over when an external workbench disappears",
     const recovered = await (await request({})).json();
     expect(recovered.workbench.state).toBe("running");
     expect(recovered.workbench.message).toContain("Companion 管理");
+    expect(recovered.attention.grantsKnown).toBe(true);
+    expect(recovered.attention.grants).toEqual([]);
   } finally {
     if (!externalClosed) {
       await external.close();
@@ -340,6 +358,7 @@ test("Tunnel keeps the initiating failure visible even when shutdown exits zero"
     expect(status?.tunnel.state).toBe("error");
     expect(status?.tunnel.message).not.toContain("Exit 0");
     expect(status?.tunnel.logs).toContain("WORKBENCH_UNAVAILABLE: synthetic attach failure");
+    expect(status?.tunnel.reason).toBe("workbench");
     expect(status?.tunnel.logs.length).toBeLessThanOrEqual(30);
   } finally {
     await app.close();

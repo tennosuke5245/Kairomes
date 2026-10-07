@@ -14,7 +14,9 @@ import {
   type z,
 } from "@kairomes/protocol";
 import { resolveChecked, type WorkspaceRegistry } from "@kairomes/workspace-core";
+import { denialReason } from "./approval-decision.ts";
 import { commandRunner } from "./command-runner.ts";
+import { ChangeWatchers, type PollWait } from "./poll-wait.ts";
 import { createProcessGuard } from "./process-guard.ts";
 import { OutputBuffer, shellEnvironment } from "./terminal.ts";
 
@@ -49,15 +51,22 @@ export class CommandManager {
   private closed = false;
   private sweep?: ReturnType<typeof setInterval>;
   private maintenance?: Promise<void>;
+  private readonly watchers = new ChangeWatchers();
   constructor(
     private readonly registry: WorkspaceRegistry,
     private readonly access: (workspaceId: string) => AccessGrant | undefined,
-    private readonly changed: (command: Command, source: ActivitySource) => void = () => {},
+    private readonly changed: (
+      command: Command,
+      source: ActivitySource,
+      kind: "state" | "output",
+    ) => void = () => {},
     private readonly now = Date.now,
   ) {}
 
-  private notify(job: Job) {
-    this.changed(structuredClone(job.view), job.source);
+  /** "output" marks a notification for new stdout/stderr only; the view itself is unchanged. */
+  private notify(job: Job, kind: "state" | "output" = "state") {
+    this.changed(structuredClone(job.view), job.source, kind);
+    this.watchers.wake(job.view.id);
   }
   private get(id: string) {
     const job = this.jobs.get(id);
@@ -188,8 +197,12 @@ export class CommandManager {
     }));
   }
 
-  /** Administrative method. Only the trusted Extension or local approval page calls it. */
-  async decide(id: string, fingerprint: string, approve: boolean) {
+  /**
+   * Administrative method. Only the trusted Extension or local approval page calls it. A denial
+   * may carry the user's reason, which the model reads back as denial_reason.
+   */
+  async decide(id: string, fingerprint: string, approve: boolean, reason?: string) {
+    const denial = denialReason(approve, reason);
     const job = this.get(id);
     if (job.view.state !== "pending" || job.finishing || fingerprint !== job.fingerprint)
       throw new KairomesError("APPROVAL_MISMATCH", "命令已處理或審批內容不一致，請更新狀態。");
@@ -198,6 +211,7 @@ export class CommandManager {
       throw new KairomesError("APPROVAL_EXPIRED", "命令請求已過期。");
     }
     if (!approve) {
+      if (denial) job.view.denial_reason = denial;
       await this.finish(job, "denied");
       return;
     }
@@ -324,7 +338,7 @@ export class CommandManager {
         const part = await reader.read();
         if (part.done) break;
         buffer.append(decoder.decode(part.value, { stream: true }));
-        this.notify(job);
+        this.notify(job, "output");
       }
     } catch {
       job.lostOutput = true;
@@ -454,8 +468,17 @@ export class CommandManager {
       output_complete: !commandActive(job.view),
     };
   }
-  async poll(id: string, out: number, err: number) {
+  /**
+   * With `wait`, a poll that finds no unread output while the command is still active waits for
+   * the next output or state change (cancel, revoke and unmount all finish the job).
+   */
+  async poll(id: string, out: number, err: number, wait?: PollWait) {
     const job = this.get(id);
+    await this.validate(job);
+    const result = this.result(job, out, err);
+    if (!wait || this.closed || !commandActive(job.view) || result.stdout || result.stderr)
+      return result;
+    if (!(await wait(this.watchers.subscribe(id)))) return result;
     await this.validate(job);
     return this.result(job, out, err);
   }
@@ -474,6 +497,7 @@ export class CommandManager {
   async close() {
     this.closed = true;
     clearInterval(this.sweep);
+    this.watchers.wakeAll();
     await Promise.all([...this.jobs.keys()].map((id) => this.cancel(id)));
   }
 }

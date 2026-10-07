@@ -10,10 +10,15 @@ import {
 const observedTools = new Set([
   "artifact_preview",
   "file_read",
+  "file_read_many",
   "file_search",
+  "file_find",
   "workspace_snapshot",
   "mcp_tool_call",
   "mcp_read_call",
+  "git_status",
+  "git_diff",
+  "git_log",
   "artifact_import_request",
 ]);
 

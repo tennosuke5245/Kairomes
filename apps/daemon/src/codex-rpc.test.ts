@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { fixture } from "../../../tests/fixtures.ts";
+import { fixture, processAlive } from "../../../tests/fixtures.ts";
 import { CodexRpc } from "./codex-rpc.ts";
 
 test("actual stdio transport correlates replies, bounds waits and rejects pending calls on exit", async () => {
@@ -59,12 +59,7 @@ test("stdin failure retains ownership until the synthetic source child has exite
   let child: ChildProcessWithoutNullStreams | undefined;
   const alive = () => {
     if (pid === undefined) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
+    return processAlive(pid);
   };
   try {
     await rpc.start();

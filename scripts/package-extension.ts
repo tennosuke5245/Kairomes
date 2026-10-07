@@ -10,11 +10,13 @@ const releaseDir = path.join(root, "dist", "releases");
 const expectedFiles = [
   "assets/kairomes-k-128.png",
   "background.js",
+  "components.css",
   "manifest.json",
   "mcp-panel.css",
   "sidepanel.css",
   "sidepanel.html",
   "sidepanel.js",
+  "tokens.css",
 ].sort();
 
 type VersionedManifest = { version?: unknown };
@@ -144,12 +146,29 @@ if (!sourceManifestBytes.equals(builtManifestBytes)) {
 }
 const html = await readFile(path.join(dist, "sidepanel.html"), "utf8");
 for (const reference of [
+  'href="tokens.css"',
+  'href="components.css"',
   'href="sidepanel.css"',
   'href="mcp-panel.css"',
   'src="sidepanel.js"',
   'src="assets/kairomes-k-128.png"',
 ]) {
   if (!html.includes(reference)) throw new Error(`Side panel is missing ${reference}`);
+}
+// The shared layers must load before the panel stylesheet so its rules can build on them.
+const stylesheetOrder = ["tokens.css", "components.css", "sidepanel.css"].map((file) =>
+  html.indexOf(`href="${file}"`),
+);
+if (
+  stylesheetOrder.some(
+    (index, position) => position > 0 && index < (stylesheetOrder[position - 1] ?? 0),
+  )
+)
+  throw new Error("Side panel must link tokens.css, components.css, then sidepanel.css");
+for (const file of ["tokens.css", "components.css"]) {
+  const source = await readFile(path.join(root, "packages", "ui-tokens", file));
+  if (!source.equals(await readFile(path.join(dist, file))))
+    throw new Error(`Built ${file} differs from packages/ui-tokens/${file}`);
 }
 
 const archiveFiles = await Promise.all(

@@ -4,8 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ArtifactSchema,
+  FileFindSchema,
+  FileReadManySchema,
   FileSchema,
+  GitStatusSchema,
   MCP_RESULT_URI,
+  SearchSchema,
   StatusSchema,
   TerminalResultSchema,
   VERSION,
@@ -158,7 +162,7 @@ describe("MCP contracts", () => {
     const c = await connect();
     try {
       const { tools } = await c.client.listTools();
-      expect(tools.length).toBe(25);
+      expect(tools.length).toBe(30);
       expect(
         tools
           .filter(
@@ -179,6 +183,91 @@ describe("MCP contracts", () => {
         destructiveHint: true,
         openWorldHint: true,
       });
+      // Deduplication by request_id is bounded and downstream actions may not be idempotent.
+      expect(tools.find((tool) => tool.name === "mcp_tool_call")?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      });
+      for (const name of ["command_poll", "terminal_poll", "workspace_list", "workbench_open"])
+        expect(tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
+          readOnlyHint: true,
+          destructiveHint: false,
+        });
+      for (const name of ["command_poll", "terminal_poll"])
+        expect(tools.find((tool) => tool.name === name)?.inputSchema.properties).toHaveProperty(
+          "wait_ms",
+        );
+      // Descriptions tell the model how approval, retries and long polls behave.
+      const described = (name: string) => tools.find((tool) => tool.name === name)?.description;
+      expect(described("workspace_list")).toContain("per_request");
+      expect(described("workspace_list")).toContain("batch related edits");
+      expect(described("mcp_tool_call")).toContain("MCP_CALL_UNKNOWN");
+      expect(described("command_poll")).toContain("wait_ms");
+      expect(described("file_change_request")).toContain("256 KiB");
+      for (const name of [
+        "git_status",
+        "git_diff",
+        "git_log",
+        "file_read_many",
+        "file_search",
+        "file_find",
+      ]) {
+        expect(tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        });
+      }
+      const gitStatus = await c.client.callTool({
+        name: "git_status",
+        arguments: { workspace_id: f.workspace.id },
+      });
+      expect(GitStatusSchema.parse(gitStatus.structuredContent)).toMatchObject({
+        state: "unavailable",
+        reason: "not_repository",
+      });
+      expect(JSON.stringify(gitStatus)).not.toContain(f.root);
+      // The SDK client validates structuredContent against each advertised output schema.
+      const many = await c.client.callTool({
+        name: "file_read_many",
+        arguments: {
+          workspace_id: f.workspace.id,
+          files: [{ path: "README.md", max_lines: 1 }, { path: "../outside.txt" }],
+        },
+      });
+      expect(many.isError).not.toBe(true);
+      expect(
+        FileReadManySchema.parse(many.structuredContent).files.map((entry) => entry.status),
+      ).toEqual(["ok", "error"]);
+      const search = await c.client.callTool({
+        name: "file_search",
+        arguments: {
+          workspace_id: f.workspace.id,
+          query: "kairomes",
+          include: ["src/**"],
+          context_lines: 1,
+        },
+      });
+      expect(SearchSchema.parse(search.structuredContent).matches).toEqual([
+        {
+          path: "src/main.ts",
+          line: 1,
+          text: 'export const message = "Kairomes";',
+          before: [],
+          after: [],
+        },
+      ]);
+      const find = await c.client.callTool({
+        name: "file_find",
+        arguments: { workspace_id: f.workspace.id, query: "*.ts" },
+      });
+      expect(FileFindSchema.parse(find.structuredContent).entries).toEqual([
+        { path: "src/main.ts", type: "file" },
+      ]);
+      expect(JSON.stringify([many, search, find])).not.toContain(f.root);
       expect(tools.some((tool) => tool.name.includes("approve"))).toBe(false);
       expect(tools.some((tool) => tool.name.startsWith("artifact_import_"))).toBe(false);
       expect(
@@ -200,10 +289,14 @@ describe("MCP contracts", () => {
           MCP_RESULT_URI,
         );
       }
+      // The shared ui-tokens layer changed both resources incompatibly (0.3.0 visual wave).
+      expect(WIDGET_URI).toBe("ui://kairomes/workbench/v7.html");
+      expect(MCP_RESULT_URI).toBe("ui://kairomes/mcp-result/v3.html");
       const resource = await c.client.readResource({ uri: WIDGET_URI });
       expect(resource.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
       const first = resource.contents[0];
       expect(first && "text" in first ? first.text : "").toContain('id="root"');
+      expect(first && "text" in first ? first.text : "").toContain("--k-bg:");
       expect(first?._meta).toMatchObject({
         ui: {
           prefersBorder: false,
@@ -216,6 +309,9 @@ describe("MCP contracts", () => {
       expect(mcpResultFirst && "text" in mcpResultFirst ? mcpResultFirst.text : "").toContain(
         'id="root"',
       );
+      expect(mcpResultFirst && "text" in mcpResultFirst ? mcpResultFirst.text : "").toContain(
+        "--k-bg:",
+      );
       expect(mcpResultFirst?._meta).toMatchObject({
         ui: {
           prefersBorder: false,
@@ -223,7 +319,10 @@ describe("MCP contracts", () => {
         },
       });
       const listing = await c.client.callTool({ name: "workspace_list", arguments: {} });
-      expect(listing.structuredContent).toEqual({ kind: "workspaces", workspaces: [f.workspace] });
+      expect(listing.structuredContent).toEqual({
+        kind: "workspaces",
+        workspaces: [{ ...f.workspace, approval: { mode: "per_request", expires_at: null } }],
+      });
       expect(JSON.stringify(listing)).not.toContain(f.root);
     } finally {
       await c.close();
@@ -298,7 +397,7 @@ describe("MCP contracts", () => {
     transport.stderr?.on("data", () => undefined);
     try {
       await client.connect(transport, { timeout: 5000 });
-      expect((await client.listTools()).tools.length).toBe(25);
+      expect((await client.listTools()).tools.length).toBe(30);
       const result = await client.callTool({ name: "kairomes_status", arguments: {} });
       expect(result.isError).not.toBe(true);
       expect(StatusSchema.parse(result.structuredContent).mounted_workspaces).toBe(1);
@@ -345,7 +444,9 @@ describe("loopback preview boundary", () => {
         headers: { ...headers, Authorization: `Bearer ${token}` },
         body,
       });
-      expect((await valid.json()).structuredContent.workspaces).toEqual([f.workspace]);
+      expect((await valid.json()).structuredContent.workspaces).toEqual([
+        { ...f.workspace, approval: { mode: "per_request", expires_at: null } },
+      ]);
       expect((await fetch(`${url.origin}/state.sqlite`)).status).toBe(404);
       expect((await fetch(`${url.origin}/`, { headers: { Host: "evil.example" } })).status).toBe(
         403,

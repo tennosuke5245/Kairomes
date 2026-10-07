@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import {
+  collectDiagnostics,
   createProcessGuard,
   loadMcpResultWidget,
   loadWidget,
@@ -11,13 +12,37 @@ import {
   startWorkbench,
   verifyWorkbenchConnection,
 } from "@kairomes/daemon";
-import { HandoffInputSchema, KairomesError, publicError, VERSION, z } from "@kairomes/protocol";
+import {
+  type CompanionAttention,
+  type CompanionStatus,
+  type CompanionTunnelState,
+  type CompanionTunnelStatus,
+  type CompanionWorkbenchState,
+  type DiagnosticsReport,
+  diagnosticSummary,
+  HandoffInputSchema,
+  KairomesError,
+  parseVersion,
+  publicError,
+  type TunnelReason,
+  VERSION,
+  z,
+} from "@kairomes/protocol";
 import { WorkspaceRegistry } from "@kairomes/workspace-core";
 import { HandoffBriefs } from "../../daemon/src/handoff-brief.ts";
 import { openExternal } from "./browser.ts";
+import { connectionSummary, healthVersion, pendingSummary } from "./companion-attention.ts";
 import { companionPage } from "./companion-page.ts";
 import { validExtensionId } from "./extension-id.ts";
 import { HandoffStarts } from "./handoff-starts.ts";
+import {
+  nextTunnelRestartDelay,
+  TUNNEL_RESTART_DELAYS_MS,
+  TUNNEL_RESTART_WINDOW_MS,
+  TunnelRunLog,
+  tunnelExitReason,
+  tunnelSpawnReason,
+} from "./tunnel-status.ts";
 
 const SETTINGS_FILE = "companion-settings.json";
 const CONNECTION_FILE = "companion-connection.json";
@@ -52,34 +77,9 @@ const ConnectionSchema = z
   .strict();
 type CompanionConnection = z.infer<typeof ConnectionSchema>;
 
-type TunnelState = "missing" | "starting" | "running" | "stopped" | "error";
-type WorkbenchState = "starting" | "running" | "external" | "stopped" | "error";
-
-type CompanionStatus = {
-  version: string;
-  overall: { tone: "good" | "warn" | "busy"; label: string };
-  workspaces: ReturnType<WorkspaceRegistry["list"]>;
-  workbench: {
-    state: WorkbenchState;
-    label: string;
-    message: string;
-    meta: string;
-  };
-  tunnel: {
-    state: TunnelState;
-    label: string;
-    message: string;
-    meta: string;
-    logs: string[];
-  };
-  connector: {
-    state: "connected" | "waiting" | "blocked";
-    label: string;
-    message: string;
-    meta: string;
-  };
-  extension: { configured: boolean };
-};
+type TunnelState = CompanionTunnelState;
+type WorkbenchState = CompanionWorkbenchState;
+type WorkbenchConnection = Awaited<ReturnType<typeof readWorkbenchConnection>>;
 
 type BrowserOpener = (url: string) => Promise<void>;
 
@@ -164,6 +164,19 @@ async function verifyCompanionConnection(connection: CompanionConnection) {
   const body = await response.json();
   if (!response.ok || body.instanceId !== connection.instanceId)
     throw new KairomesError("COMPANION_UNAVAILABLE", "Companion 狀態已過期。");
+  return { version: healthVersion(body) };
+}
+
+/** For diagnostics outside the Companion: whether one runs for this data directory, and its version. */
+export async function probeCompanion(
+  directory: string,
+): Promise<{ state: "running" | "unavailable"; version: string | null }> {
+  try {
+    const health = await verifyCompanionConnection(await readCompanionConnection(directory));
+    return { state: "running", version: health.version };
+  } catch {
+    return { state: "unavailable", version: null };
+  }
 }
 
 async function removeStaleConnection(directory: string) {
@@ -257,14 +270,30 @@ class TunnelSupervisor {
   private startedAt?: string;
   private logs: string[] = [];
   private importantLogs: string[] = [];
-  private failureReason?: string;
+  private failureLogged = false;
+  /** Classified process lines of the current run; lines of an earlier run never reach it. */
+  private runLog?: TunnelRunLog;
+  private reason?: TunnelReason;
+  /** The user stopped the Tunnel; only an explicit start or restart lifts it. */
+  private stoppedByUser = false;
+  /** Times of automatic restarts; an explicit start or stop clears them. */
+  private restarts: number[] = [];
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private nextRetryAt?: number;
 
   constructor(
     private readonly commandOverride?: readonly string[],
     private readonly tunnelApiKey?: string,
+    private readonly restartDelays: readonly number[] = TUNNEL_RESTART_DELAYS_MS,
   ) {}
 
-  snapshot() {
+  /** The executable that start() would launch; null when tunnel-client is not installed. */
+  executable(): string | null {
+    return this.commandOverride?.[0] ?? Bun.which("tunnel-client");
+  }
+
+  snapshot(): CompanionTunnelStatus {
+    const now = Date.now();
     const label = {
       missing: "尚未安裝",
       starting: "正在啟動",
@@ -272,6 +301,8 @@ class TunnelSupervisor {
       stopped: "已停止",
       error: "需要處理",
     }[this.state];
+    const exit =
+      this.exitCode === undefined || this.exitCode === 0 ? "" : `（Exit ${this.exitCode}）`;
     const message =
       this.state === "missing"
         ? "PATH 中找不到官方 tunnel-client。安裝後按啟動即可重新檢查。"
@@ -280,11 +311,9 @@ class TunnelSupervisor {
           : this.state === "running"
             ? "官方 Tunnel 正在背景執行；關閉這個頁面不會中斷。"
             : this.state === "error"
-              ? `Tunnel 啟動後停止${
-                  this.exitCode === undefined || this.exitCode === 0
-                    ? ""
-                    : `（Exit ${this.exitCode}）`
-                }；展開最近訊息查看原因。`
+              ? this.nextRetryAt
+                ? `Tunnel 意外停止${exit}；稍後會自動重新啟動。`
+                : `Tunnel 啟動後停止${exit}；展開最近訊息查看原因。`
               : "Tunnel 目前沒有執行。";
     const tail = this.logs.slice(-24);
     const important = this.importantLogs.filter((line) => !tail.includes(line));
@@ -296,6 +325,15 @@ class TunnelSupervisor {
         ? `Profile · kairomes · ${new Date(this.startedAt).toLocaleTimeString("zh-TW")}`
         : "Profile · kairomes",
       logs: [...important, ...tail],
+      startedAt: this.state === "running" ? (this.startedAt ?? null) : null,
+      reason:
+        this.state === "missing"
+          ? "not_installed"
+          : this.state === "error"
+            ? (this.reason ?? "unknown")
+            : null,
+      restartCount: this.restarts.filter((time) => now - time < TUNNEL_RESTART_WINDOW_MS).length,
+      nextRetryAt: this.nextRetryAt ? new Date(this.nextRetryAt).toISOString() : null,
     };
   }
 
@@ -311,25 +349,32 @@ class TunnelSupervisor {
       // Human-readable MCP startup errors are intentionally not JSON.
     }
     if (!important) return;
-    this.failureReason ??= line;
+    this.failureLogged = true;
     if (!this.importantLogs.includes(line)) this.importantLogs.push(line);
     if (this.importantLogs.length > 6) this.importantLogs.splice(0, this.importantLogs.length - 6);
   }
 
-  private addLog(value: string) {
+  /**
+   * Output of the current run is classified; Companion's own notes (no run) and late lines of
+   * an earlier run are only recorded.
+   */
+  private addLog(value: string, run?: TunnelRunLog) {
     for (const line of value.split(/\r?\n/)) {
       let clean = stripTerminalControls(line);
       if (this.tunnelApiKey) clean = clean.replaceAll(this.tunnelApiKey, "[redacted]");
       clean = clean.slice(0, 500);
       if (clean) {
         this.logs.push(clean);
-        this.rememberImportantLog(clean);
+        if (run && run === this.runLog) {
+          this.rememberImportantLog(clean);
+          run.add(clean, Date.now());
+        }
       }
     }
     if (this.logs.length > 80) this.logs.splice(0, this.logs.length - 80);
   }
 
-  private async collect(stream: ReadableStream<Uint8Array> | null) {
+  private async collect(stream: ReadableStream<Uint8Array> | null, run: TunnelRunLog) {
     if (!stream) return;
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -341,10 +386,10 @@ class TunnelSupervisor {
         pending += decoder.decode(chunk.value, { stream: true });
         const lines = pending.split(/\r?\n/);
         pending = lines.pop() ?? "";
-        this.addLog(lines.join("\n"));
+        this.addLog(lines.join("\n"), run);
       }
       pending += decoder.decode();
-      this.addLog(pending);
+      this.addLog(pending, run);
     } catch {
       // Process exit can close the stream while a read is pending.
     } finally {
@@ -352,19 +397,70 @@ class TunnelSupervisor {
     }
   }
 
+  private cancelRetry() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.nextRetryAt = undefined;
+  }
+
+  /**
+   * Bounded automatic restart after an unexpected exit: 2 s, 10 s, then 30 s, at most three
+   * within five minutes. Never after an explicit stop or quit (the generation changes) and
+   * never for failures a restart cannot fix.
+   */
+  private scheduleRestart(generation: number) {
+    const now = Date.now();
+    this.restarts = this.restarts.filter((time) => now - time < TUNNEL_RESTART_WINDOW_MS);
+    const delay = nextTunnelRestartDelay(
+      this.reason ?? "unknown",
+      this.restarts,
+      now,
+      this.restartDelays,
+    );
+    if (delay === undefined) return;
+    this.nextRetryAt = now + delay;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.nextRetryAt = undefined;
+      if (generation !== this.generation || this.state !== "error") return;
+      this.restarts.push(Date.now());
+      void this.launch().catch(() => undefined);
+    }, delay);
+    this.retryTimer.unref?.();
+  }
+
+  /** Whether the user stopped the Tunnel and has not started it again since. */
+  get pausedByUser() {
+    return this.stoppedByUser;
+  }
+
+  /**
+   * An explicit start: lifts a user stop, cancels a scheduled retry and resets the
+   * automatic-restart budget. Automatic paths check pausedByUser before calling it.
+   */
   async start() {
+    this.stoppedByUser = false;
     if (this.state === "running" || this.state === "starting") return;
-    const executable = this.commandOverride?.[0] ?? Bun.which("tunnel-client");
+    this.cancelRetry();
+    this.restarts = [];
+    await this.launch();
+  }
+
+  private async launch() {
+    if (this.state === "running" || this.state === "starting") return;
+    const executable = this.executable();
+    this.exitCode = undefined;
+    this.reason = undefined;
     if (!executable) {
       this.state = "missing";
-      this.exitCode = undefined;
       return;
     }
     this.state = "starting";
-    this.exitCode = undefined;
     this.logs = [];
     this.importantLogs = [];
-    this.failureReason = undefined;
+    this.failureLogged = false;
+    const run = new TunnelRunLog(Date.now());
+    this.runLog = run;
     const argv = this.commandOverride
       ? [...this.commandOverride]
       : process.platform === "win32" && /\.(cmd|bat)$/i.test(executable)
@@ -399,6 +495,7 @@ class TunnelSupervisor {
       child?.kill();
       guard.close();
       this.state = "error";
+      this.reason = tunnelSpawnReason(error);
       this.addLog(error instanceof Error ? error.message : "Tunnel 無法啟動。");
       return;
     }
@@ -407,20 +504,36 @@ class TunnelSupervisor {
     this.guard = guard;
     this.state = "running";
     this.startedAt = new Date().toISOString();
-    void this.collect(child.stdout instanceof ReadableStream ? child.stdout : null);
-    void this.collect(child.stderr instanceof ReadableStream ? child.stderr : null);
-    void child.exited.then((code) => {
+    const drained = Promise.all([
+      this.collect(child.stdout instanceof ReadableStream ? child.stdout : null, run),
+      this.collect(child.stderr instanceof ReadableStream ? child.stderr : null, run),
+    ]);
+    void child.exited.then(async (code) => {
+      const exitedAt = Date.now();
       if (generation !== this.generation) return;
       this.child = undefined;
       this.guard = undefined;
       guard.close();
+      // Classify only after the final lines arrive; a lingering pipe cannot hold this up.
+      await Promise.race([drained, Bun.sleep(500)]);
+      if (generation !== this.generation) return;
       this.exitCode = code;
-      this.state = code === 0 && !this.failureReason ? "stopped" : "error";
+      this.state = code === 0 && !this.failureLogged ? "stopped" : "error";
       this.addLog(code === 0 ? "Tunnel 已停止。" : `Tunnel 已結束，Exit ${code}。`);
+      if (this.state !== "error") return;
+      this.reason = tunnelExitReason(code, run.reason(exitedAt));
+      this.scheduleRestart(generation);
     });
   }
 
-  async stop() {
+  /**
+   * Stops the Tunnel. `byUser` records an explicit stop, so that status polls, workbench
+   * recovery and other automatic paths leave it stopped until the user starts it again.
+   */
+  async stop(byUser = false) {
+    if (byUser) this.stoppedByUser = true;
+    this.cancelRetry();
+    this.restarts = [];
     this.generation++;
     const child = this.child;
     const guard = this.guard;
@@ -442,7 +555,9 @@ class TunnelSupervisor {
     this.state = "stopped";
     this.exitCode = undefined;
     this.startedAt = undefined;
-    this.failureReason = undefined;
+    this.failureLogged = false;
+    this.runLog = undefined;
+    this.reason = undefined;
     this.addLog("Tunnel 已由 Companion 停止。");
   }
 
@@ -465,6 +580,8 @@ class CompanionRuntime {
   private external = false;
   private workbenchState: WorkbenchState = "starting";
   private workbenchMessage = "正在建立安全的本機工作階段。";
+  /** Version reported by the attached workbench; ours when Companion owns it. */
+  private workbenchVersion: string | null = null;
   private tunnel: TunnelSupervisor;
   private workbenchRecovery?: Promise<boolean>;
   private closed = false;
@@ -475,8 +592,9 @@ class CompanionRuntime {
     private readonly autoStartTunnel: boolean,
     tunnelCommand?: readonly string[],
     tunnelApiKey?: string,
+    tunnelRestartDelaysMs?: readonly number[],
   ) {
-    this.tunnel = new TunnelSupervisor(tunnelCommand, tunnelApiKey);
+    this.tunnel = new TunnelSupervisor(tunnelCommand, tunnelApiKey, tunnelRestartDelaysMs);
   }
 
   async initialize() {
@@ -496,6 +614,7 @@ class CompanionRuntime {
     this.workbenchState = "starting";
     this.workbenchMessage = "正在建立安全的本機工作階段。";
     this.external = false;
+    this.workbenchVersion = null;
     const [html, mcpResultHtml] = await Promise.all([loadWidget(), loadMcpResultWidget()]);
     if (!html) {
       this.workbenchState = "error";
@@ -511,6 +630,7 @@ class CompanionRuntime {
       });
       this.registry = registry;
       this.ownedWorkbench = workbench;
+      this.workbenchVersion = VERSION;
       this.workbenchState = "running";
       this.workbenchMessage = "工作台由 Companion 管理；完全退出時會安全關閉。";
     } catch (error) {
@@ -519,11 +639,14 @@ class CompanionRuntime {
       if (safe.code === "WORKBENCH_RUNNING") {
         try {
           const connection = await readWorkbenchConnection(this.dataDirectory);
-          await verifyWorkbenchConnection(connection);
+          const health = await verifyWorkbenchConnection(connection);
           this.external = true;
           this.workbenchState = "external";
+          this.workbenchVersion = health.version;
           this.workbenchMessage =
-            "偵測到另一個 CMD 啟動的工作台。Companion 不會強制關閉它；停止舊程序後可重新接管。";
+            health.version === VERSION
+              ? "偵測到另一個 CMD 啟動的工作台。Companion 不會強制關閉它；停止舊程序後可重新接管。"
+              : `既有工作台版本 ${health.version ?? "未知"} 與 Kairomes ${VERSION} 不同；停止舊程序後按重新接管。`;
           return;
         } catch {
           // Fall through to the original safe startup error.
@@ -547,7 +670,8 @@ class CompanionRuntime {
 
   private async workbenchConnection() {
     const connection = await readWorkbenchConnection(this.dataDirectory);
-    await verifyWorkbenchConnection(connection);
+    const health = await verifyWorkbenchConnection(connection);
+    if (this.external) this.workbenchVersion = health.version;
     return connection;
   }
 
@@ -591,33 +715,66 @@ class CompanionRuntime {
     }
   }
 
-  private async connectorLastSeen() {
+  private async workbenchPost(connection: WorkbenchConnection, route: string, token: string) {
     try {
-      const connection = await this.workbenchConnection();
-      const response = await fetch(`${connection.origin}/api/connection`, {
+      const response = await fetch(`${connection.origin}${route}`, {
         method: "POST",
         redirect: "error",
         headers: {
           Origin: connection.origin,
-          Authorization: `Bearer ${connection.uiToken}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: "{}",
-        signal: AbortSignal.timeout(2000),
+        body: route === "/api/approvals" ? JSON.stringify({ action: "list" }) : "{}",
+        signal: AbortSignal.timeout(1500),
       });
-      if (!response.ok) return null;
-      const body = await response.json();
-      return typeof body.lastMcpRequestAt === "string" ? body.lastMcpRequestAt : null;
+      return response.ok ? ((await response.json()) as unknown) : null;
     } catch {
       return null;
     }
   }
 
+  /**
+   * Counts and grant metadata for the Desktop dashboard. Pending counts come from the admin list
+   * Companion already uses; grants are read in-process from an owned workbench only, so an
+   * external one reports grantsKnown=false. Nothing here carries fingerprints, argv, cwd or diffs.
+   */
+  private async attention(connection: WorkbenchConnection | null): Promise<CompanionAttention> {
+    const owned = this.external ? undefined : this.ownedWorkbench;
+    const grants = owned ? owned.accessSummary() : null;
+    if (!connection)
+      return {
+        pending: null,
+        grants,
+        grantsKnown: grants !== null,
+        lastMcpRequestAt: null,
+        pairedPanels: null,
+      };
+    const [approvals, link] = await Promise.all([
+      this.workbenchPost(connection, "/api/approvals", connection.adminToken),
+      this.workbenchPost(connection, "/api/connection", connection.uiToken),
+    ]);
+    return {
+      pending: pendingSummary(approvals),
+      grants,
+      grantsKnown: grants !== null,
+      ...connectionSummary(link),
+    };
+  }
+
+  /** Automatic Tunnel start, which never overrides an explicit stop by the user. */
+  private get tunnelWanted() {
+    return this.autoStartTunnel && !this.tunnel.pausedByUser;
+  }
+
   async status(): Promise<CompanionStatus> {
+    // Desktop polls this in the background, so recovery restarts the Tunnel only when wanted.
     const recovered = await this.recoverLostExternalWorkbench();
-    if (recovered && this.autoStartTunnel) await this.tunnel.restart();
+    if (recovered && this.tunnelWanted) await this.tunnel.restart();
     const tunnel = this.tunnel.snapshot();
-    const lastSeen = await this.connectorLastSeen();
+    const connection = await this.workbenchConnection().catch(() => null);
+    const attention = await this.attention(connection);
+    const lastSeen = attention.lastMcpRequestAt;
     const workspaces = await this.withRegistry((registry) => registry.list());
     const workbenchReady = ["running", "external"].includes(this.workbenchState);
     const connector =
@@ -658,6 +815,8 @@ class CompanionRuntime {
     }[this.workbenchState];
     return {
       version: VERSION,
+      workbenchVersion: workbenchReady ? this.workbenchVersion : null,
+      versionMismatch: workbenchReady && this.workbenchVersion !== VERSION,
       overall,
       workspaces,
       workbench: {
@@ -673,12 +832,43 @@ class CompanionRuntime {
       tunnel,
       connector,
       extension: { configured: Boolean(this.settings.extensionId) },
+      attention,
     };
   }
 
   async addWorkspace(root: string, name?: string) {
     const workspace = await this.withRegistry((registry) => registry.add(root, name));
     return { workspace };
+  }
+
+  async renameWorkspace(workspaceId: string, name: string) {
+    const workspace = await this.withRegistry((registry) => registry.rename(workspaceId, name));
+    return { workspace };
+  }
+
+  /** Desktop only: the one Companion response that carries absolute project roots. */
+  async workspaceDetails() {
+    return { workspaces: await this.withRegistry((registry) => registry.details()) };
+  }
+
+  /**
+   * `expectedVersion` is the caller's own version: Desktop passes its own, so a Companion or
+   * workbench left over from another version is reported with its fix, and the summary is
+   * headed with Desktop's version. It defaults to this Companion's version.
+   */
+  async diagnostics(expectedVersion = VERSION): Promise<DiagnosticsReport> {
+    const tunnel = this.tunnel.snapshot();
+    const checks = await collectDiagnostics({
+      dataDirectory: this.dataDirectory,
+      companion: { state: "running", version: VERSION },
+      workbench: { state: this.workbenchState, version: this.workbenchVersion },
+      tunnel: { state: tunnel.state, reason: tunnel.reason, nextRetryAt: tunnel.nextRetryAt },
+      registry: this.registry,
+      which: (command) =>
+        command === "tunnel-client" ? this.tunnel.executable() : Bun.which(command),
+      expectedVersion,
+    });
+    return { checks, summary: diagnosticSummary(checks, expectedVersion) };
   }
 
   async handoff(input: unknown, signal: AbortSignal) {
@@ -763,7 +953,7 @@ class CompanionRuntime {
     }
     await this.closeOwnedWorkbench();
     await this.startWorkbench();
-    if (this.autoStartTunnel && this.workbenchState === "running") await this.tunnel.start();
+    if (this.tunnelWanted && this.workbenchState === "running") await this.tunnel.start();
   }
 
   async configureExtension(extensionId: string) {
@@ -782,7 +972,7 @@ class CompanionRuntime {
     await this.startWorkbench();
     if (this.workbenchState !== "running")
       throw new KairomesError("WORKBENCH_UNAVAILABLE", this.workbenchMessage);
-    if (this.autoStartTunnel) await this.tunnel.start();
+    if (this.tunnelWanted) await this.tunnel.start();
     return this.createPairing();
   }
 
@@ -805,7 +995,14 @@ class CompanionRuntime {
     const result = await response.json();
     if (!response.ok)
       throw new KairomesError("PAIRING_FAILED", result.message ?? "無法產生配對連結。");
-    return { pairingUrl: String(result.pairingUrl) };
+    // The link itself is a one-time credential: return it to the trusted caller, never log it.
+    const expiresInSeconds = Number(result.expiresInSeconds);
+    return {
+      pairingUrl: String(result.pairingUrl),
+      ...(Number.isSafeInteger(expiresInSeconds) && expiresInSeconds > 0 && expiresInSeconds <= 3600
+        ? { expiresInSeconds }
+        : {}),
+    };
   }
 
   async openWorkbench() {
@@ -824,7 +1021,7 @@ class CompanionRuntime {
   }
 
   async stopTunnel() {
-    await this.tunnel.stop();
+    await this.tunnel.stop(true);
   }
 
   async restartTunnel() {
@@ -861,6 +1058,25 @@ const ActionSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("workspace_remove"), workspaceId: z.string().uuid() }).strict(),
+  z
+    .object({
+      action: z.literal("workspace_rename"),
+      workspace_id: z.string().uuid(),
+      name: z.string().trim().min(1).max(80),
+    })
+    .strict(),
+  z.object({ action: z.literal("workspace_details") }).strict(),
+  z
+    .object({
+      action: z.literal("diagnostics"),
+      /** The caller's version, compared with this Companion and its workbench. */
+      expectedVersion: z
+        .string()
+        .max(64)
+        .refine((value) => parseVersion(value) !== null, "版本格式不正確。")
+        .optional(),
+    })
+    .strict(),
   z.object({ action: z.literal("quit") }).strict(),
 ]);
 
@@ -885,6 +1101,8 @@ export async function startCompanionApplication(options: {
   opener?: BrowserOpener;
   tunnelCommand?: readonly string[];
   tunnelApiKey?: string;
+  /** Test hook: automatic Tunnel restart delays; defaults to 2 s, 10 s and 30 s. */
+  tunnelRestartDelaysMs?: readonly number[];
 }): Promise<CompanionApplication> {
   // Desktop hands the credential to this process. Keep it only in memory until
   // launching the official tunnel-client; the workbench must not inherit it.
@@ -907,6 +1125,7 @@ export async function startCompanionApplication(options: {
     options.autoStartTunnel !== false,
     options.tunnelCommand,
     tunnelApiKey,
+    options.tunnelRestartDelaysMs,
   );
   const instanceId = crypto.randomUUID();
   const token = randomBytes(32).toString("hex");
@@ -952,7 +1171,7 @@ export async function startCompanionApplication(options: {
       )
         return new Response("Invalid host", { status: 403, headers });
       if (request.method === "GET" && url.pathname === "/healthz")
-        return Response.json({ status: "ok", instanceId }, { headers });
+        return Response.json({ status: "ok", instanceId, version: VERSION }, { headers });
       if (request.method === "GET" && url.pathname === "/")
         return new Response(page, {
           headers: { ...headers, "Content-Type": "text/html; charset=utf-8" },
@@ -998,6 +1217,11 @@ export async function startCompanionApplication(options: {
           result = await runtime.addWorkspace(input.path, input.name);
         else if (input.action === "workspace_remove")
           result = await runtime.removeWorkspace(input.workspaceId);
+        else if (input.action === "workspace_rename")
+          result = await runtime.renameWorkspace(input.workspace_id, input.name);
+        else if (input.action === "workspace_details") result = await runtime.workspaceDetails();
+        else if (input.action === "diagnostics")
+          result = await runtime.diagnostics(input.expectedVersion);
         else if (input.action === "quit") setTimeout(() => void shutdown(), 80);
         return Response.json({ ok: true, ...result }, { headers });
       } catch (error) {

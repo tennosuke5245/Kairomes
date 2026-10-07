@@ -1,15 +1,21 @@
+/*
+ * Legacy aliases (temporary): the old names point at @kairomes/ui-tokens values of the
+ * same meaning so existing rules keep rendering. Re-point each rule to a role token
+ * (--k-primary-*, --k-danger*, --k-running*; --k-brand* only for the logo and 需確認),
+ * then delete this block. sidepanel.html pins data-theme="light" until then.
+ */
 :root {
   color-scheme: light;
-  --bg: #f5f0e7;
-  --paper: #fffdf8;
-  --ink: #242123;
-  --muted: #706964;
-  --faint: #a69e95;
-  --line: #ded7cc;
-  --red: #b9363f;
-  --red-dark: #90232c;
-  --red-soft: #f8e8e8;
-  --green: #52745e;
+  --bg: var(--k-bg);
+  --paper: var(--k-surface);
+  --ink: var(--k-ink-1);
+  --muted: var(--k-ink-2);
+  --faint: var(--k-ink-3);
+  --line: var(--k-line);
+  --red: var(--k-brand);
+  --red-dark: var(--k-brand-on);
+  --red-soft: var(--k-brand-soft);
+  --green: var(--k-success);
   font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif;
   color: var(--ink);
   background: var(--bg);

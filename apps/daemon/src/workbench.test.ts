@@ -1,9 +1,18 @@
 import { expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { TerminalListSchema, TerminalResultSchema, WIDGET_URI } from "@kairomes/protocol";
+import {
+  FileChangeListSchema,
+  FileChangeResultSchema,
+  LIMITS,
+  TerminalListSchema,
+  TerminalResultSchema,
+  VERSION,
+  WIDGET_URI,
+} from "@kairomes/protocol";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { fixture } from "../../../tests/fixtures.ts";
 import { startWorkbench } from "./preview.ts";
 import { loadWidget } from "./server.ts";
@@ -43,6 +52,36 @@ test("connection descriptor rejects malformed, oversized and non-loopback destin
     });
   } finally {
     await f.dispose();
+  }
+});
+
+test("workbench version comes only from a plain semver in /healthz", async () => {
+  const instanceId = crypto.randomUUID();
+  let version: unknown = "0.1.4";
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ status: "ok", instanceId, version }),
+  });
+  try {
+    const connection = {
+      instanceId,
+      pid: process.pid,
+      origin: `http://127.0.0.1:${server.port}`,
+      uiToken: "a".repeat(64),
+      mcpToken: "b".repeat(64),
+      adminToken: "c".repeat(64),
+    };
+    expect(await verifyWorkbenchConnection(connection)).toEqual({ version: "0.1.4" });
+    for (const value of [undefined, 3, "0.1.4\nCONTROL_PLANE_API_KEY=x", "http://127.0.0.1:1/"]) {
+      version = value;
+      expect(await verifyWorkbenchConnection(connection)).toEqual({ version: null });
+    }
+    await expect(
+      verifyWorkbenchConnection({ ...connection, instanceId: crypto.randomUUID() }),
+    ).rejects.toMatchObject({ code: "WORKBENCH_UNAVAILABLE" });
+  } finally {
+    server.stop(true);
   }
 });
 
@@ -137,7 +176,15 @@ test("web workbench has no chat backend; MCP/UI/admin authority and frame bounda
     ).toBe(415);
     expect((await request("/api/connection", c.uiToken, null)).status).toBe(403);
     const status = await (await request("/api/connection", c.uiToken)).json();
-    expect(status).toEqual({ mode: "workbench", instanceId: c.instanceId, lastMcpRequestAt: null });
+    expect(status).toEqual({
+      mode: "workbench",
+      instanceId: c.instanceId,
+      lastMcpRequestAt: null,
+      pairedPanels: 0,
+    });
+    const health = await (await fetch(`${c.origin}/healthz`)).json();
+    expect(health).toEqual({ status: "ok", instanceId: c.instanceId, version: VERSION });
+    expect(await verifyWorkbenchConnection(c)).toEqual({ version: VERSION });
     expect(JSON.stringify(status)).not.toContain(c.mcpToken);
     await expect(startWorkbench(f.registry, minimalHtml, 0)).rejects.toMatchObject({
       code: "WORKBENCH_RUNNING",
@@ -174,7 +221,7 @@ test("real stdio attach relay and sidebar share pending terminals, resources and
   try {
     const c = await readWorkbenchConnection(f.state);
     await client.connect(transport, { timeout: 7000 });
-    expect((await client.listTools()).tools).toHaveLength(25);
+    expect((await client.listTools()).tools).toHaveLength(30);
     expect((await client.readResource({ uri: WIDGET_URI })).contents[0]).toHaveProperty(
       "text",
       html,
@@ -231,6 +278,73 @@ test("real stdio attach relay and sidebar share pending terminals, resources and
     await expect(readWorkbenchConnection(f.state)).rejects.toMatchObject({
       code: "WORKBENCH_UNAVAILABLE",
     });
+  } finally {
+    await client.close();
+    await transport.close();
+    await app.close();
+    await f.dispose();
+  }
+}, 15000);
+
+test("attach relay forwards file-change batches over 32 KiB and names its size limit", async () => {
+  const f = await fixture();
+  const app = await startWorkbench(f.registry, minimalHtml, 0);
+  const client = new Client({ name: "attached-relay-size-test", version: "1" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [
+      fileURLToPath(new URL("../../cli/src/main.ts", import.meta.url)),
+      "serve",
+      "--attach",
+      "--stdio",
+      "--data-dir",
+      f.state,
+    ],
+    stderr: "pipe",
+  });
+  const write = (path: string) => ({
+    operation: "write",
+    path,
+    expected_version: null,
+    content: "界".repeat(20_000),
+  });
+  try {
+    await client.connect(transport, { timeout: 7000 });
+    // 60,000 UTF-8 bytes per file: the old 32 KiB relay cap rejected this valid batch.
+    const accepted = await client.callTool({
+      name: "file_change_request",
+      arguments: {
+        workspace_id: f.workspace.id,
+        request_id: crypto.randomUUID(),
+        summary: "Large batch",
+        changes: [write("large-a.txt"), write("large-b.txt")],
+      },
+    });
+    expect(accepted.isError).not.toBe(true);
+    expect(FileChangeResultSchema.parse(accepted.structuredContent).change.state).toBe("pending");
+
+    const oversized = await client
+      .callTool({
+        name: "file_change_request",
+        arguments: {
+          workspace_id: f.workspace.id,
+          request_id: crypto.randomUUID(),
+          summary: "Oversized batch",
+          changes: Array.from({ length: 6 }, (_, index) => write(`too-large-${index}.txt`)),
+        },
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(oversized).toBeInstanceOf(McpError);
+    expect(oversized).toMatchObject({ code: -32013 });
+    expect((oversized as McpError).message).toContain(
+      `Request too large for the local relay (limit ${LIMITS.requestBodyBytes / 1024} KiB). Split the change into smaller batches.`,
+    );
+    // The relay answered locally; the workbench never saw the oversized batch.
+    const listed = await client.callTool({ name: "file_change_list", arguments: {} });
+    expect(FileChangeListSchema.parse(listed.structuredContent).changes).toHaveLength(1);
   } finally {
     await client.close();
     await transport.close();

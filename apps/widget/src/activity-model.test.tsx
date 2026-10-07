@@ -76,6 +76,53 @@ test("workspace browsing does not infer unknown ownership; output updates do not
   expect(latestFocus(snapshot)?.id).toBe("unknown");
 });
 
+test("read-only Git calls appear in the timeline without taking the follow focus", () => {
+  const git: ActivityEntry = {
+    ...entry,
+    id: "git",
+    tool: "git_diff",
+    title: "查看 Git 差異",
+    seq: 20,
+    focusSeq: 20,
+  };
+  const observed: ActivitySnapshot = { ...snapshot, seq: 20, entries: [...snapshot.entries, git] };
+  expect(visibleActivity(observed, one).map((item) => item.id)).toEqual([
+    "git",
+    "command-new",
+    "file",
+  ]);
+  expect(latestFocus(observed, one)?.id).toBe("command-new");
+});
+
+test("batch reads and name lookups appear in the timeline with their own titles", () => {
+  const many: ActivityEntry = {
+    ...entry,
+    id: "many",
+    tool: "file_read_many",
+    title: "讀取 3 個檔案",
+    seq: 21,
+    focusSeq: 21,
+  };
+  const find: ActivityEntry = {
+    ...entry,
+    id: "find",
+    tool: "file_find",
+    title: "尋找檔案",
+    path: "src",
+    seq: 22,
+    focusSeq: 22,
+  };
+  const observed: ActivitySnapshot = {
+    ...snapshot,
+    seq: 22,
+    entries: [...snapshot.entries, many, find],
+  };
+  const visible = visibleActivity(observed, one);
+  expect(visible.map((item) => item.id)).toEqual(["find", "many", "command-new", "file"]);
+  expect(visible.slice(0, 2).map(activityTitle)).toEqual(["尋找檔案", "讀取 3 個檔案"]);
+  expect(latestFocus(observed, one)?.id).toBe("command-new");
+});
+
 test("trust boundary accepts only the workspace navigation envelope, never added privileges", () => {
   const message = { type: "kairomes:workspace-filter", version: 1, workspaceId: one };
   expect(workspaceFilterMessage(message)).toEqual({ workspaceId: one });

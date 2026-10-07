@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { uiCss } from "../packages/ui-tokens/index.ts";
 
 const app = new URL("../apps/widget/", import.meta.url);
 async function bundle(entrypoint: string) {
@@ -21,12 +22,13 @@ async function bundle(entrypoint: string) {
 const script = await bundle("src/main.tsx");
 const resultScript = await bundle("src/mcp-result.ts");
 const logo = (await readFile(new URL("assets/kairomes-k-128.png", app))).toString("base64");
-const css = `:root{--kairomes-logo:url("data:image/png;base64,${logo}")}\n${await readFile(new URL("node_modules/@xterm/xterm/css/xterm.css", app), "utf8")}\n${await readFile(new URL("src/styles.css", app), "utf8")}`;
+// Shared tokens and components come first; each surface stylesheet builds on them.
+const css = `:root{--kairomes-logo:url("data:image/png;base64,${logo}")}\n${uiCss}\n${await readFile(new URL("node_modules/@xterm/xterm/css/xterm.css", app), "utf8")}\n${await readFile(new URL("src/styles.css", app), "utf8")}`;
 const html = `<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Kairomes · 本機工作台</title><!--KAIROMES_MODE--><style>${css}</style></head>
 <body><div id="root"></div><script type="module">${script}</script></body></html>`;
-const resultCss = `:root{--kairomes-logo:url("data:image/png;base64,${logo}")}\n${await readFile(new URL("src/mcp-result.css", app), "utf8")}`;
+const resultCss = `:root{--kairomes-logo:url("data:image/png;base64,${logo}")}\n${uiCss}\n${await readFile(new URL("src/mcp-result.css", app), "utf8")}`;
 const resultHtml = `<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Kairomes · MCP Result</title><style>${resultCss}</style></head>

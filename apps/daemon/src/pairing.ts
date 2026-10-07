@@ -108,6 +108,11 @@ export class PanelPairing {
     this.prune();
     return [...this.grants.keys()].some((item) => equal(item, token));
   }
+  /** Currently valid side-panel pairings. A count only; tokens never leave this class. */
+  activeCount() {
+    this.prune();
+    return this.grants.size;
+  }
   revoke(token: string) {
     this.grants.delete(token);
   }

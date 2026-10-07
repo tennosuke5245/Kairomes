@@ -1,7 +1,15 @@
 import { z } from "zod";
+import { DenialReasonSchema } from "./approval.ts";
 import { ArtifactInputs, ArtifactSchema } from "./artifact.ts";
-import { CommandInputs, CommandListSchema, CommandResultSchema } from "./command.ts";
+import {
+  CommandInputs,
+  CommandListSchema,
+  CommandResultSchema,
+  POLL_WAIT_MAX_MS,
+  PollWaitMs,
+} from "./command.ts";
 import { FileChangeInputs, FileChangeListSchema, FileChangeResultSchema } from "./file-change.ts";
+import { GitDiffSchema, GitInputs, GitLogSchema, GitStatusSchema } from "./git.ts";
 import {
   McpCallSchema,
   McpCatalogSchema,
@@ -10,19 +18,25 @@ import {
 } from "./mcp-host.ts";
 
 export * from "./activity.ts";
+export * from "./approval.ts";
 export * from "./artifact.ts";
 export * from "./artifact-import.ts";
 export * from "./command.ts";
+export * from "./companion.ts";
+export * from "./diagnostics.ts";
+export * from "./diff-lines.ts";
 export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
+export * from "./git.ts";
 export * from "./handoff.ts";
 export * from "./mcp-auth.ts";
 export * from "./mcp-host.ts";
 export * from "./panel-access.ts";
+export * from "./ui-state.ts";
 export { z };
 export const VERSION = "0.2.0";
-export const WIDGET_URI = "ui://kairomes/workbench/v6.html";
-export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v2.html";
+export const WIDGET_URI = "ui://kairomes/workbench/v7.html";
+export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v3.html";
 export const LIMITS = {
   concurrentCalls: 4,
   fileBytes: 1024 * 1024,
@@ -30,10 +44,60 @@ export const LIMITS = {
   artifactPixels: 80 * 1024 * 1024,
   responseBytes: 48 * 1024,
   directoryEntries: 200,
+  /** Directory entries read by one workspace_snapshot call. */
   scanEntries: 1000,
+  /** Directory entries visited by one file_search or file_find walk. */
+  walkEntries: 4000,
   scanBytes: 8 * 1024 * 1024,
   scanMilliseconds: 3000,
+  readManyFiles: 8,
+  searchIncludePatterns: 8,
+  searchContextLines: 3,
+  findResults: 200,
+  patternLength: 200,
+  /**
+   * HTTP request body cap of the local workbench. The stdio relay applies the same cap before
+   * forwarding to /api/mcp, so a batch the daemon accepts is never rejected on the way there.
+   */
+  requestBodyBytes: 320 * 1024,
+  /** Longest wait_ms accepted by command_poll and terminal_poll. */
+  pollWaitMs: POLL_WAIT_MAX_MS,
+  /** Long polls that may wait at once per service; extra polls return immediately. */
+  pollWaiters: 2,
 } as const;
+
+function hasUnsafeCharacters(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return (
+      code < 32 ||
+      code === 127 ||
+      code === 0xfffd ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    );
+  });
+}
+
+/** file_find treats a query with *, ? or { as a glob; anything else is a literal substring. */
+export function isGlobQuery(value: string): boolean {
+  return /[*?{]/.test(value);
+}
+
+/**
+ * Glob patterns are only matched against workspace-relative strings, never used to open
+ * paths, but still must look relative: no root, parent segments, backslashes or negation.
+ */
+export function isSafeGlobPattern(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !value.startsWith("/") &&
+    !value.startsWith("!") &&
+    !value.includes("..") &&
+    !value.includes("\\") &&
+    !hasUnsafeCharacters(value)
+  );
+}
 
 const WorkspaceSchema = z.object({
   id: z.string(),
@@ -41,9 +105,27 @@ const WorkspaceSchema = z.object({
   capabilities: z.array(z.enum(["read", "write_request"])),
 });
 export type Workspace = z.infer<typeof WorkspaceSchema>;
+/**
+ * Model-facing approval mode of one workspace, derived from the in-memory autonomy grant.
+ * It never carries grant ids, owners, pairing tokens or receipts.
+ */
+export const WorkspaceApprovalSchema = z
+  .object({
+    /** per_request: every change, command and terminal waits for the local user. */
+    mode: z.enum(["per_request", "files", "full"]),
+    /** ISO 8601 grant expiry; null for per_request or a grant kept until manually revoked. */
+    expires_at: z.string().datetime().nullable(),
+  })
+  .strict();
+export type WorkspaceApproval = z.infer<typeof WorkspaceApprovalSchema>;
 export const WorkspaceListSchema = z.object({
   kind: z.literal("workspaces"),
-  workspaces: z.array(WorkspaceSchema),
+  workspaces: z.array(
+    WorkspaceSchema.extend({
+      /** Always present from this service; optional for results from older services. */
+      approval: WorkspaceApprovalSchema.optional(),
+    }),
+  ),
 });
 const EntrySchema = z.object({
   name: z.string(),
@@ -71,16 +153,80 @@ export const FileSchema = z.object({
   redacted: z.boolean(),
 });
 export type FileResult = z.infer<typeof FileSchema>;
+const ContextLines = z.array(z.string()).max(LIMITS.searchContextLines);
 export const SearchSchema = z.object({
   kind: z.literal("search"),
   workspace_id: z.string(),
   query: z.string(),
-  matches: z.array(z.object({ path: z.string(), line: z.number().int(), text: z.string() })),
+  /** Relative directory scope; "" is the workspace root. Absent in results from older services. */
+  path: z.string().optional(),
+  case_sensitive: z.boolean().optional(),
+  include: z.array(z.string()).max(LIMITS.searchIncludePatterns).optional(),
+  context_lines: z.number().int().min(0).max(LIMITS.searchContextLines).optional(),
+  matches: z.array(
+    z.object({
+      path: z.string(),
+      line: z.number().int(),
+      text: z.string(),
+      /** Present only when context_lines > 0. */
+      before: ContextLines.optional(),
+      after: ContextLines.optional(),
+    }),
+  ),
   truncated: z.boolean(),
   scanned_files: z.number().int(),
   skipped_files: z.number().int(),
 });
 export type SearchResult = z.infer<typeof SearchSchema>;
+const FileReadManyEntrySchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("ok"),
+      path: z.string(),
+      content: z.string(),
+      version: z.string(),
+      start_line: z.number().int(),
+      total_lines: z.number().int(),
+      next_line: z.number().int().nullable(),
+      truncated: z.boolean(),
+      redacted: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("error"),
+      path: z.string(),
+      start_line: z.number().int(),
+      error: z.object({ code: z.string().max(64), message: z.string().max(500) }).strict(),
+    })
+    .strict(),
+]);
+export type FileReadManyEntry = z.infer<typeof FileReadManyEntrySchema>;
+export const FileReadManySchema = z
+  .object({
+    kind: z.literal("file_read_many"),
+    workspace_id: z.string(),
+    files: z.array(FileReadManyEntrySchema).min(1).max(LIMITS.readManyFiles),
+    /** True when any file has unread lines, including lines cut by the shared budget. */
+    truncated: z.boolean(),
+  })
+  .strict();
+export type FileReadManyResult = z.infer<typeof FileReadManySchema>;
+export const FileFindSchema = z
+  .object({
+    kind: z.literal("file_find"),
+    workspace_id: z.string(),
+    query: z.string(),
+    mode: z.enum(["substring", "glob"]),
+    path: z.string(),
+    entries: z
+      .array(z.object({ path: z.string(), type: z.enum(["file", "directory"]) }).strict())
+      .max(LIMITS.findResults),
+    truncated: z.boolean(),
+    scanned_entries: z.number().int().nonnegative(),
+  })
+  .strict();
+export type FileFindResult = z.infer<typeof FileFindSchema>;
 export const StatusSchema = z.object({
   kind: z.literal("status"),
   version: z.string(),
@@ -114,10 +260,13 @@ const TerminalSessionSchema = z.object({
     "failed",
   ]),
   created_at: z.number(),
+  /** Epoch milliseconds; the approval deadline while pending, then the session deadline. */
   expires_at: z.number(),
   cols: z.number().int(),
   rows: z.number().int(),
   exit_code: z.number().int().nullable(),
+  /** Present only on a denied session whose local user typed a reason. */
+  denial_reason: DenialReasonSchema.optional(),
 });
 export type TerminalSession = z.infer<typeof TerminalSessionSchema>;
 export const TerminalResultSchema = z.object({
@@ -138,7 +287,9 @@ export const ToolDataSchema = z.discriminatedUnion("kind", [
   WorkspaceListSchema,
   SnapshotSchema,
   FileSchema,
+  FileReadManySchema,
   SearchSchema,
+  FileFindSchema,
   StatusSchema,
   TerminalResultSchema,
   TerminalListSchema,
@@ -150,10 +301,24 @@ export const ToolDataSchema = z.discriminatedUnion("kind", [
   McpCatalogSchema,
   McpToolDescriptionSchema,
   McpCallSchema,
+  GitStatusSchema,
+  GitDiffSchema,
+  GitLogSchema,
 ]);
 export type ToolData = z.infer<typeof ToolDataSchema>;
 export const WorkspaceId = z.string().uuid();
 const RelativePath = z.string().max(1024);
+const FileLines = {
+  start_line: z.number().int().min(1).default(1),
+  max_lines: z.number().int().min(1).max(300).default(150),
+};
+const SearchText = z
+  .string()
+  .min(1)
+  .max(LIMITS.patternLength)
+  .refine((value) => !value.includes("\uFFFD"), {
+    message: "搜尋內容包含無法辨識的字元，請重新輸入搜尋文字。",
+  });
 const TerminalId = z.string().uuid();
 const TerminalSize = {
   cols: z.number().int().min(20).max(240),
@@ -163,6 +328,7 @@ export const Inputs = {
   ...ArtifactInputs,
   ...CommandInputs,
   ...FileChangeInputs,
+  ...GitInputs,
   ...McpInputs,
   terminal_start: z
     .object({
@@ -178,6 +344,7 @@ export const Inputs = {
     .object({
       session_id: TerminalId,
       cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+      wait_ms: PollWaitMs,
     })
     .strict(),
   terminal_input: z
@@ -203,21 +370,45 @@ export const Inputs = {
     .object({
       workspace_id: WorkspaceId,
       path: RelativePath.min(1),
-      start_line: z.number().int().min(1).default(1),
-      max_lines: z.number().int().min(1).max(300).default(150),
+      ...FileLines,
+    })
+    .strict(),
+  file_read_many: z
+    .object({
+      workspace_id: WorkspaceId,
+      files: z
+        .array(z.object({ path: RelativePath.min(1), ...FileLines }).strict())
+        .min(1)
+        .max(LIMITS.readManyFiles),
     })
     .strict(),
   file_search: z
     .object({
       workspace_id: WorkspaceId,
-      query: z
-        .string()
-        .min(1)
-        .max(200)
-        .refine((value) => !value.includes("\uFFFD"), {
-          message: "搜尋內容包含無法辨識的字元，請重新輸入搜尋文字。",
-        }),
+      query: SearchText,
       limit: z.number().int().min(1).max(50).default(30),
+      path: RelativePath.default(""),
+      case_sensitive: z.boolean().default(false),
+      include: z
+        .array(
+          z.string().max(LIMITS.patternLength).refine(isSafeGlobPattern, {
+            message: "檔案樣式必須是工作區內的相對樣式，不能包含 ..、開頭的 / 或 !。",
+          }),
+        )
+        .max(LIMITS.searchIncludePatterns)
+        .optional(),
+      context_lines: z.number().int().min(0).max(LIMITS.searchContextLines).default(0),
+    })
+    .strict(),
+  file_find: z
+    .object({
+      workspace_id: WorkspaceId,
+      query: SearchText.refine(
+        (value) => !hasUnsafeCharacters(value) && (!isGlobQuery(value) || isSafeGlobPattern(value)),
+        { message: "檔名樣式必須是工作區內的相對樣式，不能包含 ..、開頭的 / 或 !。" },
+      ),
+      path: RelativePath.default(""),
+      limit: z.number().int().min(1).max(LIMITS.findResults).default(50),
     })
     .strict(),
 } as const;

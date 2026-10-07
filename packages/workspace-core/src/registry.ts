@@ -20,6 +20,14 @@ export function defaultDataDirectory(): string {
 
 type WorkspaceRow = RootIdentity & { id: string; name: string };
 
+function validName(label: string): string {
+  const name = label.trim();
+  if (!name || name.length > 80 || hasControlCharacters(name)) {
+    throw new KairomesError("INVALID_NAME", "工作區名稱須為 1～80 個可見字元。");
+  }
+  return name;
+}
+
 export class WorkspaceRegistry {
   private constructor(
     private readonly db: Database,
@@ -96,10 +104,7 @@ export class WorkspaceRegistry {
         "工作區不能包含 Kairomes 狀態資料夾，請改用其他 --data-dir。",
       );
     }
-    const name = (label ?? path.basename(identity.root)).trim();
-    if (!name || name.length > 80 || hasControlCharacters(name)) {
-      throw new KairomesError("INVALID_NAME", "工作區名稱須為 1～80 個可見字元。");
-    }
+    const name = validName(label ?? path.basename(identity.root));
     const existing = this.db
       .query<{ id: string }, [string]>("SELECT id FROM workspaces WHERE root = ?")
       .get(identity.root);
@@ -109,6 +114,28 @@ export class WorkspaceRegistry {
       ON CONFLICT(root) DO UPDATE SET name = excluded.name, dev = excluded.dev, ino = excluded.ino`)
       .run(id, name, identity.root, identity.dev, identity.ino);
     return { id, name, capabilities: ["read", "write_request"] };
+  }
+
+  /** Renames a mounted workspace. The name follows the same rules as add(); the root is kept. */
+  rename(id: string, label: string): Workspace {
+    const name = validName(label);
+    if (this.db.query("UPDATE workspaces SET name = ? WHERE id = ?").run(name, id).changes === 0) {
+      throw new KairomesError("WORKSPACE_NOT_FOUND", "找不到已掛載的工作區。");
+    }
+    return { id, name, capabilities: ["read", "write_request"] };
+  }
+
+  /**
+   * Trusted local Desktop only. This is the one listing that carries absolute roots; it must
+   * never feed list(), workspace_list, the widget, Extension streams or any model output.
+   */
+  details(): { id: string; name: string; root: string }[] {
+    return this.db
+      .query<{ id: string; name: string; root: string }, []>(
+        "SELECT id, name, root FROM workspaces ORDER BY name, id",
+      )
+      .all()
+      .map(({ id, name, root }) => ({ id, name, root }));
   }
 
   remove(id: string): void {

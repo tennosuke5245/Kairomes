@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { Inputs, TerminalResultSchema } from "@kairomes/protocol";
-import { fixture } from "../../../tests/fixtures.ts";
+import { fixture, processAlive } from "../../../tests/fixtures.ts";
 import { startPreview } from "./preview.ts";
 import { OutputBuffer, shellEnvironment, TERMINAL_LIMITS, TerminalManager } from "./terminal.ts";
 
@@ -44,14 +44,7 @@ async function waitOutput(target: TerminalManager, id: string, pattern: RegExp) 
   }
   throw new Error(`PTY output timeout: ${JSON.stringify(text)}`);
 }
-function alive(pid: number) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const alive = processAlive;
 
 describe("terminal authority and lifecycle", () => {
   test("natural shell exit preserves final output", async () => {

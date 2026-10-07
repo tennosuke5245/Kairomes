@@ -12,6 +12,8 @@ import {
   type z,
 } from "@kairomes/protocol";
 import { resolveChecked, type WorkspaceRegistry } from "@kairomes/workspace-core";
+import { denialReason } from "./approval-decision.ts";
+import { ChangeWatchers, type PollWait } from "./poll-wait.ts";
 import { createProcessGuard } from "./process-guard.ts";
 
 export const TERMINAL_LIMITS = {
@@ -116,6 +118,7 @@ export class TerminalManager {
   private disposed = false;
   private sweeper?: ReturnType<typeof setInterval>;
   private maintenance = false;
+  private readonly watchers = new ChangeWatchers();
   readonly available: boolean;
 
   constructor(
@@ -331,6 +334,8 @@ export class TerminalManager {
     source = session.source,
   ) {
     this.changed({ ...session.view }, source, kind);
+    // Input alone produces nothing to read; its echo arrives as output.
+    if (kind !== "input") this.watchers.wake(session.view.id);
   }
 
   approvals() {
@@ -345,8 +350,12 @@ export class TerminalManager {
     }));
   }
 
-  /** Local administration only. Never register this method as an outward MCP tool. */
-  async decide(id: string, fingerprint: string, approve: boolean): Promise<void> {
+  /**
+   * Local administration only. Never register this method as an outward MCP tool. A denial may
+   * carry the user's reason, which the model reads back as denial_reason.
+   */
+  async decide(id: string, fingerprint: string, approve: boolean, reason?: string): Promise<void> {
+    const denial = denialReason(approve, reason);
     const session = this.get(id);
     if (
       session.view.state !== "pending" ||
@@ -360,6 +369,7 @@ export class TerminalManager {
       throw new KairomesError("APPROVAL_EXPIRED", "終端機請求已過期。");
     }
     if (!approve) {
+      if (denial) session.view.denial_reason = denial;
       session.view.state = "denied";
       this.notify(session);
       return;
@@ -485,8 +495,17 @@ export class TerminalManager {
     }
   }
 
-  async poll(id: string, cursor: number): Promise<TerminalResult> {
+  /**
+   * With `wait`, a poll that finds no unread output while the session is still active waits for
+   * the next output or state change (approval, exit, stop, revoke and unmount all notify).
+   */
+  async poll(id: string, cursor: number, wait?: PollWait): Promise<TerminalResult> {
     const session = this.get(id);
+    await this.validateSession(session);
+    const result = this.result(session, cursor);
+    if (!wait || this.disposed || !activeStates.has(session.view.state) || result.output)
+      return result;
+    if (!(await wait(this.watchers.subscribe(id)))) return result;
     await this.validateSession(session);
     return this.result(session, cursor);
   }
@@ -584,6 +603,7 @@ export class TerminalManager {
     this.disposed = true;
     this.accessGrants.clear();
     if (this.sweeper) clearInterval(this.sweeper);
+    this.watchers.wakeAll();
     await Promise.all([...this.sessions.keys()].map((id) => this.stop(id)));
   }
 }
