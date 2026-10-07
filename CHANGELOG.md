@@ -39,7 +39,7 @@
 
 ### 更新與限制
 
-- 需同步更新 Desktop 與 Extension；`WIDGET_URI` 改為 v7、`MCP_RESULT_URI` 改為 v3。ChatGPT 仍顯示舊工作台或舊工具清單時，到 Connector 設定按「重新整理」。
+- 需同步更新 Desktop 與 Extension；`WIDGET_URI` 改為 v8、`MCP_RESULT_URI` 改為 v4。ChatGPT 仍顯示舊工作台或舊工具清單時，到 Connector 設定按「重新整理」。
 - 圖片匯入已在原始碼實作，**由 ChatGPT 交出檔案的途徑尚未以真實 ChatGPT 驗證**；側欄貼上、選擇檔案與拖放隨時可用。匯入紀錄與 `request_id` 只存在記憶體，Host 重啟後不保留。
 - 命令／終端機仍使用主機使用者權限，不是 OS sandbox。新介面只以合成預覽、Vite 預覽與 `desktop:check` 檢查，尚未在原生視窗、WebView2、真實 Extension 或 Tunnel 實機驗收。
 - 此版本目前為原始碼準備；下載仍為 0.1.4。

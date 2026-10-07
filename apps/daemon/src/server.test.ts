@@ -314,8 +314,8 @@ describe("MCP contracts", () => {
         );
       }
       // The shared ui-tokens layer changed both resources incompatibly (0.3.0 visual wave).
-      expect(WIDGET_URI).toBe("ui://kairomes/workbench/v7.html");
-      expect(MCP_RESULT_URI).toBe("ui://kairomes/mcp-result/v3.html");
+      expect(WIDGET_URI).toBe("ui://kairomes/workbench/v8.html");
+      expect(MCP_RESULT_URI).toBe("ui://kairomes/mcp-result/v4.html");
       const resource = await c.client.readResource({ uri: WIDGET_URI });
       expect(resource.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
       const first = resource.contents[0];
