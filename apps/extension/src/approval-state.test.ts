@@ -1,14 +1,22 @@
 import { expect, test } from "bun:test";
 import type { FileChangeApproval } from "@kairomes/protocol";
 import {
+  ARM_DELAY_MS,
   approvalDecisionBlock,
   approvalDecisionObserved,
   approvalsInWorkspace,
+  armedUntil,
   canStopOngoing,
+  checkDenialReason,
+  decisionArming,
+  nextPending,
+  normalizeReasonInput,
+  pendingQueue,
+  queuePosition,
   splitApprovalItems,
 } from "./approval-state.ts";
 
-test("only requests awaiting a decision enter the review queue", () => {
+test("only requests awaiting a decision enter the review queue; finished ones are recent", () => {
   const items = [
     { id: "pending", state: "pending" },
     { id: "applying", state: "applying" },
@@ -16,10 +24,71 @@ test("only requests awaiting a decision enter the review queue", () => {
     { id: "running", state: "running" },
     { id: "exited", state: "exited" },
     { id: "stopped", state: "stopped" },
+    { id: "denied", state: "denied" },
+    { id: "succeeded", state: "succeeded" },
   ];
-  const { pending, ongoing } = splitApprovalItems(items);
+  const { pending, ongoing, recent } = splitApprovalItems(items);
   expect(pending.map((item) => item.id)).toEqual(["pending"]);
   expect(ongoing.map((item) => item.id)).toEqual(["applying", "starting", "running"]);
+  expect(recent.map((item) => item.id)).toEqual(["exited", "stopped", "denied", "succeeded"]);
+});
+
+test("the queue puts the soonest deadline first and ignores decided requests", () => {
+  const queue = pendingQueue([
+    { id: "late", state: "pending", expires_at: 300, created_at: 1 },
+    { id: "done", state: "denied", expires_at: 10, created_at: 1 },
+    { id: "soon", state: "pending", expires_at: 100, created_at: 5 },
+    { id: "tie", state: "pending", expires_at: 100, created_at: 2 },
+  ]);
+  expect(queue.map((item) => item.id)).toEqual(["tie", "soon", "late"]);
+});
+
+test("auto-advance opens the request after the decided one, then wraps; never the decided one", () => {
+  const order = ["a", "b", "c"];
+  const queue = (...ids: string[]) => ids.map((id) => ({ id }));
+  expect(nextPending(order, "a", queue("a", "b", "c"))?.id).toBe("b");
+  // The decided request may still be listed until the next snapshot; it is skipped.
+  expect(nextPending(order, "b", queue("a", "b", "c"))?.id).toBe("c");
+  expect(nextPending(order, "c", queue("a", "c"))?.id).toBe("a");
+  // A request that arrived during the decision counts as following it.
+  expect(nextPending(order, "c", queue("a", "new"))?.id).toBe("new");
+  expect(nextPending(order, "a", queue("a"))).toBeUndefined();
+  expect(nextPending(order, "a", [])).toBeUndefined();
+});
+
+test("the position counts requests already decided in this review run", () => {
+  expect(queuePosition(0, 1, 3)).toBe("2／3");
+  expect(queuePosition(1, 0, 2)).toBe("2／3");
+  expect(queuePosition(2, 0, 1)).toBe("3／3");
+});
+
+test("a freshly opened request refuses decisions until the arming delay has passed", () => {
+  expect(ARM_DELAY_MS).toBe(700);
+  const until = armedUntil(1_000);
+  expect(until).toBe(1_700);
+  expect(decisionArming(until, 1_000)).toBe(true);
+  // The second click of a double click lands well inside the window.
+  expect(decisionArming(until, 1_250)).toBe(true);
+  expect(decisionArming(until, 1_699)).toBe(true);
+  expect(decisionArming(until, 1_700)).toBe(false);
+  expect(decisionArming(undefined, 1_000)).toBe(false);
+});
+
+test("a denial reason is optional, single-line and at most 200 characters", () => {
+  expect(checkDenialReason("")).toEqual({ ok: true, reason: undefined });
+  expect(checkDenialReason("   ")).toEqual({ ok: true, reason: undefined });
+  expect(checkDenialReason("  請先跑單元測試 ")).toEqual({ ok: true, reason: "請先跑單元測試" });
+  expect(checkDenialReason("喵".repeat(200))).toEqual({ ok: true, reason: "喵".repeat(200) });
+  expect(checkDenialReason("喵".repeat(201))).toEqual({
+    ok: false,
+    message: "原因最多 200 個字。",
+  });
+  expect(checkDenialReason("a\u202eb")).toEqual({
+    ok: false,
+    message: "原因不能包含控制字元或換行。",
+  });
+  expect(checkDenialReason("a\nb").ok).toBe(false);
+  expect(normalizeReasonInput("第一行\r\n第二行\n第三行\u2028")).toBe("第一行 第二行 第三行 ");
 });
 
 const review: FileChangeApproval = {

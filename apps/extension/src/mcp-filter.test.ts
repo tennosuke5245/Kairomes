@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { McpCatalogTool, McpPanelState } from "@kairomes/protocol";
-import { filterMcpCatalog } from "./mcp-filter.ts";
+import { filterMcpServers, mcpQueryWords } from "./mcp-filter.ts";
 
 const tool = (index: number): McpCatalogTool => ({
   ref: `ref-${index}`,
@@ -39,6 +39,13 @@ const state = (): McpPanelState => ({
     },
   ],
 });
+// The view decides 已開啟 / 需處理; here the second server is on and the first needs action.
+const classify = (server: McpPanelState["servers"][number]) => ({
+  on: server.enabled,
+  attention: !server.enabled,
+});
+const names = (result: ReturnType<typeof filterMcpServers>) =>
+  result.map((item) => [item.server.name, item.tools?.map((entry) => entry.name)]);
 
 test("finds a tool among 100 by name, title, description and mixed server tokens", () => {
   const catalog = state();
@@ -49,48 +56,45 @@ test("finds a tool among 100 by name, title, description and mixed server tokens
     "瀏覽器 screenshot",
     "Ｓｃｒｅｅｎｓｈｏｔ",
   ]) {
-    const result = filterMcpCatalog(catalog, { query, serverId: "", tools: "all" });
-    expect(result).toHaveLength(1);
-    expect(result[0]?.tools.map((item) => item.name)).toEqual(["browser_action_73"]);
+    const result = filterMcpServers(catalog, { query, chip: "all" }, classify);
+    expect(names(result)).toEqual([["瀏覽器", ["browser_action_73"]]]);
   }
-  expect(filterMcpCatalog(catalog, { query: "no match", serverId: "", tools: "all" })).toEqual([]);
+  expect(filterMcpServers(catalog, { query: "no match", chip: "all" }, classify)).toEqual([]);
+  expect(mcpQueryWords("  Ａ  b ")).toEqual(["a", "b"]);
 });
 
-test("filters settings without mistaking disabled server or availability for tool settings", () => {
+test("a server-name match keeps the whole server instead of narrowing its tools", () => {
+  const catalog = state();
+  const result = filterMcpServers(catalog, { query: "資料", chip: "all" }, classify);
+  // 資料庫 matches by name; 瀏覽器 matches only through descriptions (檢視資料).
+  expect(result.map((item) => item.server.name)).toEqual(["瀏覽器", "資料庫"]);
+  expect(result[1]?.tools).toBeUndefined();
+  expect(result[0]?.tools).toHaveLength(99);
+  expect(filterMcpServers(catalog, { query: "", chip: "all" }, classify)).toHaveLength(2);
+});
+
+test("chips filter servers by the view's classification before the query", () => {
   const catalog = state();
   const untouched = structuredClone(catalog);
-  const serverId = catalog.servers[0]?.id ?? "";
-  const enabled = filterMcpCatalog(catalog, { query: "", serverId, tools: "enabled" });
-  expect(enabled[0]?.tools).toHaveLength(50);
-  expect(enabled[0]?.server.enabled).toBe(false);
-  expect(enabled[0]?.tools.every((item) => item.availability === "unavailable")).toBe(true);
-  expect(
-    filterMcpCatalog(catalog, { query: "", serverId, tools: "disabled" })[0]?.tools,
-  ).toHaveLength(50);
-  expect(
-    filterMcpCatalog(catalog, { query: "", serverId, tools: "read_only" })[0]?.tools,
-  ).toHaveLength(34);
-  expect(filterMcpCatalog(catalog, { query: "screenshot", serverId, tools: "enabled" })).toEqual(
-    [],
-  );
+  expect(names(filterMcpServers(catalog, { query: "", chip: "on" }, classify))).toEqual([
+    ["資料庫", undefined],
+  ]);
+  expect(names(filterMcpServers(catalog, { query: "", chip: "attention" }, classify))).toEqual([
+    ["瀏覽器", undefined],
+  ]);
+  expect(filterMcpServers(catalog, { query: "screenshot", chip: "on" }, classify)).toEqual([]);
   expect(catalog).toEqual(untouched);
 });
 
-test("fresh catalog revision removes old matches; empty and unknown servers remain explicit", () => {
+test("a fresh catalog drops old matches; an empty server still matches by name", () => {
   const catalog = state();
   catalog.catalog_revision = "revision-two";
   catalog.servers[0]?.tools.splice(73, 1);
-  expect(filterMcpCatalog(catalog, { query: "screenshot", serverId: "", tools: "all" })).toEqual(
-    [],
-  );
-  expect(filterMcpCatalog(catalog, { query: "", serverId: "unknown", tools: "all" })).toEqual([]);
+  expect(filterMcpServers(catalog, { query: "screenshot", chip: "all" }, classify)).toEqual([]);
   const first = catalog.servers[0];
   if (!first) throw new Error("Missing fixture server");
   first.tools = [];
-  expect(
-    filterMcpCatalog(catalog, { query: "瀏覽器", serverId: "", tools: "all" })[0]?.tools,
-  ).toEqual([]);
-  expect(filterMcpCatalog(catalog, { query: "瀏覽器", serverId: "", tools: "enabled" })).toEqual(
-    [],
-  );
+  expect(names(filterMcpServers(catalog, { query: "瀏覽器", chip: "all" }, classify))).toEqual([
+    ["瀏覽器", undefined],
+  ]);
 });

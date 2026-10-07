@@ -315,6 +315,8 @@ const fixtureFetch = async (
     if (selected) {
       selected.state = body.action === "approve" ? "running" : "denied";
       selected.started_at = Date.now();
+      if (body.action === "deny" && typeof body.reason === "string")
+        selected.denial_reason = body.reason;
     }
   } else if (route === "mcp" && ["add_stdio", "add_http"].includes(String(body.action))) {
     const nextCatalog: McpPanelState = {

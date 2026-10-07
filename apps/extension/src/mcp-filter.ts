@@ -1,37 +1,51 @@
 import type { McpCatalogTool, McpPanelState } from "@kairomes/protocol";
 
-export type McpToolFilter = "all" | "enabled" | "disabled" | "read_only";
+type Server = McpPanelState["servers"][number];
+
+/** 全部 / 已開啟 / 需處理 */
+export type McpServerChip = "all" | "on" | "attention";
 export interface McpFilter {
   query: string;
-  serverId: string;
-  tools: McpToolFilter;
+  chip: McpServerChip;
+}
+export interface McpFilterMatch {
+  server: Server;
+  /**
+   * Present when the query matched individual tools rather than the server name: the card
+   * then lists exactly these tools. Absent means the whole server matched.
+   */
+  tools?: McpCatalogTool[];
 }
 
-// Search includes descriptions without putting them in every visible row.
-export function filterMcpCatalog(state: McpPanelState, filter: McpFilter) {
-  const words = filter.query
-    .normalize("NFKC")
-    .trim()
-    .toLocaleLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
+const fold = (text: string) => text.normalize("NFKC").toLocaleLowerCase();
+
+export function mcpQueryWords(query: string) {
+  return fold(query).trim().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Chip first, then the query. Search covers the server name and each tool's name, title and
+ * description (without putting descriptions in every row); every word must match.
+ */
+export function filterMcpServers(
+  state: McpPanelState,
+  filter: McpFilter,
+  classify: (server: Server) => { on: boolean; attention: boolean },
+): McpFilterMatch[] {
+  const words = mcpQueryWords(filter.query);
   return state.servers.flatMap((server) => {
-    if (filter.serverId && server.id !== filter.serverId) return [];
-    const matches = (tool?: McpCatalogTool) => {
-      const text = [server.name, tool?.name, tool?.title, tool?.description]
-        .filter(Boolean)
-        .join(" ")
-        .normalize("NFKC")
-        .toLocaleLowerCase();
-      return words.every((word) => text.includes(word));
-    };
+    const kind = classify(server);
+    if (filter.chip === "on" && !kind.on) return [];
+    if (filter.chip === "attention" && !kind.attention) return [];
+    if (!words.length) return [{ server }];
+    const name = fold(server.name);
+    if (words.every((word) => name.includes(word))) return [{ server }];
     const tools = server.tools.filter((tool) => {
-      if (filter.tools === "enabled" && !tool.enabled) return false;
-      if (filter.tools === "disabled" && tool.enabled) return false;
-      if (filter.tools === "read_only" && tool.read_only_hint !== true) return false;
-      return matches(tool);
+      const text = fold(
+        [server.name, tool.name, tool.title, tool.description].filter(Boolean).join(" "),
+      );
+      return words.every((word) => text.includes(word));
     });
-    if (!tools.length && (filter.tools !== "all" || !matches())) return [];
-    return [{ server, tools }];
+    return tools.length ? [{ server, tools }] : [];
   });
 }

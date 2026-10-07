@@ -59,7 +59,7 @@ test("every page is served and honours ?theme=light|dark", async () => {
 
 test("surfaces load the shared tokens and components before their own stylesheet", async () => {
   for (const [path, own] of [
-    ["/setup", ".native-bar"],
+    ["/setup", ".sp-toolbar"],
     ["/settings", ".mcp-filters"],
     ["/widget", ".signal-workbench {"],
     ["/host-viewer", ".chatgpt-workbench {"],
@@ -73,8 +73,8 @@ test("surfaces load the shared tokens and components before their own stylesheet
     expect(components, path).toBeGreaterThan(tokens);
     expect(html.indexOf(own), path).toBeGreaterThan(components);
   }
-  // Desktop and the side panel stay on the light token set until they are migrated.
-  expect(htmlTag((await page("/setup")).html)).toContain('data-theme="light"');
+  // Desktop stays on the light token set until it is migrated; the side panel follows the OS.
+  expect(htmlTag((await page("/setup")).html)).not.toContain("data-theme");
   expect(htmlTag((await page("/desktop-handoff")).html)).toContain('data-theme="light"');
 });
 

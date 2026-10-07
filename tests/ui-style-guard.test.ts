@@ -7,7 +7,8 @@ const root = new URL("../", import.meta.url);
 const read = (file: string) => readFile(new URL(file, root), "utf8");
 const TOKENS = "packages/ui-tokens/tokens.css";
 const COMPONENTS = "packages/ui-tokens/components.css";
-const GUARDED_STYLESHEETS = [TOKENS, COMPONENTS];
+const SIDE_PANEL = ["apps/extension/sidepanel.css", "apps/extension/mcp-panel.css"];
+const GUARDED_STYLESHEETS = [TOKENS, COMPONENTS, ...SIDE_PANEL];
 const MIN_FONT_PX = 12;
 
 type Rule = { at: string[]; selector: string; declarations: Map<string, string> };
@@ -254,9 +255,24 @@ describe("guarded stylesheets", () => {
     }
   });
 
-  test("components.css takes every colour from tokens", async () => {
-    const css = (await read(COMPONENTS)).replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(css.match(/#[0-9a-f]{3,8}\b/gi) ?? []).toEqual([]);
-    expect(css.match(/\b(?:rgba?|hsla?)\(/gi) ?? []).toEqual([]);
+  test("components.css and the side panel take every colour from tokens", async () => {
+    for (const file of [COMPONENTS, ...SIDE_PANEL]) {
+      const css = (await read(file)).replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(css.match(/#[0-9a-f]{3,8}\b/gi) ?? [], file).toEqual([]);
+      expect(css.match(/\b(?:rgba?|hsla?)\(/gi) ?? [], file).toEqual([]);
+    }
+  });
+
+  test("the side panel uses no legacy palette names and no theme pin", async () => {
+    for (const file of SIDE_PANEL) {
+      const css = (await read(file)).replace(/\/\*[\s\S]*?\*\//g, "");
+      // Every var() is a --k-* token or the shared [data-tone] plumbing (--tone, --tone-soft,
+      // --tone-on, --tone-line): the legacy alias block (--red, --paper, …) is gone.
+      expect(css.match(/var\(--(?!k-|tone\)|tone-(?:soft|on|line)\))[\w-]+/g) ?? [], file).toEqual(
+        [],
+      );
+    }
+    const html = await read("apps/extension/sidepanel.html");
+    expect(html.match(/<html\b[^>]*>/)?.[0]).not.toContain("data-theme");
   });
 });

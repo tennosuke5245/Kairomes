@@ -23,7 +23,17 @@ if (saved) {
 }
 const persist = () => sessionStorage.setItem(sessionKey, JSON.stringify(stored));
 export const browser = {
-  runtime: { id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  runtime: {
+    id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    getManifest: () => ({ version: "0.2.0" }),
+  },
+  // The synthetic page has no toolbar button; the badge text is only kept for inspection.
+  action: {
+    async setBadgeText(details: { text: string }) {
+      document.documentElement.dataset.syntheticBadge = details.text;
+    },
+    async setBadgeBackgroundColor() {},
+  },
   sidePanel: { async setPanelBehavior() {} },
   permissions: {
     async request() {

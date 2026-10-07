@@ -1,4 +1,5 @@
 import { AccessReceipts } from "../apps/daemon/src/access-receipts.ts";
+import { ApprovalInputSchema } from "../packages/protocol/src/approval.ts";
 import type { CommandApproval, PanelSnapshot } from "../packages/protocol/src/index.ts";
 import { PanelAccessInputSchema } from "../packages/protocol/src/panel-access.ts";
 
@@ -334,12 +335,18 @@ export function createPanelHttpFixture() {
         }
         return response;
       }
+      // Same decision contract as the daemon: a reason is accepted only with deny.
+      const decision = ApprovalInputSchema.safeParse(body);
       if (
         !route.endsWith("/approvals") ||
-        !["approve", "deny", "stop"].includes(String(body.action)) ||
-        Object.keys(body).some((key) => !["action", "command_id", "fingerprint"].includes(key))
+        !decision.success ||
+        decision.data.action === "list" ||
+        Object.keys(body).some(
+          (key) => !["action", "command_id", "fingerprint", "reason"].includes(key),
+        )
       )
         return reply({}, 400);
+      const reason = decision.data.action === "deny" ? decision.data.reason : undefined;
       const selected = snapshot.commands?.find((item) => item.id === body.command_id);
       if (
         !selected ||
@@ -358,6 +365,7 @@ export function createPanelHttpFixture() {
       selected.state =
         body.action === "approve" ? "running" : body.action === "deny" ? "denied" : "cancelled";
       selected.started_at = Date.now();
+      if (reason) selected.denial_reason = reason;
       if (loseNextResponse) {
         loseNextResponse = false;
         // A transport failure response after commit, before an SSE observation.

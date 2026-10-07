@@ -19,23 +19,38 @@ import {
 } from "./access-mutation.ts";
 import { readAccessMutationSnapshot } from "./access-mutation-snapshot.ts";
 import { AccessPanel } from "./access-panel.ts";
-import { ActiveWorkPanel } from "./active-work-panel.ts";
 import { ApprovalMutationTracker } from "./approval-mutation.ts";
 import { ApprovalPanel } from "./approval-panel.ts";
 import {
   type ApprovalItem,
   approvalDecisionObserved,
+  checkDenialReason,
   splitApprovalItems,
 } from "./approval-state.ts";
 import { browser } from "./browser.ts";
+import { setIcon } from "./icons.ts";
 import { writeMcpAuthPending } from "./mcp-auth-tracker.ts";
 import { readMcpCatalog } from "./mcp-catalog-read.ts";
 import { McpPanel } from "./mcp-panel.ts";
+import { NoticeSlot } from "./notice-slot.ts";
 import { parsePairingUrl, parseWorkbenchUrl } from "./pairing.ts";
 import { PanelAnnouncements } from "./panel-announcements.ts";
-import { panelErrorMessage } from "./panel-error.ts";
+import { type NoticeTone, panelRecoveryNotice, STALE_NOTICE } from "./panel-error.ts";
 import { PanelStreamAvailability } from "./panel-stream-availability.ts";
-import { reconcileWorkspaceSelection } from "./workspace-selection.ts";
+import { panelView, settingsBackLabel } from "./panel-view.ts";
+import { commandTokens, setupCommands } from "./setup-commands.ts";
+import {
+  actionBadgeText,
+  activeIndicator,
+  type ConnectionState,
+  connectionView,
+  needButton,
+} from "./toolbar-state.ts";
+import {
+  ALL_PROJECTS,
+  reconcileWorkspaceSelection,
+  workspaceLabel,
+} from "./workspace-selection.ts";
 
 function required<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -44,51 +59,59 @@ function required<T extends Element>(selector: string): T {
 }
 const form = required<HTMLFormElement>("#pair");
 const address = required<HTMLInputElement>("#address");
-const error = required<HTMLElement>("#error");
-const panelError = required<HTMLElement>("#panel-error");
 const panelNotice = required<HTMLElement>("#panel-notice");
-const nativeBar = required<HTMLElement>(".native-bar");
-const connectionControls = required<HTMLElement>(".connection-controls");
-const settingsContent = required<HTMLElement>(".settings-content");
 const status = required<HTMLElement>("#connection-status");
+const statusDot = required<HTMLElement>("#connection-status .k-dot");
+const brand = required<HTMLElement>("#brand");
 const approvalChannel = required<HTMLElement>("#approval-channel");
 const workbenchChannel = required<HTMLElement>("#workbench-channel");
+const settingsReconnect = required<HTMLButtonElement>("#settings-reconnect");
+const workspaceSwitcher = required<HTMLElement>("#workspace-switcher");
 const workspaceFilter = required<HTMLSelectElement>("#workspace-filter");
 const panelRecover = required<HTMLButtonElement>("#panel-recover");
 const panelStatus = required<HTMLElement>("#panel-status");
 const approvalStatus = required<HTMLElement>("#approval-status");
+const accessStatus = required<HTMLElement>("#access-status");
 const announcements = new PanelAnnouncements(
   (message) => panelStatus.replaceChildren(document.createTextNode(message)),
   (message) => approvalStatus.replaceChildren(document.createTextNode(message)),
 );
 const frame = required<HTMLIFrameElement>("#workbench");
+const workbenchEmpty = required<HTMLElement>("#workbench-empty");
+const workbenchEmptyReload = required<HTMLButtonElement>("#workbench-reload");
 const setup = required<HTMLElement>("#setup");
 const settings = required<HTMLElement>("#settings");
 const settingsOpen = required<HTMLButtonElement>("#settings-open");
 const settingsBack = required<HTMLButtonElement>("#settings-back");
 const settingsPages = [...document.querySelectorAll<HTMLButtonElement>("[data-settings-page]")];
 const settingsPanels = [...document.querySelectorAll<HTMLElement>("[data-settings-panel]")];
+const pairingRow = required<HTMLElement>("#pairing-row");
 const disconnect = required<HTMLButtonElement>("#disconnect");
+const disconnectDialog = required<HTMLDialogElement>("#disconnect-dialog");
 const connectButton = required<HTMLButtonElement>("#connect-button");
-const accessContainer = required<HTMLElement>("#access");
+const accessTrigger = required<HTMLButtonElement>("#access");
 const integrationsContainer = required<HTMLElement>("#integrations");
 const approvalContainer = required<HTMLElement>("#approvals");
 const approvalCount = required<HTMLButtonElement>("#approval-count");
+const approvalNumber = required<HTMLElement>("#approval-number");
 const activeCount = required<HTMLButtonElement>("#active-count");
 const activeNumber = required<HTMLElement>("#active-number");
 let settingsReturnFocus: HTMLElement | undefined;
+let settingsVisible = false;
+let workbenchUrl: string | undefined;
 
-new ResizeObserver(() => {
-  document.body.style.setProperty(
-    "--native-bar-height",
-    `${nativeBar.getBoundingClientRect().height}px`,
-  );
-}).observe(nativeBar);
-const activeWork = required<HTMLElement>("#active-work");
-const activeWorkList = required<HTMLElement>("#active-work-list");
-const activeClose = required<HTMLButtonElement>("#active-close");
 const copyStatus = required<HTMLElement>("#copy-status");
 const setupAdvanced = required<HTMLDetailsElement>("#setup-advanced");
+const notice = new NoticeSlot(
+  panelNotice,
+  {
+    icon: required<SVGSVGElement>("#panel-notice > .k-icon"),
+    message: required<HTMLElement>("#panel-error"),
+    action: panelRecover,
+    close: required<HTMLButtonElement>("#notice-close"),
+  },
+  () => visibleBodyFocus(),
+);
 const permission = { origins: ["http://127.0.0.1/*"] };
 const storageKey = "kairomesPanel";
 let connection: PanelConnection | undefined;
@@ -125,86 +148,93 @@ function approvalUncertain(item: ApprovalItem) {
   return approvalMutations.isLocked(approvalSource(), item);
 }
 
-function showActiveWork(open: boolean, restoreFocus = false) {
-  const visible = open && !activeCount.hidden;
-  activeWork.hidden = !visible;
-  activeCount.setAttribute("aria-expanded", String(visible));
-  document.body.classList.toggle("active-work-open", visible);
-  if (visible) activeWork.querySelector<HTMLElement>("h2")?.focus();
-  else if (restoreFocus) activeCount.focus();
+// 執行中 opens the approval page on its own tab; stop controls stay in native DOM there.
+activeCount.addEventListener("click", () => approvals.toggle("running"));
+
+/** One body below the toolbar; the toolbar keeps its height, so the iframe never jumps. */
+function renderView() {
+  const view = panelView({
+    settingsOpen: settingsVisible,
+    approvalsOpen: approvals.isOpen,
+    hasWorkbench: workbenchUrl !== undefined,
+    frameLoaded: frame.hasAttribute("src"),
+  });
+  settings.hidden = view !== "settings";
+  setup.hidden = view !== "setup";
+  frame.hidden = view !== "workbench";
+  workbenchEmpty.hidden = view !== "empty";
+  const approvalsTab = view === "approvals" ? approvals.tab : undefined;
+  approvalCount.setAttribute(
+    "aria-pressed",
+    String(approvalsTab !== undefined && approvalsTab !== "running"),
+  );
+  activeCount.setAttribute("aria-pressed", String(approvalsTab === "running"));
+  settingsOpen.setAttribute("aria-pressed", String(view === "settings"));
+  const gear = settingsOpen.querySelector<SVGSVGElement>("svg");
+  if (gear) setIcon(gear, "GearSix", view === "settings");
+  const back = settingsBackLabel(workbenchUrl !== undefined);
+  if (settingsBack.getAttribute("aria-label") !== back)
+    settingsBack.setAttribute("aria-label", back);
 }
 
-activeCount.addEventListener("click", () => {
-  if (approvals.isOpen) approvals.close();
-  showActiveWork(Boolean(activeWork.hidden));
-});
-activeClose.addEventListener("click", () => showActiveWork(false, true));
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || activeWork.hidden) return;
-  event.preventDefault();
-  showActiveWork(false, true);
-});
-document.addEventListener("pointerdown", (event) => {
-  if (
-    activeWork.hidden ||
-    !(event.target instanceof Node) ||
-    activeWork.contains(event.target) ||
-    activeCount.contains(event.target)
-  )
-    return;
-  const focusable =
-    event.target instanceof Element &&
-    event.target.closest(
-      "button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, iframe, label[for], [contenteditable], [tabindex]:not([tabindex='-1'])",
-    );
-  const restoreFocus = !focusable && activeWork.contains(document.activeElement);
-  showActiveWork(false);
-  if (restoreFocus)
-    setTimeout(() => {
-      if (!activeCount.hidden) activeCount.focus();
-    }, 0);
-});
-frame.addEventListener("focus", () => showActiveWork(false));
-
-function setConnectionStatus(label: string, connected = false) {
-  const dot = document.createElement("i");
-  status.replaceChildren(dot);
-  status.setAttribute("aria-label", label);
-  status.title = label;
-  status.classList.toggle("connected", connected);
-  status.dataset.state = connected ? "connected" : "unavailable";
-  for (const button of settingsPages)
-    button.disabled = button.dataset.settingsPage === "mcp" && (!connection || needsPairing);
-  approvalChannel.textContent = connection ? (connected ? "已連接" : label) : "未配對";
-  // Status updates are announced once, separately from the visual indicator.
-  announcements.connection(label);
+/** A sensible focus target when the focused element disappears. */
+function visibleBodyFocus(): HTMLElement | undefined {
+  if (!settings.hidden)
+    return settingsPages.find((tab) => tab.getAttribute("aria-selected") === "true");
+  if (!setup.hidden) return address;
+  if (!workbenchEmpty.hidden) return workbenchEmptyReload;
+  return approvalCount.hidden ? settingsOpen : approvalCount;
 }
 
-function syncPanelNotice() {
-  if (settings.hidden) {
-    if (panelNotice.parentElement !== document.body) panelStatus.before(panelNotice);
-    if (panelRecover.parentElement !== connectionControls) connectionControls.append(panelRecover);
-  } else {
-    if (panelNotice.parentElement !== settingsContent) settingsContent.prepend(panelNotice);
-    if (panelRecover.parentElement !== panelNotice) panelNotice.append(panelRecover);
+function setConnectionStatus(state: ConnectionState) {
+  const view = connectionView(state);
+  status.setAttribute("aria-label", `Kairomes：${view.label}`);
+  status.title = view.label;
+  status.dataset.state = state;
+  statusDot.dataset.tone = view.tone;
+  if (view.pulse) statusDot.dataset.pulse = "";
+  else statusDot.removeAttribute("data-pulse");
+  const mcpTab = settingsPages.find((tab) => tab.dataset.settingsPage === "mcp");
+  const mcpBlocked = !connection || needsPairing;
+  if (mcpTab) {
+    mcpTab.setAttribute("aria-disabled", String(mcpBlocked));
+    if (mcpBlocked) mcpTab.title = "配對後才能管理 MCP";
+    else mcpTab.removeAttribute("title");
   }
-  panelNotice.hidden = !panelError.textContent && (settings.hidden || panelRecover.hidden);
+  approvalChannel.dataset.tone = view.tone;
+  approvalChannel.querySelector<HTMLElement>(".k-dot")?.setAttribute("data-tone", view.tone);
+  const channelLabel = approvalChannel.querySelector("span:last-child");
+  if (channelLabel) channelLabel.textContent = view.label;
+  settingsReconnect.hidden = !connection || needsPairing || state === "connected";
+  pairingRow.hidden = !connection && workbenchUrl === undefined;
+  // Status updates are announced once, separately from the visual indicator.
+  announcements.connection(`本機工作台：${view.label}`);
 }
 
 function showPanelError(message: string, repair: "refresh" | "pair" = "refresh") {
-  message = panelErrorMessage(message, {
-    paired: !!connection && !needsPairing,
-    stale: !!latest && !available,
-    approvalUnknown: approvalMutations.hasUnknown || accessMutations.hasUnknown,
-  });
-  if (panelError.textContent !== message) panelError.textContent = message;
-  panelRecover.hidden = !message;
-  const accessRecovery = accessMutations.hasUnknown && accessNeedsPairRecovery;
-  const action = accessRecovery ? "pair" : repair;
-  panelRecover.dataset.action = action;
-  panelRecover.textContent =
-    action === "pair" ? (accessRecovery ? "解除配對" : "重新配對") : "查詢狀態";
-  syncPanelNotice();
+  const paired = !!connection && !needsPairing;
+  notice.setRecovery(
+    panelRecoveryNotice(message, {
+      paired,
+      needsPairing: !!connection && needsPairing,
+      stale: !!latest && !available,
+      approvalUnknown: approvalMutations.hasUnknown || accessMutations.hasUnknown,
+      accessRecovery: accessMutations.hasUnknown && accessNeedsPairRecovery,
+      repair,
+    }),
+  );
+}
+
+/** A one-off line in the notice slot (pairing results, unpair outcome). */
+function flashNotice(message: string, tone: NoticeTone = "danger") {
+  notice.flash(message ? { message, tone } : undefined);
+}
+
+function syncSwitcherLabel() {
+  const view = workspaceLabel(selectedWorkspace, latest?.workspaces ?? []);
+  workspaceFilter.title = view.label;
+  const switcherIcon = workspaceSwitcher.querySelector<SVGSVGElement>(".sp-switcher__icon");
+  if (switcherIcon) setIcon(switcherIcon, view.icon);
 }
 
 function syncWorkspaceFilter() {
@@ -214,7 +244,7 @@ function syncWorkspaceFilter() {
     workspaceFilter.dataset.key = key;
     const all = document.createElement("option");
     all.value = "";
-    all.textContent = "全部本機操作";
+    all.textContent = ALL_PROJECTS;
     workspaceFilter.replaceChildren(
       all,
       ...workspaces.map((item) => {
@@ -229,9 +259,10 @@ function syncWorkspaceFilter() {
     workspaceFilter.value = selectedWorkspace ?? "";
     if (selection.notifyWorkbench) sendWorkspaceFilter();
   }
-  workspaceFilter.hidden = !connection;
+  workspaceSwitcher.hidden = !connection;
+  brand.hidden = !workspaceSwitcher.hidden;
   workspaceFilter.disabled = !available;
-  workspaceFilter.title = workspaceFilter.selectedOptions[0]?.textContent ?? "全部本機操作";
+  syncSwitcherLabel();
   access.selectWorkspace(selectedWorkspace);
 }
 
@@ -245,23 +276,31 @@ function sendWorkspaceFilter() {
 
 workspaceFilter.addEventListener("change", () => {
   selectedWorkspace = workspaceFilter.value || null;
-  workspaceFilter.title = workspaceFilter.selectedOptions[0]?.textContent ?? "全部本機操作";
+  syncSwitcherLabel();
   access.selectWorkspace(selectedWorkspace);
   renderApprovals();
   sendWorkspaceFilter();
 });
 frame.addEventListener("load", sendWorkspaceFilter);
 
-const commands = {
-  start: `bun.cmd run app --port 0 --extension-id ${browser.runtime.id}`,
-  pair: `bun.cmd run kairomes pair --extension-id ${browser.runtime.id}`,
-  tunnel: "tunnel-client run --profile kairomes",
-};
+const commands = setupCommands(browser.runtime.id);
+/** Each argument wraps as a unit; the text (and so the copy) stays the exact command. */
+function showCommand(selector: string, command: string) {
+  const target = required<HTMLElement>(selector);
+  target.replaceChildren();
+  commandTokens(command).forEach((token, index) => {
+    if (index) target.append(" ");
+    const span = document.createElement("span");
+    span.className = "sp-copy__token";
+    span.textContent = token;
+    target.append(span);
+  });
+}
 required<HTMLElement>("#extension-id").textContent = browser.runtime.id;
-required<HTMLElement>("#start-command").textContent = commands.start;
-required<HTMLElement>("#pair-command").textContent = commands.pair;
-required<HTMLElement>("#tunnel-command").textContent = commands.tunnel;
-required<HTMLElement>("#tunnel-command-settings").textContent = commands.tunnel;
+showCommand("#start-command", commands.start);
+showCommand("#pair-command", commands.pair);
+showCommand("#tunnel-command", commands.tunnel);
+showCommand("#tunnel-command-settings", commands.tunnel);
 
 async function copyText(value: string) {
   try {
@@ -282,7 +321,10 @@ async function copyText(value: string) {
 }
 
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy-target]")) {
-  const idleLabel = button.textContent ?? "複製";
+  const label = button.querySelector<HTMLElement>("[data-copy-text]");
+  const glyph = button.querySelector<SVGSVGElement>("svg");
+  const idleLabel = label?.textContent ?? "複製";
+  let reset: ReturnType<typeof setTimeout> | undefined;
   button.addEventListener("click", async () => {
     const target = document.getElementById(button.dataset.copyTarget ?? "");
     const value = target?.textContent?.trim();
@@ -290,11 +332,14 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy-ta
     button.disabled = true;
     try {
       await copyText(value);
-      button.textContent = "已複製";
+      if (label) label.textContent = "已複製";
+      if (glyph) setIcon(glyph, "Check");
       button.dataset.copied = "true";
       copyStatus.textContent = `${button.dataset.copyLabel ?? "指令"}已複製到剪貼簿。`;
-      setTimeout(() => {
-        button.textContent = idleLabel;
+      clearTimeout(reset);
+      reset = setTimeout(() => {
+        if (label) label.textContent = idleLabel;
+        if (glyph) setIcon(glyph, "Copy");
         delete button.dataset.copied;
       }, 1600);
     } catch (cause) {
@@ -405,11 +450,19 @@ class PanelRequestError extends Error {
     );
   }
 }
-async function decideApproval(session: ApprovalItem, action: "approve" | "deny" | "stop") {
+async function decideApproval(
+  session: ApprovalItem,
+  action: "approve" | "deny" | "stop",
+  reason?: string,
+) {
   const target = connection;
   if (!target || !available) throw new Error("等待核准連線恢復後再試。");
   const source = approvalSource(target);
   if (!source || approvalMutations.isLocked(source, session)) throw new Error("結果待確認。");
+  // A reason travels only with a deny, inside the same single request; it is checked before
+  // anything is sent, so a rejected reason never leaves an unconfirmed decision behind.
+  const denial = action === "deny" && reason !== undefined ? checkDenialReason(reason) : undefined;
+  if (denial && !denial.ok) throw new Error(denial.message);
   try {
     await api(target, "approvals", {
       action,
@@ -421,6 +474,7 @@ async function decideApproval(session: ApprovalItem, action: "approve" | "deny" 
             ? { command_id: session.id }
             : { session_id: session.id }),
       fingerprint: session.fingerprint,
+      ...(denial?.ok && denial.reason !== undefined ? { reason: denial.reason } : {}),
     });
     const snapshotAtRead = latest;
     const data = await api(target, "approvals", { action: "list" });
@@ -493,28 +547,26 @@ async function decideApproval(session: ApprovalItem, action: "approve" | "deny" 
 const reportApprovalError = (message: string) => {
   if (!needsPairing) showPanelError(available ? message : "結果待確認。");
 };
-const approvals = new ApprovalPanel(
-  approvalContainer,
-  decideApproval,
-  reportApprovalError,
-  (open) => {
-    showActiveWork(false);
-    approvalCount.setAttribute("aria-expanded", String(open));
-    frame.hidden = open;
-    settings.hidden = true;
-    syncPanelNotice();
-    if (!open) (approvalCount.hidden ? settingsOpen : approvalCount).focus();
+const approvals = new ApprovalPanel(approvalContainer, {
+  decide: decideApproval,
+  report: reportApprovalError,
+  change: (open, tab) => {
+    if (open) {
+      settingsVisible = false;
+      access.close();
+    }
+    renderView();
+    if (!open) {
+      const trigger = tab === "running" && !activeCount.hidden ? activeCount : approvalCount;
+      (trigger.hidden ? settingsOpen : trigger).focus();
+    }
   },
-  approvalUncertain,
-);
-const activePanel = new ActiveWorkPanel(
-  activeWorkList,
-  (item) => decideApproval(item, "stop"),
-  reportApprovalError,
-  approvalUncertain,
-);
+  uncertain: approvalUncertain,
+  announce: (message) => approvalStatus.replaceChildren(document.createTextNode(message)),
+});
 const access = new AccessPanel(
-  accessContainer,
+  accessTrigger,
+  required<HTMLElement>("#access-popover"),
   async (body) => {
     const target = connection;
     if (!target || !available) throw new Error("等待權限連線恢復後再試。");
@@ -623,7 +675,13 @@ const access = new AccessPanel(
     reportApprovalError(message);
   },
   () => accessMutations.unknownRequest,
+  (message) => accessStatus.replaceChildren(document.createTextNode(message)),
 );
+
+// One 1 s tick for grant countdowns; it only redraws and never changes a grant.
+setInterval(() => {
+  if (connection) access.tick();
+}, 1000);
 
 async function saveAccessPending(
   target: PanelConnection,
@@ -759,35 +817,54 @@ function renderApprovals(snapshot = latest, connected = available) {
     ...(snapshot?.sessions ?? []),
   ];
   const { pending, ongoing } = splitApprovalItems(items);
-  approvalCount.hidden = pending.length === 0;
-  approvalCount.textContent = `需確認 ${pending.length}`;
+  const need = needButton(pending.length);
+  approvalCount.hidden = !connection;
+  approvalCount.dataset.count = need.count;
+  approvalCount.setAttribute("aria-label", need.ariaLabel);
+  approvalNumber.hidden = !need.badge;
+  approvalNumber.textContent = need.badge;
   announcements.approvals(pending.map((item) => item.id));
-  activeCount.hidden = ongoing.length === 0;
-  activeCount.setAttribute("aria-label", `執行中的工作 ${ongoing.length} 項`);
-  activeCount.title = `執行中的工作 ${ongoing.length} 項`;
-  activeNumber.textContent = String(ongoing.length);
+  syncActionBadge(pending.length, connected && !!connection && !needsPairing);
+  const active = activeIndicator(ongoing.length);
+  activeCount.hidden = active.hidden;
+  activeCount.setAttribute("aria-label", active.ariaLabel);
+  activeCount.title = active.ariaLabel;
+  activeNumber.textContent = active.badge;
   const focusWasInApproval = approvalContainer.contains(document.activeElement);
-  approvals.render(pending, connected, selectedWorkspace);
+  approvals.render(items, connected, selectedWorkspace);
   if (focusWasInApproval && !approvalContainer.contains(document.activeElement)) {
     const nextApproval =
       approvalContainer.querySelector<HTMLButtonElement>("button:not(:disabled)");
     if (nextApproval) nextApproval.focus();
     else if (!activeCount.hidden) activeCount.focus();
-    else if (!accessContainer.hidden)
-      accessContainer.querySelector<HTMLElement>("summary")?.focus();
-    else if (!disconnect.hidden) settingsOpen.focus();
+    else if (!accessTrigger.hidden) accessTrigger.focus();
+    else if (!approvalCount.hidden) approvalCount.focus();
+    else if (connection) settingsOpen.focus();
     else connectButton.focus();
   }
-  const focusWasInActiveWork = activeWork.contains(document.activeElement);
-  activePanel.render(ongoing, connected);
-  if (ongoing.length === 0) {
-    showActiveWork(false);
-    if (focusWasInActiveWork) (approvalCount.hidden ? settingsOpen : approvalCount).focus();
+  // The 執行中 button hides with the last running item; keep focus in the toolbar.
+  if (activeCount.hidden && document.activeElement === activeCount)
+    (approvalCount.hidden ? settingsOpen : approvalCount).focus();
+}
+
+let actionBadge: string | undefined;
+/** The browser toolbar badge mirrors decisions waiting here (B8 P1); it never decides. */
+function syncActionBadge(pending: number, connected: boolean) {
+  const text = actionBadgeText(pending, connected);
+  if (text === actionBadge) return;
+  actionBadge = text;
+  try {
+    void browser.action?.setBadgeText({ text }).catch(() => {});
+    if (text) void browser.action?.setBadgeBackgroundColor({ color: "#a8233f" }).catch(() => {});
+  } catch {
+    /* A browser without the action badge API keeps the in-panel count only. */
   }
 }
+
 approvalCount.addEventListener("click", () => {
-  showActiveWork(false);
-  approvals.open();
+  // 需確認 toggles the page; from 執行中 or 最近 it switches to the 需確認 queue.
+  if (approvals.isOpen && approvals.tab !== "pending") approvals.open("pending");
+  else approvals.toggle("pending");
 });
 function stopStream() {
   catalogReadGeneration++;
@@ -804,6 +881,8 @@ function stopStream() {
 }
 function startStream(target: PanelConnection) {
   stopStream();
+  if (connection === target && !needsPairing && available === false)
+    setConnectionStatus(latest ? "reconnecting" : "connecting");
   const abort = new AbortController();
   stream = abort;
   const current = () => !abort.signal.aborted && stream === abort && connection === target;
@@ -848,7 +927,7 @@ function startStream(target: PanelConnection) {
           }
           // An unrelated activity snapshot cannot settle a pending MCP setting change.
           if (!mcp.hasUncertainMutation) showPanelError("");
-          setConnectionStatus("本機已連接", true);
+          setConnectionStatus("connected");
         },
         abort.signal,
       );
@@ -863,9 +942,9 @@ function startStream(target: PanelConnection) {
       access.render(latest, false);
       mcp.render(undefined, false);
       workspaceFilter.disabled = true;
-      setConnectionStatus("本機重連中");
+      setConnectionStatus("reconnecting");
       // A retained snapshot remains visible, but cannot authorize a decision.
-      showPanelError("顯示上次快照。");
+      showPanelError(STALE_NOTICE);
     }
     if (current()) {
       timer = setTimeout(() => void connect(), backoff);
@@ -886,60 +965,76 @@ function invalidatePairing(target: PanelConnection) {
     .then((key) => browser.storage.session.remove(key))
     .catch(() => {});
   workspaceFilter.disabled = true;
-  setConnectionStatus("配對已失效");
+  setConnectionStatus("invalid");
   showPanelError("", "pair");
-  panelRecover.hidden = false;
-  syncPanelNotice();
   void browser.storage.session.remove(storageKey);
 }
 function showWorkbench(url: string) {
-  showActiveWork(false);
+  workbenchUrl = url;
   frame.src = parseWorkbenchUrl(url);
-  frame.hidden = false;
-  setup.hidden = true;
-  settings.hidden = true;
-  syncPanelNotice();
-  disconnect.hidden = false;
-  accessContainer.hidden = !connection;
+  settingsVisible = false;
+  renderView();
+  pairingRow.hidden = false;
+  accessTrigger.hidden = !connection;
   integrationsContainer.hidden = !connection;
   address.value = "";
-  error.textContent = "";
+  flashNotice("");
+}
+
+workbenchEmptyReload.addEventListener("click", () => {
+  if (workbenchUrl) showWorkbench(workbenchUrl);
+  else renderView();
+});
+
+function selectSettingsPage(page: "general" | "mcp", focusTab = false) {
+  for (const tab of settingsPages) {
+    const active = tab.dataset.settingsPage === page;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    if (active && focusTab) tab.focus({ preventScroll: true });
+  }
+  for (const panel of settingsPanels) panel.hidden = panel.dataset.settingsPanel !== page;
 }
 
 function showSettings(page: "general" | "mcp" = "general", returnFocus?: HTMLElement) {
   if ((!connection || needsPairing) && page === "mcp") return;
-  if (settings.hidden) settingsReturnFocus = returnFocus ?? (frame.hidden ? address : frame);
+  if (!settingsVisible) settingsReturnFocus = returnFocus ?? (frame.hidden ? address : frame);
   if (approvals.isOpen) approvals.close();
-  showActiveWork(false);
-  for (const button of settingsPages) {
-    const active = button.dataset.settingsPage === page;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-current", active ? "page" : "false");
-  }
-  for (const panel of settingsPanels) panel.hidden = panel.dataset.settingsPanel !== page;
-  frame.hidden = true;
-  setup.hidden = true;
-  settings.hidden = false;
-  syncPanelNotice();
-  settingsPanels
-    .find((panel) => panel.dataset.settingsPanel === page)
-    ?.querySelector<HTMLElement>("h1")
-    ?.focus({ preventScroll: true });
+  access.close();
+  settingsVisible = true;
+  renderView();
+  selectSettingsPage(page, true);
 }
 
-settingsBack.addEventListener("click", () => {
-  if (!frame.getAttribute("src")) {
-    settings.hidden = true;
-    setup.hidden = false;
-    syncPanelNotice();
-    (settingsReturnFocus ?? address).focus();
-    return;
-  }
-  settings.hidden = true;
-  setup.hidden = true;
-  syncPanelNotice();
-  frame.hidden = false;
-  (settingsReturnFocus ?? frame).focus();
+function closeSettings() {
+  if (!settingsVisible) return;
+  settingsVisible = false;
+  renderView();
+  const target = settingsReturnFocus;
+  (target?.isConnected && !target.closest("[hidden]") ? target : visibleBodyFocus())?.focus();
+}
+
+settingsBack.addEventListener("click", closeSettings);
+settings.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  if (event.target instanceof Element && event.target.closest("dialog")) return;
+  event.preventDefault();
+  closeSettings();
+});
+const settingsTabs = required<HTMLElement>("#settings [role='tablist']");
+settingsTabs.addEventListener("keydown", (event) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const enabled = settingsPages.filter((tab) => tab.getAttribute("aria-disabled") !== "true");
+  const index = enabled.indexOf(document.activeElement as HTMLButtonElement);
+  const next =
+    event.key === "Home"
+      ? enabled[0]
+      : event.key === "End"
+        ? enabled.at(-1)
+        : enabled[(index + (event.key === "ArrowLeft" ? -1 : 1) + enabled.length) % enabled.length];
+  const page = next?.dataset.settingsPage;
+  if (page === "general" || page === "mcp") showSettings(page);
 });
 for (const button of settingsPages) {
   button.addEventListener("click", () => {
@@ -965,8 +1060,11 @@ window.addEventListener("message", (event) => {
   if (message.type === "kairomes:open-settings" && message.version === 1) showSettings("general");
   if (message.version !== 1) return;
   if (message.type === "kairomes:workbench-ready") sendWorkspaceFilter();
-  if (message.type === "kairomes:workbench-status" && typeof message.available === "boolean")
-    workbenchChannel.textContent = message.available ? "已連接" : "資料待更新";
+  if (message.type === "kairomes:workbench-status" && typeof message.available === "boolean") {
+    // The iframe reports only its own data stream; approvals use the panel's stream.
+    workbenchChannel.hidden = message.available;
+    workbenchChannel.textContent = message.available ? "" : "工作台畫面的資料待更新";
+  }
   if (
     message.type === "kairomes:workspace-select" &&
     (message.workspaceId === null ||
@@ -979,12 +1077,20 @@ window.addEventListener("message", (event) => {
     sendWorkspaceFilter();
   }
 });
-settingsOpen.addEventListener("click", () =>
-  showSettings(connection && !needsPairing ? "mcp" : "general", settingsOpen),
-);
+// The gear always opens 一般; MCP is one tab away.
+settingsOpen.addEventListener("click", () => {
+  if (settingsVisible) closeSettings();
+  else showSettings("general", settingsOpen);
+});
+// 重新連線 in 一般 restarts the stream only; unconfirmed results keep their own 查詢狀態.
+settingsReconnect.addEventListener("click", (event) => {
+  if (!event.isTrusted) return;
+  const target = connection;
+  if (target && !needsPairing) startStream(target);
+});
 panelRecover.addEventListener("click", async () => {
   if (panelRecover.dataset.action === "pair") {
-    disconnect.click();
+    void disconnectPanel();
     return;
   }
   const target = connection;
@@ -1092,12 +1198,12 @@ form.addEventListener("submit", async (event) => {
   connectButton.disabled = true;
   connectButton.setAttribute("aria-busy", "true");
   connectButton.textContent = "正在連接…";
-  error.textContent = "";
+  flashNotice("");
   let issued: PanelConnection | undefined;
   try {
     if (address.value.includes("/#session=")) {
       showWorkbench(address.value);
-      setConnectionStatus("僅可瀏覽");
+      setConnectionStatus("browse");
       return;
     }
     const pairing = parsePairingUrl(address.value);
@@ -1135,19 +1241,38 @@ form.addEventListener("submit", async (event) => {
       ["PAIRING_INVALID", "PAIRING_RENEWAL_UNAVAILABLE"].includes(cause.code)
     ) {
       setupAdvanced.open = true;
-      error.textContent = "請在 Desktop 取得新連結後重新配對。";
-    } else error.textContent = cause instanceof Error ? cause.message : "配對失敗。";
+      flashNotice("請在 Desktop 取得新連結後重新配對。");
+    } else flashNotice(cause instanceof Error ? cause.message : "配對失敗。");
   } finally {
     connectButton.disabled = false;
     connectButton.removeAttribute("aria-busy");
     connectButton.textContent = idleLabel;
   }
 });
-disconnect.addEventListener("click", async () => {
+disconnect.addEventListener("click", () => {
+  if (!disconnectDialog.open) disconnectDialog.showModal();
+});
+required<HTMLButtonElement>("#disconnect-cancel").addEventListener("click", () => {
+  disconnectDialog.close();
+});
+disconnectDialog.addEventListener("close", () => {
+  if (disconnectDialog.returnValue !== "confirm" && !disconnect.closest("[hidden]"))
+    disconnect.focus();
+  disconnectDialog.returnValue = "";
+});
+required<HTMLButtonElement>("#disconnect-confirm").addEventListener("click", (event) => {
+  if (!event.isTrusted) return;
+  disconnectDialog.close("confirm");
+  void disconnectPanel();
+});
+
+/** Leaves the pairing: privilege-reducing only, and it never replays an unknown change. */
+async function disconnectPanel() {
   generation++;
   const target = connection;
   stopStream();
   if (approvals.isOpen) approvals.close();
+  access.close();
   connection = undefined;
   mcpAuthOwner = undefined;
   mcp.render(undefined, false);
@@ -1161,35 +1286,41 @@ disconnect.addEventListener("click", async () => {
   latest = undefined;
   renderApprovals(undefined, false);
   frame.removeAttribute("src");
-  frame.hidden = true;
-  settings.hidden = true;
-  setup.hidden = false;
-  disconnect.hidden = true;
-  accessContainer.hidden = true;
+  workbenchUrl = undefined;
+  settingsVisible = false;
+  renderView();
+  pairingRow.hidden = true;
+  accessTrigger.hidden = true;
   integrationsContainer.hidden = true;
-  workspaceFilter.hidden = true;
+  workspaceSwitcher.hidden = true;
+  brand.hidden = false;
   selectedWorkspace = null;
-  workbenchChannel.textContent = "待確認";
-  setConnectionStatus("尚未配對");
+  workbenchChannel.hidden = true;
+  workbenchChannel.textContent = "";
+  setConnectionStatus("unpaired");
   showPanelError("");
   address.focus();
   try {
     await browser.storage.session.remove(storageKey);
   } catch {
-    error.textContent = "配對快取清除未完成；請重新載入 Extension。";
+    flashNotice("配對快取清除未完成；請重新載入 Extension。");
   }
   if (target) {
     try {
       await api(target, "disconnect", {});
-      error.textContent = "已解除配對並收回自主授權；個別核准的工作仍會持續。";
+      flashNotice("已解除配對並收回自主授權；個別核准的工作仍會持續。", "neutral");
     } catch {
-      error.textContent = "伺服器撤銷待確認；請重啟 app。個別核准的工作仍可能持續。";
+      flashNotice("伺服器撤銷待確認；請重啟 app。個別核准的工作仍可能持續。", "warning");
     }
   }
-});
+}
+required<HTMLElement>("#extension-version").textContent = browser.runtime.getManifest().version;
+setConnectionStatus("unpaired");
+renderView();
 window.addEventListener("pagehide", () => {
   stopStream();
   if (approvals.isOpen) approvals.close();
+  syncActionBadge(0, false);
 });
 void (async () => {
   const attempt = generation;
@@ -1216,6 +1347,6 @@ void (async () => {
     startStream(target);
   } catch {
     if (connection && generation === attempt) invalidatePairing(connection);
-    if (generation === attempt) error.textContent = "無法恢復先前配對，請重新產生本機配對碼。";
+    if (generation === attempt) flashNotice("無法恢復先前配對，請重新產生本機配對碼。");
   }
 })();

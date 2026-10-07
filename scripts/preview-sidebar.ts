@@ -5,10 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BunPlugin, Server } from "bun";
 import { mcpOAuthCallbackResponse } from "../apps/daemon/src/mcp-oauth-page.ts";
+import { commandTokens, setupCommands } from "../apps/extension/src/setup-commands.ts";
 import { componentsCss, tokensCss, uiCss } from "../packages/ui-tokens/index.ts";
 import { renderStudyMaterial } from "../tests/handoff-study-materials.ts";
 import { createPanelHttpFixture } from "../tests/panel-http-fixture.ts";
 import { createStudyHttpFixture } from "../tests/study-http-fixture.ts";
+import { inlineIconSprite, renderIconSprite } from "./extension-icons.ts";
 
 // Synthetic UI preview with bounded memory-only HTTP controls. No host, shell or reader.
 // `bun run scripts/preview-sidebar.ts` serves it; tests/preview-build.test.ts imports it.
@@ -220,19 +222,51 @@ export async function createPreviewPages(bundles: PreviewBundles) {
     "sidepanel.css": await read("apps/extension/sidepanel.css"),
     "mcp-panel.css": await read("apps/extension/mcp-panel.css"),
   };
-  const base = (await read("apps/extension/sidepanel.html"))
-    .replace(/<link rel="stylesheet" href="([^"]+)">/g, (_match, href: string) => {
+  // Each substitution must still match the side panel markup, so drift fails the build.
+  const swap = (html: string, from: string, to: string) => {
+    if (!html.includes(from)) throw new Error(`Preview cannot find ${from} in sidepanel.html`);
+    return html.replace(from, () => to);
+  };
+  // sidepanel.ts fills these at runtime; the static preview shows synthetic values.
+  const syntheticId = "abcdefghijklmnopabcdefghijklmnop";
+  const commands = setupCommands(syntheticId);
+  // The same argument spans sidepanel.ts builds (the synthetic values need no escaping).
+  const tokens = (command: string) =>
+    commandTokens(command)
+      .map((token) => `<span class="sp-copy__token">${token}</span>`)
+      .join(" ");
+  const runtimeText: Record<string, string> = {
+    "extension-id": syntheticId,
+    "start-command": tokens(commands.start),
+    "tunnel-command": tokens(commands.tunnel),
+    "pair-command": tokens(commands.pair),
+    "tunnel-command-settings": tokens(commands.tunnel),
+  };
+  let sidepanelHtml = swap(
+    inlineIconSprite(await read("apps/extension/sidepanel.html"), await renderIconSprite()),
+    '<script type="module" src="sidepanel.js"></script>',
+    "",
+  );
+  for (const [id, text] of Object.entries(runtimeText))
+    sidepanelHtml = swap(
+      sidepanelHtml,
+      `<code id="${id}" class="k-codebox sp-copy__value"></code>`,
+      `<code id="${id}" class="k-codebox sp-copy__value">${text}</code>`,
+    );
+  sidepanelHtml = swap(
+    sidepanelHtml,
+    '<span id="extension-version"></span>',
+    '<span id="extension-version">0.2.0</span>',
+  );
+  const base = sidepanelHtml.replace(
+    /<link rel="stylesheet" href="([^"]+)">/g,
+    (_match, href: string) => {
       const style = extensionStyles[href];
       if (style === undefined)
         throw new Error(`Preview does not inline the side panel stylesheet ${href}`);
       return `<style>${style}</style>`;
-    })
-    .replaceAll("assets/kairomes-k-128.png", `data:image/png;base64,${logo}`)
-    .replace('<script type="module" src="sidepanel.js"></script>', "")
-    .replace(
-      '<code id="extension-id" class="extension-id"></code>',
-      '<code id="extension-id" class="extension-id">abcdefghijklmnopabcdefghijklmnop</code>',
-    );
+    },
+  );
   const panelHttpFixture = createPanelHttpFixture();
   const studyHttpFixture = createStudyHttpFixture();
   // Desktop pages mirror index.html's <html> attributes (including any theme pin) and
@@ -254,22 +288,16 @@ export async function createPreviewPages(bundles: PreviewBundles) {
   // Synthetic MessageEvents exercise the actual receiver's source/origin gates.
   // This is deliberately not a real Extension-origin end-to-end test.
   const embedded = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>合成導覽來源驗證</title><body style="margin:0"><div id="fixture-navigation"><button data-case="origin">錯誤來源</button><button data-case="window">錯誤視窗</button><button data-case="version">錯誤版本</button><button data-case="valid">有效來源</button></div><iframe id="fixture-frame" src="/embedded-widget" title="合成嵌入工作台" style="width:100%;height:calc(100vh - 40px);border:0"></iframe><script>for (const button of document.querySelectorAll('[data-case]')) button.onclick=()=>{const target=document.querySelector('iframe').contentWindow;const kind=button.dataset.case;target.dispatchEvent(new target.MessageEvent('message',{source:kind==='window'?target:window,origin:kind==='origin'?'https://invalid.example':'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',data:{type:'kairomes:workspace-filter',version:kind==='version'?2:1,workspaceId:'00000000-0000-4000-8000-000000000020'}}));};</script></body></html>`;
+  // Toolbar state (connection dot, switcher, access chip) is set by the fixture scripts.
   const paired = () =>
-    base
-      .replace('<main id="setup">', '<main id="setup" hidden>')
-      .replace(
-        '<span id="connection-status" role="img" aria-label="未配對" title="未配對"><i></i></span>',
-        '<span id="connection-status" role="img" aria-label="合成測試" title="合成測試" class="connected"><i></i></span>',
-      );
-  const approvalPage = `${paired().replace(
-    '<section id="access" aria-label="操作權限設定" hidden>',
-    '<section id="access" aria-label="操作權限設定">',
-  )}<script type="module">${bundles.approval}</script>`;
-  const settingsPage =
-    paired()
-      .replace('aria-label="Kairomes 設定" hidden', 'aria-label="Kairomes 設定"')
-      .replace('aria-label="MCP 工具整合" hidden', 'aria-label="MCP 工具整合"') +
-    `<script type="module">${bundles.settings}</script>`;
+    swap(base, '<main id="setup" class="sp-page', '<main hidden id="setup" class="sp-page');
+  const approvalPage = `${paired()}<script type="module">${bundles.approval}</script>`;
+  const settingsShell = swap(
+    swap(paired(), 'aria-label="Kairomes 設定" hidden', 'aria-label="Kairomes 設定"'),
+    'aria-label="MCP 工具整合" hidden',
+    'aria-label="MCP 工具整合"',
+  );
+  const settingsPage = `${settingsShell}<script type="module">${bundles.settings}</script>`;
   const panelFlowPage = `${base}<aside id="synthetic-panel-controls" style="position:fixed;bottom:0;right:0;z-index:500;background:white;border:1px solid #ccc;padding:4px" aria-label="合成測試控制"><details><summary>測試控制</summary><button data-fixture-action="pending">新增核准</button><button data-fixture-action="offline">離線</button><button data-fixture-action="online">恢復連線</button><button data-fixture-action="invalid">配對失效</button><button data-fixture-action="lost">下一次回應遺失</button><button data-fixture-action="finish">完成延遲變更</button><output id="fixture-probe"></output></details></aside><script type="module">${bundles.panelFlow}</script>`;
   const panelHttpPage = panelFlowPage
     .replace(
@@ -330,7 +358,8 @@ export async function createPreviewPages(bundles: PreviewBundles) {
   const hostViewerPage = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kairomes 宿主順序合成檢查</title><style>${widgetCss}</style><body><aside aria-label="內部合成控制"><button id="host-viewer-file">送入宿主檔案 B</button><button id="host-viewer-catalog">更新工具清單</button><button id="host-viewer-release">完成舊讀取</button><output id="host-viewer-probe"></output></aside><div id="root"></div><script type="module">${bundles.hostViewer}</script></body></html>`;
   const pages: Record<string, string> = {
     "/host-viewer": hostViewerPage,
-    "/": '<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>合成工作台</title><body><p>合成工作台</p></body></html>',
+    // Stand-in workbench for the coordinator fixtures; it follows the parent's preview theme.
+    "/": `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>合成工作台</title><style>${tokensCss} body{margin:0;padding:12px;background:var(--k-bg);color:var(--k-ink-2);font:14px/1.5 var(--k-font-sans)}</style><script>try{const theme=parent.document.documentElement.dataset.theme;if(theme)document.documentElement.dataset.theme=theme}catch{}</script><body><p>合成工作台</p></body></html>`,
     "/setup": base,
     "/approvals": approvalPage,
     "/settings": settingsPage,
@@ -409,8 +438,24 @@ export async function startPreviewServer(
           : "approvals";
         const width = Number(url.searchParams.get("width") ?? 400);
         const screen = [360, 400, 480].includes(width) ? width : 400;
+        // The approval fixture can open a queue tab or a detail (navigation only).
+        const opened = url.searchParams.get("open") ?? "";
+        const query =
+          view === "approvals" &&
+          [
+            "queue",
+            "running",
+            "recent",
+            "command",
+            "terminal",
+            "files",
+            "reason",
+            "truncated",
+          ].includes(opened)
+            ? `?open=${opened}`
+            : "";
         // Effective CSS viewport and physical scaling, not real browser zoom.
-        const zoomPage = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>200% 等效縮放 fixture</title><body style="margin:0;overflow:hidden"><iframe id="fixture-zoom" title="200% 等效閱讀區" src="/${view}" style="width:${screen / 2}px;height:450px;border:0;transform:scale(2);transform-origin:top left"></iframe></body></html>`;
+        const zoomPage = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>200% 等效縮放 fixture</title><body style="margin:0;overflow:hidden"><iframe id="fixture-zoom" title="200% 等效閱讀區" src="/${view}${query}" style="width:${screen / 2}px;height:450px;border:0;transform:scale(2);transform-origin:top left"></iframe></body></html>`;
         return new Response(render(zoomPage), {
           headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
         });

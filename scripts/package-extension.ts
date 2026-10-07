@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ICON_SPRITE_PLACEHOLDER, missingSpriteIcons } from "./extension-icons.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const extension = path.join(root, "apps", "extension");
@@ -23,6 +24,9 @@ type VersionedManifest = { version?: unknown };
 type BrowserManifest = VersionedManifest & {
   background?: { service_worker?: unknown };
   side_panel?: { default_path?: unknown };
+  icons?: Record<string, unknown>;
+  action?: { default_icon?: unknown };
+  permissions?: unknown;
 };
 
 async function readJson<T>(filename: string): Promise<T> {
@@ -126,10 +130,16 @@ if (
 }
 if (
   sourceManifest.background?.service_worker !== "background.js" ||
-  sourceManifest.side_panel?.default_path !== "sidepanel.html"
+  sourceManifest.side_panel?.default_path !== "sidepanel.html" ||
+  [...Object.values(sourceManifest.icons ?? {}), sourceManifest.action?.default_icon].some(
+    (icon) => icon !== undefined && icon !== "assets/kairomes-k-128.png",
+  )
 ) {
   throw new Error("Extension manifest references an unexpected build file");
 }
+// A new permission needs a SECURITY.md review; the toolbar badge and shortcut need none.
+if (JSON.stringify(sourceManifest.permissions) !== JSON.stringify(["sidePanel", "storage"]))
+  throw new Error("Extension permissions changed; review SECURITY.md before packaging");
 
 // The build clears dist first. Only the reviewed output files may enter the release archive.
 await import("./build-extension.ts");
@@ -151,10 +161,18 @@ for (const reference of [
   'href="sidepanel.css"',
   'href="mcp-panel.css"',
   'src="sidepanel.js"',
-  'src="assets/kairomes-k-128.png"',
+  '<symbol id="ph-',
 ]) {
   if (!html.includes(reference)) throw new Error(`Side panel is missing ${reference}`);
 }
+// The sprite is inlined at build time; every referenced icon must be defined in it.
+if (html.includes(ICON_SPRITE_PLACEHOLDER))
+  throw new Error("Side panel icon sprite was not inlined");
+const missingIcons = missingSpriteIcons(html);
+if (missingIcons.length) throw new Error(`Side panel sprite lacks ${missingIcons.join(", ")}`);
+// CSP style-src 'self' and script-src 'self': no inline styles, handlers or scripts.
+if (/\sstyle=|\son[a-z]+=|<script(?![^>]*\ssrc="sidepanel\.js")/i.test(html))
+  throw new Error("Side panel contains inline style, script or event handler markup");
 // The shared layers must load before the panel stylesheet so its rules can build on them.
 const stylesheetOrder = ["tokens.css", "components.css", "sidepanel.css"].map((file) =>
   html.indexOf(`href="${file}"`),

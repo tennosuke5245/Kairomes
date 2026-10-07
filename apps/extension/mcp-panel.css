@@ -1,199 +1,331 @@
-/* One settings scroll surface; tool rows disclose descriptions when requested. */
-.mcp-filters {
+/*
+ * MCP 整合 settings tab (mcp-*). Loads after sidepanel.css and only lays out .k-* components;
+ * colour comes from --k-* tokens, so the tab follows the panel's light or dark theme.
+ */
+#integrations {
+  min-width: 0;
+}
+.mcp {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 8px;
-  margin-bottom: 16px;
-}
-.mcp-filters input,
-.mcp-filters select {
-  width: 100%;
+  gap: 12px;
   min-width: 0;
-  min-height: 36px;
-  padding: 7px 9px;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--paper);
-  font: inherit;
-  font-size: 14px;
-}
-.mcp-filters input {
-  grid-column: 1 / -1;
-}
-.mcp-filter-result {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 14px;
-}
-.mcp-filter-result button {
-  min-height: 32px;
-  font-size: 14px;
-}
-.mcp-filter-help,
-.mcp-diagnostic {
-  margin: 12px 0;
-  font-size: 14px;
-}
-.mcp-filter-help summary,
-.mcp-diagnostic summary {
-  min-height: 32px;
-  cursor: pointer;
-}
-.mcp-filter-help p {
-  color: var(--muted);
-  line-height: 1.6;
-}
-.mcp-dialog-result {
-  margin: 0;
-  color: var(--red-dark);
-  font-size: 14px;
-  line-height: 1.6;
-}
-.mcp-diagnostic {
-  margin: 0 16px;
-}
-.mcp-auth-diagnostic .mcp-server-message {
-  margin: 0 0 12px;
-  padding: 0;
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  background: transparent;
-}
-.mcp-auth-diagnostic .mcp-server-message p {
-  margin: 0;
-}
-.mcp-auth-diagnostic .mcp-server-message p + p {
-  margin-top: 4px;
-}
-.mcp-tools {
-  max-height: none;
-  overflow: visible;
-}
-.mcp-tool {
-  gap: 10px;
-  min-height: 48px;
-  padding: 8px 12px;
-}
-.mcp-tool-info {
-  min-width: 0;
-}
-.mcp-tool-info > summary {
-  min-height: 32px;
-  overflow-wrap: anywhere;
-  font-size: 14px;
-  line-height: 1.6;
-  cursor: pointer;
-}
-.mcp-tool-info p {
-  margin: 8px 0;
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.6;
-}
-.mcp-tool-availability {
-  display: block;
-  margin-top: 5px;
-  color: var(--red);
-  font-size: 14px;
-}
-.mcp-server-identity strong,
-.mcp-server-identity span,
-.mcp-tool-details > summary,
-.mcp-risk-labels small,
-.mcp-server-message,
-.mcp-tools-empty,
-.mcp-empty p,
-.mcp-form-intro p,
-.mcp-add-form label > span,
-.mcp-server > footer button,
-.mcp-switch,
-.mcp-server .mcp-switch,
-.mcp-tool .mcp-switch {
-  font-size: 14px;
-}
-.mcp-server-identity span {
-  line-height: 1.5;
-}
-.mcp-server-identity strong {
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-.mcp-server > header {
-  gap: 10px;
-  padding: 12px;
-}
-.mcp-tool .mcp-switch {
-  align-self: start;
-}
-.mcp-tool-info > summary:focus-visible,
-.mcp-filters :focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 2px;
+  container-type: inline-size;
 }
 
-.mcp-server > footer {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-}
-.mcp-server > footer button {
-  height: 36px;
-  min-height: 36px;
-  align-self: start;
-  line-height: 20px;
-  white-space: nowrap;
-}
-.mcp-server > footer > button {
-  justify-self: start;
-}
-.mcp-server > footer > button.danger {
-  justify-self: end;
-}
-.mcp-management {
-  grid-column: 2;
-  min-width: 0;
-}
-.mcp-management > summary {
-  width: fit-content;
-  min-height: 36px;
-  margin-left: auto;
-  padding: 7px 10px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--paper);
-  font-size: 14px;
-  line-height: 20px;
-  cursor: pointer;
-}
-.mcp-management-actions {
+/* ---------- Summary row, search and chips ---------- */
+.mcp-top {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: var(--k-control);
+}
+.mcp-summary {
+  flex: 1 1 12em;
+  min-width: 0;
+  margin: 0;
+  color: var(--k-ink-2);
+}
+.mcp-top .k-btn {
+  flex: none;
+}
+.mcp-search .k-input {
+  padding-right: 36px;
+}
+.mcp-search .k-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.mcp-filters {
+  margin-top: -4px;
+}
+/* The `/` hint is for reaching the field; it steps aside once the field is in use. */
+.mcp-search .k-input:focus ~ .k-kbd,
+.mcp-search .k-input:not(:placeholder-shown) ~ .k-kbd {
+  display: none;
+}
+
+/* ---------- Server cards ---------- */
+.mcp-list {
+  display: grid;
+  gap: 12px;
+}
+.mcp-card:focus-visible {
+  outline: 2px solid var(--k-focus);
+  outline-offset: 2px;
+}
+.mcp-card__head {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 12px 12px 10px;
+}
+.mcp-card__id {
+  min-width: 0;
+}
+.mcp-card__name {
+  margin: 0;
+  font-size: var(--k-text-md);
+  font-weight: var(--k-weight-strong);
+  line-height: var(--k-leading-tight);
+  overflow-wrap: anywhere;
+}
+.mcp-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 2px 0 0;
+  color: var(--k-ink-3);
+  font-size: var(--k-text-meta);
+}
+.mcp-card__mark {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  color: var(--tone);
+}
+.mcp-card__mark .k-icon {
+  width: 14px;
+  height: 14px;
+}
+.mcp-card__state {
+  color: var(--tone-on);
+  font-weight: var(--k-weight-strong);
+}
+.mcp-card__facts {
+  display: contents;
+}
+.mcp-card[data-mode="off"] .mcp-card__name {
+  color: var(--k-ink-2);
+}
+.mcp-card__notice {
+  margin: 0 12px 12px;
+}
+.mcp-card__notice-text,
+.mcp-card__notice-detail {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.mcp-card__notice-detail {
+  margin-top: 2px;
+  color: var(--k-ink-2);
+  font-size: var(--k-text-meta);
+}
+/* Risk counts: server-provided hints, never guarantees (stated once under the list). */
+.mcp-card__risks {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
+  margin: 0;
+  padding: 0 12px 12px 54px;
+  list-style: none;
 }
-.mcp-management-actions button {
-  flex: 0 0 auto;
+
+/* ---------- Tool rows ---------- */
+.mcp-tools {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--k-line);
+  list-style: none;
 }
-.mcp-management :focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 2px;
+.mcp-tool {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 12px 6px 54px;
+  border-bottom: 1px solid var(--k-line);
 }
-.mcp-server:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 2px;
+.mcp-tool:last-child {
+  border-bottom: 0;
 }
-@media (max-width: 280px) {
-  .mcp-server > footer {
-    grid-template-columns: minmax(0, 1fr);
+.mcp-tool__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.mcp-tool__name {
+  font-family: var(--k-font-mono);
+  font-size: var(--k-text-base);
+  overflow-wrap: anywhere;
+}
+.mcp-tool__risks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+.mcp-tool__risk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--k-ink-3);
+  font-size: var(--k-text-meta);
+  white-space: nowrap;
+}
+.mcp-tool__risk[data-tone="warning"] {
+  color: var(--k-warning-on);
+  font-weight: var(--k-weight-strong);
+}
+.mcp-tool__risk[data-tone="danger"] {
+  color: var(--k-danger-on);
+  font-weight: var(--k-weight-strong);
+}
+
+/* ---------- Card footer: tools disclosure, rediscover, sign-out, remove ---------- */
+.mcp-card__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--k-line);
+}
+.mcp-card__expand .k-icon {
+  transition: transform var(--k-dur-1) var(--k-ease);
+}
+.mcp-card__expand[aria-expanded="true"] .k-icon {
+  transform: rotate(180deg);
+}
+.mcp-card__end {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* ---------- Empty, no match and the hint line ---------- */
+.mcp-empty {
+  border: 1px dashed var(--k-line-control);
+  border-radius: var(--k-radius-md);
+}
+.mcp-empty p {
+  margin: 0;
+}
+.mcp-nomatch {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 20px 12px;
+  color: var(--k-ink-2);
+  text-align: center;
+}
+.mcp-nomatch p,
+.mcp-hint {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Add dialog ---------- */
+.mcp-add__form {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: calc(100vh - 48px);
+  margin: 0;
+}
+.mcp-add__body {
+  gap: 14px;
+  padding-bottom: 8px;
+  overflow-y: auto;
+  color: var(--k-ink-1);
+}
+.mcp-add .k-label {
+  font-size: var(--k-text-base);
+}
+.mcp-add__field {
+  display: grid;
+  min-width: 0;
+}
+.mcp-add__field .k-error {
+  margin: 4px 0 0;
+}
+.mcp-add .k-textarea[aria-invalid="true"] {
+  border-color: var(--k-danger);
+}
+.mcp-add__templates .k-label,
+.mcp-add__preview .k-label {
+  margin: 0 0 6px;
+}
+.mcp-add__seg {
+  display: flex;
+}
+.mcp-add__seg > button {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  font-size: var(--k-text-base);
+}
+.mcp-add .k-chip:disabled,
+.mcp-add__seg > button:disabled {
+  color: var(--k-ink-3);
+  cursor: not-allowed;
+}
+/* Commands and arguments are code; their hint text stays in the reading face. */
+.mcp-add .k-input--mono::placeholder {
+  font-family: var(--k-font-sans);
+}
+.mcp-add .k-textarea {
+  min-height: 0;
+  resize: vertical;
+}
+.mcp-add__preview {
+  display: grid;
+  min-width: 0;
+}
+.mcp-add__risk {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--k-warning);
+  border-radius: var(--k-radius-xs);
+  background: var(--k-warning-soft);
+  color: var(--k-warning-on);
+  font-weight: var(--k-weight-strong);
+}
+.mcp-add__risk .k-icon,
+.mcp-add__consequence .k-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.mcp-add__consequence {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+}
+.mcp-add__result {
+  margin: 0;
+}
+
+@media (max-width: 420px) {
+  .mcp-add .k-dialog__head {
+    padding: 16px 12px 0 16px;
   }
-  .mcp-management {
-    grid-column: 1;
+  .mcp-add .k-dialog__body {
+    padding-inline: 16px;
+  }
+  .mcp-add .k-dialog__actions {
+    padding: 12px 16px 16px;
+  }
+}
+/* Narrow cards (200% zoom): drop the kind tile and indents before anything wraps per glyph. */
+@container (max-width: 300px) {
+  .mcp-card__head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .mcp-card__head > .k-kind {
+    display: none;
+  }
+  .mcp-card__risks,
+  .mcp-tool {
+    padding-left: 12px;
+  }
+  .mcp-search .k-kbd {
+    display: none;
+  }
+  .mcp-search .k-input {
+    padding-right: 10px;
   }
 }
