@@ -410,6 +410,17 @@ export function parseMcpArgs(text: string) {
     .filter(Boolean);
 }
 
+/**
+ * A typed or pasted local path: trimmed, without the one pair of double quotes that Windows
+ * Explorer's 複製為路徑 adds (`"C:\Users\Me\proj"`). No path ever starts and ends with a quote.
+ */
+export function mcpPathInput(text: string) {
+  const value = text.trim();
+  return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+    ? value.slice(1, -1)
+    : value;
+}
+
 /** A template placeholder such as `<url>` that must be replaced before saving. */
 export function mcpArgPlaceholder(args: readonly string[]) {
   return args.find((arg) => /^<[^<>]+>$/.test(arg));

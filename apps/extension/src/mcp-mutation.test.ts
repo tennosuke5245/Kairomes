@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
-import type { McpCatalogTool, McpPanelState } from "@kairomes/protocol";
+import {
+  MCP_COMMAND_RELATIVE_MESSAGE,
+  MCP_CWD_INVALID_MESSAGE,
+  type McpCatalogTool,
+  type McpPanelState,
+} from "@kairomes/protocol";
 import {
   McpMutationTracker,
   mcpAddFingerprint,
-  mcpCwdRejected,
+  mcpCwdRefusal,
   mcpMutationObserved,
   readMcpMutationState,
   settleMcpMutation,
@@ -67,13 +72,25 @@ test("a successful mutation does not perform a second request", async () => {
 
 test("only a recognized refusal skips reconciliation; other failures still read back", async () => {
   const refusal = Object.assign(new Error("請求未被接受。"), { code: "MCP_CWD_INVALID" });
-  expect(mcpCwdRejected(refusal)).toBe(true);
-  for (const other of [new Error("Offline"), { code: "VALIDATION" }, undefined, "MCP_CWD_INVALID"])
-    expect(mcpCwdRejected(other)).toBe(false);
+  const rejected = (error: unknown) => mcpCwdRefusal(error) !== undefined;
+  // The field shows the panel's own sentence for the code, never the response's text.
+  expect(mcpCwdRefusal(refusal)).toBe(MCP_CWD_INVALID_MESSAGE);
+  expect(mcpCwdRefusal({ code: "MCP_COMMAND_RELATIVE", message: "/private/x" })).toBe(
+    MCP_COMMAND_RELATIVE_MESSAGE,
+  );
+  for (const other of [
+    new Error("Offline"),
+    { code: "VALIDATION" },
+    { code: "toString" },
+    { code: "__proto__" },
+    undefined,
+    "MCP_CWD_INVALID",
+  ])
+    expect(mcpCwdRefusal(other)).toBeUndefined();
   const requests: unknown[] = [];
   let paused = false;
   const body = { action: "add_stdio", name: "相對路徑", command: "npx", cwd: "/srv/work" };
-  const rejected = await settleMcpMutation(
+  const refused = await settleMcpMutation(
     async (request) => {
       requests.push(request);
       throw refusal;
@@ -84,9 +101,9 @@ test("only a recognized refusal skips reconciliation; other failures still read 
     },
     () => false,
     () => true,
-    mcpCwdRejected,
+    rejected,
   );
-  expect(rejected).toEqual({ outcome: "rejected", error: refusal });
+  expect(refused).toEqual({ outcome: "rejected", error: refusal });
   expect({ requests, paused }).toEqual({ requests: [body], paused: false });
   const lost = await settleMcpMutation(
     async (request) => {
@@ -99,7 +116,7 @@ test("only a recognized refusal skips reconciliation; other failures still read 
     },
     () => false,
     () => true,
-    mcpCwdRejected,
+    rejected,
   );
   expect(lost).toEqual({ outcome: "unknown" });
   expect(paused).toBe(true);
@@ -112,6 +129,11 @@ test("a relative working directory has no launch identity, so it is never sent",
     expect(await mcpAddFingerprint({ ...stdio, cwd })).toBeUndefined();
   for (const cwd of ["C:\\work", "/srv/work", "\\\\server\\share"])
     expect(await mcpAddFingerprint({ ...stdio, cwd })).toMatch(/^[a-f0-9]{64}$/);
+  // Nor does a relative command path without a working directory.
+  expect(await mcpAddFingerprint({ ...stdio, command: "./start-mcp.sh" })).toBeUndefined();
+  expect(
+    await mcpAddFingerprint({ ...stdio, command: "./start-mcp.sh", cwd: "/srv/work" }),
+  ).toMatch(/^[a-f0-9]{64}$/);
 });
 
 const tool: McpCatalogTool = {

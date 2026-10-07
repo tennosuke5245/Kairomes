@@ -11,7 +11,7 @@ import {
   VERSION,
 } from "@kairomes/protocol";
 import { resolveChecked, WorkspaceRegistry } from "@kairomes/workspace-core";
-import { isAbsoluteLaunchDirectory } from "./mcp-launch.ts";
+import { launchPathProblem } from "./mcp-launch.ts";
 import { readWorkbenchConnection, verifyWorkbenchConnection } from "./workbench-connection.ts";
 
 const MCP_CONFIG_FILE = "mcp-servers.json";
@@ -144,7 +144,7 @@ function tunnelCheck(probe: TunnelProbe | undefined): DiagnosticCheck {
 /**
  * Parses mcp-servers.json the same way McpHostManager does, without connecting to or spawning
  * any server. Reports only counts: servers when valid, schema issues when invalid, and stdio
- * servers whose stored working directory must become absolute.
+ * servers the Host will not start until their working directory or command path is absolute.
  */
 async function mcpConfigCheck(directory: string): Promise<DiagnosticCheck> {
   const file = path.join(directory, MCP_CONFIG_FILE);
@@ -181,18 +181,15 @@ async function mcpConfigCheck(directory: string): Promise<DiagnosticCheck> {
       count: result.error.issues.length,
       fix: "review_mcp_config",
     };
-  // A stored relative working directory is no longer resolved against the Host's; it is not started.
+  // A stored relative path is no longer resolved against the Host's folder; the mount is not started.
   const relative = result.data.servers.filter(
-    ({ transport }) =>
-      transport.kind === "stdio" &&
-      transport.cwd !== undefined &&
-      !isAbsoluteLaunchDirectory(transport.cwd),
+    ({ transport }) => transport.kind === "stdio" && launchPathProblem(transport) !== undefined,
   ).length;
   return relative
     ? {
         id: "mcp_config",
         state: "warn",
-        code: "mcp_config_cwd_relative",
+        code: "mcp_config_path_relative",
         count: relative,
         fix: "review_mcp_config",
       }

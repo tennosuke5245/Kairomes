@@ -135,7 +135,7 @@ let state: McpPanelState = {
           config_fingerprint: "3".repeat(64),
           enabled: true,
           state: "unavailable",
-          message: "找不到啟動程式或工作目錄。",
+          message: "找不到啟動程式。",
           tools: [],
         },
       ],

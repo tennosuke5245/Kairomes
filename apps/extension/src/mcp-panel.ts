@@ -1,10 +1,9 @@
 import {
-  isAbsoluteMcpCwd,
   MCP_AUTH_LIMITS,
-  MCP_CWD_INVALID_MESSAGE,
   type McpAuthInput,
   type McpAuthResult,
   type McpPanelState,
+  mcpStdioCwdProblem,
 } from "@kairomes/protocol";
 import { argvList, el } from "./approval-dom.ts";
 import { icon } from "./icons.ts";
@@ -22,7 +21,7 @@ import {
   type McpMutationScope,
   McpMutationTracker,
   mcpAddFingerprint,
-  mcpCwdRejected,
+  mcpCwdRefusal,
   readMcpMutationState,
   settleMcpMutation,
 } from "./mcp-mutation.ts";
@@ -34,6 +33,7 @@ import {
   type McpTemplate,
   mcpArgPlaceholder,
   mcpChipCounts,
+  mcpPathInput,
   mcpServerView,
   mcpStdioRiskLine,
   mcpSummary,
@@ -388,10 +388,11 @@ export class McpPanel {
     );
     for (const input of [this.target, this.args])
       input.addEventListener("input", this.updatePreview);
-    this.cwd.addEventListener("input", () => {
-      const value = this.cwd.value.trim();
-      if (!value || isAbsoluteMcpCwd(value)) this.showCwdError(false);
-    });
+    // The field's message clears as soon as either the folder or the command no longer needs it.
+    for (const input of [this.cwd, this.target])
+      input.addEventListener("input", () => {
+        if (!this.cwdError.hidden && !this.stdioCwdProblem()) this.showCwdError(undefined);
+      });
 
     const actions = el("div", "k-dialog__actions");
     this.submit.type = "submit";
@@ -447,10 +448,18 @@ export class McpPanel {
     });
   }
 
-  private showCwdError(visible: boolean) {
-    this.cwdError.textContent = visible ? MCP_CWD_INVALID_MESSAGE : "";
-    this.cwdError.hidden = !visible;
-    if (visible) this.cwd.setAttribute("aria-invalid", "true");
+  /** The working-directory field's problem for the stdio values as they will be sent. */
+  private stdioCwdProblem() {
+    return mcpStdioCwdProblem(
+      mcpPathInput(this.target.value),
+      mcpPathInput(this.cwd.value) || undefined,
+    );
+  }
+
+  private showCwdError(message: string | undefined) {
+    this.cwdError.textContent = message ?? "";
+    this.cwdError.hidden = !message;
+    if (message) this.cwd.setAttribute("aria-invalid", "true");
     else this.cwd.removeAttribute("aria-invalid");
   }
 
@@ -497,7 +506,7 @@ export class McpPanel {
   }
 
   private readonly updatePreview = () => {
-    const command = this.target.value.trim();
+    const command = mcpPathInput(this.target.value);
     const args = parseMcpArgs(this.args.value);
     // The textarea grows with its lines so a template's argv is visible without scrolling.
     this.args.rows = Math.min(8, Math.max(3, this.args.value.split("\n").length));
@@ -756,8 +765,8 @@ export class McpPanel {
     return this.uncertain;
   }
 
-  /** "applied", "cwd" when the Host refused the working directory before saving, else undefined. */
-  private async act(body: McpMutationBody): Promise<"applied" | "cwd" | undefined> {
+  /** "applied", or the field's message when the Host refused the working directory unsaved. */
+  private async act(body: McpMutationBody): Promise<"applied" | { cwd: string } | undefined> {
     this.syncMutation();
     if (this.busy || !this.available || this.uncertain || this.reviewRequired) return;
     if (!this.state) return;
@@ -808,15 +817,16 @@ export class McpPanel {
         },
         (state) => this.mutation.observe(state, source),
         current,
-        (error) => body.action === "add_stdio" && mcpCwdRejected(error),
+        (error) => body.action === "add_stdio" && mcpCwdRefusal(error) !== undefined,
       );
       if (!current()) return;
       if (result.outcome === "rejected") {
         // Refused before saving: nothing to reconcile, and the form marks the field.
+        const message = mcpCwdRefusal(result.error) ?? "";
         this.mutation.acknowledge(source);
         if (this.addDialog.open) this.showResult("");
-        else this.report(MCP_CWD_INVALID_MESSAGE);
-        return "cwd";
+        else this.report(message);
+        return { cwd: message };
       }
       if (result.state) this.state = result.state;
       if (result.outcome === "unknown") {
@@ -882,9 +892,9 @@ export class McpPanel {
     this.syncMutation();
     const scope = this.mutation.capture();
     const name = this.name.value.trim();
-    const target = this.target.value.trim();
-    if (!name || !target) return;
     const stdio = this.transport === "stdio";
+    const target = stdio ? mcpPathInput(this.target.value) : this.target.value.trim();
+    if (!name || !target) return;
     const args = parseMcpArgs(this.args.value);
     const placeholder = stdio ? mcpArgPlaceholder(args) : undefined;
     if (placeholder) {
@@ -895,9 +905,10 @@ export class McpPanel {
       this.args.focus();
       return;
     }
-    const cwd = stdio ? this.cwd.value.trim() : "";
-    if (cwd && !isAbsoluteMcpCwd(cwd)) {
-      this.showCwdError(true);
+    const cwd = stdio ? mcpPathInput(this.cwd.value) : "";
+    const cwdProblem = stdio ? mcpStdioCwdProblem(target, cwd || undefined) : undefined;
+    if (cwdProblem) {
+      this.showCwdError(cwdProblem);
       this.cwd.focus();
       return;
     }
@@ -907,8 +918,8 @@ export class McpPanel {
         ? { action: "add_stdio", name, command: target, args, ...(cwd ? { cwd } : {}) }
         : { action: "add_http", name, url: target, header_env: {} },
     );
-    if (outcome === "cwd" && this.isMutationCurrent(scope) && this.addDialog.open) {
-      this.showCwdError(true);
+    if (typeof outcome === "object" && this.isMutationCurrent(scope) && this.addDialog.open) {
+      this.showCwdError(outcome.cwd);
       this.cwd.focus();
       return;
     }
@@ -921,7 +932,7 @@ export class McpPanel {
       this.target.value = "";
       this.args.value = "";
       this.cwd.value = "";
-      this.showCwdError(false);
+      this.showCwdError(undefined);
       this.updatePreview();
       this.addDialog.close();
     }

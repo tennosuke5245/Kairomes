@@ -208,7 +208,7 @@ test("environment checks map each code to one fact and an unknown stays unknown"
       {
         id: "mcp_config",
         state: "warn",
-        code: "mcp_config_cwd_relative",
+        code: "mcp_config_path_relative",
         count: 2,
         fix: "review_mcp_config",
       },
@@ -217,7 +217,7 @@ test("environment checks map each code to one fact and an unknown stays unknown"
   expect(byId(relative, "mcp_config")).toMatchObject({
     tone: "warning",
     pill: "需要更新",
-    detail: "2 個本機 MCP 的工作目錄需改為絕對路徑；請到側欄移除後重新加入",
+    detail: "2 個本機 MCP 的工作目錄或啟動程式需改為絕對路徑；請到側欄移除後重新加入",
   });
 });
 

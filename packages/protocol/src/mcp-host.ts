@@ -129,6 +129,21 @@ export function isAbsoluteMcpCwd(value: string) {
 }
 
 export const MCP_CWD_INVALID_MESSAGE = "工作目錄須為絕對路徑。";
+export const MCP_COMMAND_RELATIVE_MESSAGE = "啟動程式為相對路徑時，須填寫絕對路徑的工作目錄。";
+
+/**
+ * A stdio command with a folder part but no absolute root (`./start.sh`, `bin\server.exe`). It
+ * resolves against the folder the program starts in, so it needs an absolute working directory.
+ */
+export function isRelativeMcpCommand(command: string) {
+  return /[\\/]/.test(command) && !isAbsoluteMcpCwd(command);
+}
+
+/** The message for a new stdio mount whose launch would depend on an unknown folder, if any. */
+export function mcpStdioCwdProblem(command: string, cwd: string | undefined) {
+  if (cwd) return isAbsoluteMcpCwd(cwd) ? undefined : MCP_CWD_INVALID_MESSAGE;
+  return isRelativeMcpCommand(command) ? MCP_COMMAND_RELATIVE_MESSAGE : undefined;
+}
 
 const McpStdioTransportConfigSchema = z
   .object({
@@ -244,7 +259,12 @@ export const McpPanelInputSchema = z.discriminatedUnion("action", [
         .max(32)
         .default([]),
     })
-    .strict(),
+    .strict()
+    .superRefine((input, context) => {
+      // Reported on cwd: filling in an absolute working directory is the fix the panel offers.
+      if (input.cwd === undefined && isRelativeMcpCommand(input.command))
+        context.addIssue({ code: "custom", path: ["cwd"], message: MCP_COMMAND_RELATIVE_MESSAGE });
+    }),
   z
     .object({
       action: z.literal("add_http"),

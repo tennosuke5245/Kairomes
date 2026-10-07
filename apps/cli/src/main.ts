@@ -32,7 +32,7 @@ const help = `Kairomes ${VERSION} — ChatGPT 本機工作台
   bun run kairomes workspace list
   bun run kairomes workspace remove <id>
   bun run kairomes mcp list [--refresh]
-  bun run kairomes mcp add-stdio <名稱> --command <程式> [--arg <參數>] [--cwd <資料夾>] [--env <環境變數>]
+  bun run kairomes mcp add-stdio <名稱> --command <程式> [--arg <參數>] [--cwd <絕對路徑>] [--env <環境變數>]
   bun run kairomes mcp add-http <名稱> --url <HTTPS 或 loopback URL> [--header-env <Header=環境變數>]
   bun run kairomes mcp enable-server <server-id>
   bun run kairomes mcp disable-server <server-id>
@@ -113,8 +113,9 @@ async function main() {
           name: positionals[2],
           command: values.command,
           args: values.arg,
-          // A relative --cwd means the shell's folder; the Host never resolves it later.
-          ...(values.cwd ? { cwd: path.resolve(values.cwd) } : {}),
+          // Saved as given and refused unless absolute: under `bun run` this process runs in the
+          // Kairomes folder, not the shell's, so a relative value has no reliable meaning here.
+          ...(values.cwd ? { cwd: values.cwd } : {}),
           env: values.env,
         });
         await manager.refresh(config.id);

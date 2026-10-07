@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   KairomesError,
   LIMITS,
+  MCP_COMMAND_RELATIVE_MESSAGE,
   MCP_CWD_INVALID_MESSAGE,
   type McpAuthInput,
   type McpAuthResult,
@@ -40,7 +41,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import { isAbsoluteLaunchDirectory, launchDirectory, sanitizeLaunchPath } from "./mcp-launch.ts";
+import { launchDirectory, launchPathProblem, sanitizeLaunchPath } from "./mcp-launch.ts";
 import { type McpOAuthDependencies, McpOAuthManager, type McpOAuthTarget } from "./mcp-oauth.ts";
 
 const CONFIG_FILE = "mcp-servers.json";
@@ -191,6 +192,7 @@ function safeMessage(error?: unknown, transport?: McpMountConfig["transport"]["k
     // Fixed text only: servers[].message reaches the model, so no path or variable is echoed.
     if (error.code === "MCP_CWD_INVALID") return "工作目錄設定需改為絕對路徑。";
     if (error.code === "MCP_CWD_MISSING") return "工作目錄不存在或不是資料夾。";
+    if (error.code === "MCP_COMMAND_RELATIVE") return MCP_COMMAND_RELATIVE_MESSAGE;
     if (error.code === "MCP_RUNTIME_UNAVAILABLE") return "無法準備 MCP 工作目錄。";
   }
   if (error instanceof McpError && error.code === ErrorCode.RequestTimeout)
@@ -263,9 +265,9 @@ function environment(names: string[]): Record<string, string> {
   try {
     cwd = process.cwd();
   } catch {
-    // The Host's folder was removed; the child no longer depends on it, so only its PATH chain is unknown.
+    // The Host's folder was removed; a package runner's own folders still identify its PATH entries.
   }
-  const context = { cwd, tmpdir: tmpdir(), platform: process.platform };
+  const context = { cwd, env: process.env, tmpdir: tmpdir(), platform: process.platform };
   // Windows names it Path; the SDK copies it as PATH, and this value replaces that copy.
   for (const key of Object.keys(result)) {
     const value = result[key];
@@ -641,7 +643,7 @@ export class McpHostManager {
   ): Promise<Transport> {
     if (config.transport.kind === "stdio") {
       // Never the Host's own working directory: it depends on how the Host was started.
-      const cwd = await launchDirectory(config.transport.cwd, this.dataDirectory);
+      const cwd = await launchDirectory(config.transport, this.dataDirectory);
       const transport = new StdioClientTransport({
         command: config.transport.command,
         args: config.transport.args,
@@ -1333,9 +1335,13 @@ export class McpHostManager {
   }
 
   async addStdio(input: AddStdioMount): Promise<McpMountConfig> {
-    // Saved as given (the panel fingerprints this exact value); only an absolute path is accepted.
-    if (input.cwd && !isAbsoluteLaunchDirectory(input.cwd))
+    // Saved as given (the panel fingerprints this exact value): the working directory must be
+    // absolute, and a relative command path needs one, or the launch would depend on the Host.
+    const problem = launchPathProblem(input);
+    if (problem === "MCP_CWD_INVALID")
       throw new KairomesError("MCP_CWD_INVALID", MCP_CWD_INVALID_MESSAGE);
+    if (problem === "MCP_COMMAND_RELATIVE")
+      throw new KairomesError("MCP_COMMAND_RELATIVE", MCP_COMMAND_RELATIVE_MESSAGE);
     await this.load();
     await this.reloadIfChanged();
     const config = McpMountConfigSchema.parse({

@@ -319,12 +319,12 @@ function environmentRow(id: EnvironmentId, check: DiagnosticCheck | undefined): 
         "設定有誤",
         `${count === null ? "設定" : `${count} 個地方`}需要修正；請到側欄的 MCP 設定`,
       );
-    case "mcp_config_cwd_relative":
+    case "mcp_config_path_relative":
       return row(
         id,
         "warning",
         "需要更新",
-        `${count === null ? "有" : `${count} 個`}本機 MCP 的工作目錄需改為絕對路徑；請到側欄移除後重新加入`,
+        `${count === null ? "有" : `${count} 個`}本機 MCP 的工作目錄或啟動程式需改為絕對路徑；請到側欄移除後重新加入`,
       );
     case "mcp_config_unreadable":
       return row(id, "warning", "無法讀取", "請到側欄的 MCP 設定檢查");

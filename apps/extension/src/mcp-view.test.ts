@@ -9,6 +9,7 @@ import {
   mcpChipCounts,
   mcpFailureReason,
   mcpLoginConsequence,
+  mcpPathInput,
   mcpRemoteRunner,
   mcpRiskCounts,
   mcpServerView,
@@ -285,6 +286,18 @@ test("templates only prefill; placeholders must be replaced before saving", () =
   expect(mcpArgPlaceholder(bridge?.args ?? [])).toBe("<url>");
   expect(mcpArgPlaceholder(["-y", "pkg", "a<b>"])).toBeUndefined();
   expect(parseMcpArgs(" -y \r\n\n mcp-remote@latest \n")).toEqual(["-y", "mcp-remote@latest"]);
+});
+
+test("a pasted path loses Windows Explorer's enclosing quotes and nothing else", () => {
+  // 複製為路徑 (Ctrl+Shift+C) wraps the path in one pair of double quotes.
+  expect(mcpPathInput(' "C:\\Users\\Me\\proj" ')).toBe("C:\\Users\\Me\\proj");
+  expect(mcpPathInput('"C:\\Program Files\\nodejs\\node.exe"')).toBe(
+    "C:\\Program Files\\nodejs\\node.exe",
+  );
+  expect(mcpPathInput("  /srv/work  ")).toBe("/srv/work");
+  for (const kept of ['"', '"C:\\proj', 'C:\\proj"', "'/srv/work'", 'C:\\"a"'])
+    expect(mcpPathInput(kept)).toBe(kept);
+  expect(mcpPathInput('""')).toBe("");
 });
 
 test("the argv risk line names remote package runners and never claims isolation", () => {

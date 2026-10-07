@@ -1,23 +1,25 @@
 import { chmod, lstat, mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isAbsoluteMcpCwd, KairomesError } from "@kairomes/protocol";
+import { isAbsoluteMcpCwd, KairomesError, MCP_COMMAND_RELATIVE_MESSAGE } from "@kairomes/protocol";
 
 /** Folder in the data directory where a stdio MCP without its own working directory starts. */
 export const MCP_RUNTIME_DIRECTORY = "mcp-runtime";
 const RUNTIME_MARKER = `${JSON.stringify({ name: "kairomes-mcp-runtime", private: true }, null, 2)}\n`;
 
 export type LaunchContext = {
-  /** The Host's own working directory, whose launch-time PATH additions are removed; undefined if it no longer exists. */
+  /** The Host's own working directory; undefined if it no longer exists. */
   cwd: string | undefined;
+  /** The Host's environment, where `bun run` and npm scripts leave their markers and folders. */
+  env: Readonly<Record<string, string | undefined>>;
   tmpdir: string;
   platform: NodeJS.Platform;
 };
 
 /**
- * Host-side absolute check for a stdio working directory. On Windows only a drive (`C:\`) or UNC
- * (`\\server\share`) path qualifies; `\dir` would still depend on the Host's current drive.
+ * Host-side absolute check for a stdio working directory or command. On Windows only a drive
+ * (`C:\`) or UNC (`\\server\share`) path qualifies; `\dir` would still depend on the Host's current drive.
  */
-export function isAbsoluteLaunchDirectory(value: string, platform = process.platform) {
+export function isAbsoluteLaunchPath(value: string, platform = process.platform) {
   if (!isAbsoluteMcpCwd(value)) return false;
   return platform === "win32"
     ? path.win32.isAbsolute(value) && /^(?:[A-Za-z]:|[\\/]{2})/.test(value)
@@ -25,10 +27,37 @@ export function isAbsoluteLaunchDirectory(value: string, platform = process.plat
 }
 
 /**
- * Removes the PATH entries that exist only because of how the Host was started: the
- * `node_modules/.bin` folders that `bun run` and npm scripts add for the launch directory and
- * each of its ancestors, and Bun's temporary `bun-node-*` shim in the temp directory. Every other
- * entry keeps its exact text and order, including relative and empty ones.
+ * Why a stdio launch would depend on the folder it happens to start in, if it would: a relative
+ * working directory, or a relative command path (`./start.sh`) without a working directory. Such a
+ * mount is neither saved nor started; a bare program name is still looked up on PATH.
+ */
+export function launchPathProblem(
+  transport: { command: string; cwd?: string | undefined },
+  platform = process.platform,
+): "MCP_CWD_INVALID" | "MCP_COMMAND_RELATIVE" | undefined {
+  if (transport.cwd !== undefined)
+    return isAbsoluteLaunchPath(transport.cwd, platform) ? undefined : "MCP_CWD_INVALID";
+  const separator = platform === "win32" ? /[\\/]/ : /\//;
+  return separator.test(transport.command) && !isAbsoluteLaunchPath(transport.command, platform)
+    ? "MCP_COMMAND_RELATIVE"
+    : undefined;
+}
+
+/** Where Bun writes its `bun-node-*` shim: a fixed /tmp (/private/tmp on macOS) that ignores TMPDIR. */
+function shimParents(context: LaunchContext, key: (input: string) => string) {
+  const parents = [key(context.tmpdir)];
+  if (context.platform !== "win32") parents.push("/tmp");
+  if (context.platform === "darwin") parents.push("/private/tmp");
+  return parents;
+}
+
+/**
+ * Removes the PATH entries that exist only because of how the Host was started. When `bun run`
+ * or an npm script started it (`npm_lifecycle_event` is set), that runner added `node_modules/.bin`
+ * for its folders (the shell's folder, the package root and the Host's folder) and each of their
+ * ancestors, and Bun also adds the package root itself when run from a subfolder. Bun's
+ * `bun-node-*` shim is always removed. Without a runner a `node_modules/.bin` the user put on PATH
+ * stays. Every other entry keeps its exact text and order, including relative and empty ones.
  */
 export function sanitizeLaunchPath(value: string, context: LaunchContext): string {
   const windows = context.platform === "win32";
@@ -41,11 +70,20 @@ export function sanitizeLaunchPath(value: string, context: LaunchContext): strin
       normalized = normalized.slice(0, -1);
     return windows ? normalized.toLowerCase() : normalized;
   };
+  const absolute = (input: string | undefined): input is string =>
+    Boolean(input && paths.isAbsolute(input));
   const within = (parent: string, child: string) =>
     child === parent ||
     child.startsWith(parent.endsWith(paths.sep) ? parent : `${parent}${paths.sep}`);
-  const cwd = context.cwd === undefined ? undefined : key(context.cwd);
-  const temporary = key(context.tmpdir);
+  const { env } = context;
+  const runner = Boolean(env.npm_lifecycle_event);
+  const packageRoot =
+    runner && absolute(env.npm_package_json) ? key(paths.dirname(env.npm_package_json)) : undefined;
+  const folders = runner
+    ? [context.cwd, env.INIT_CWD, env.npm_config_local_prefix].filter(absolute).map(key)
+    : [];
+  if (packageRoot) folders.push(packageRoot);
+  const temporary = shimParents(context, key);
   return value
     .split(separator)
     .filter((entry) => {
@@ -55,8 +93,9 @@ export function sanitizeLaunchPath(value: string, context: LaunchContext): strin
       const parent = paths.dirname(normalized);
       const name = paths.basename(normalized);
       if (name === ".bin" && paths.basename(parent) === "node_modules")
-        return cwd === undefined || !within(paths.dirname(parent), cwd);
-      return !(parent === temporary && /^bun-node(?:-[0-9a-f]+)?$/i.test(name));
+        return !folders.some((folder) => within(paths.dirname(parent), folder));
+      if (normalized === packageRoot) return false;
+      return !(temporary.includes(parent) && /^bun-node(?:-[0-9a-f]+)?$/i.test(name));
     })
     .join(separator);
 }
@@ -91,11 +130,18 @@ export async function prepareRuntimeDirectory(dataDirectory: string): Promise<st
 }
 
 /** The directory a stdio MCP starts in; checked before spawning so a bad folder is not reported as a missing program. */
-export async function launchDirectory(cwd: string | undefined, dataDirectory: string) {
-  if (cwd === undefined) return prepareRuntimeDirectory(dataDirectory);
+export async function launchDirectory(
+  transport: { command: string; cwd?: string | undefined },
+  dataDirectory: string,
+) {
   // A stored relative value used to follow the Host's own working directory; it is never resolved now.
-  if (!isAbsoluteLaunchDirectory(cwd))
+  const problem = launchPathProblem(transport);
+  if (problem === "MCP_CWD_INVALID")
     throw new KairomesError("MCP_CWD_INVALID", "工作目錄設定需改為絕對路徑。");
+  if (problem === "MCP_COMMAND_RELATIVE")
+    throw new KairomesError("MCP_COMMAND_RELATIVE", MCP_COMMAND_RELATIVE_MESSAGE);
+  const { cwd } = transport;
+  if (cwd === undefined) return prepareRuntimeDirectory(dataDirectory);
   const directory = await stat(cwd).then(
     (info) => info.isDirectory(),
     () => false,

@@ -87,15 +87,15 @@ test("MCP config reports only server or issue counts and never connects", async 
   }
 });
 
-test("MCP config counts stored relative working directories without exposing them", async () => {
+test("MCP config counts stored relative working directories and command paths without exposing them", async () => {
   const f = await fixture();
   try {
-    const server = (cwd?: string) => ({
+    const server = (cwd?: string, command = path.join(f.directory, "secret-server")) => ({
       id: crypto.randomUUID(),
       name: "合成服務",
       transport: {
         kind: "stdio",
-        command: "/home/me/secret-server",
+        command,
         ...(cwd === undefined ? {} : { cwd }),
       },
     });
@@ -104,25 +104,33 @@ test("MCP config counts stored relative working directories without exposing the
     const check = async () =>
       byId(await collectDiagnostics({ dataDirectory: f.state, registry: f.registry, which: none }))
         .mcp_config;
-    await write([server(), server(f.root)]);
+    // A bare program name is looked up on PATH; a relative command path with an absolute
+    // working directory resolves there. Neither depends on where the Host started.
+    await write([server(), server(f.root), server(undefined, "npx"), server(f.root, "./start.sh")]);
     expect(await check()).toEqual({
       id: "mcp_config",
       state: "ok",
       code: "mcp_config_ok",
-      count: 2,
+      count: 4,
     });
-    await write([server("secret-project"), server(f.root), server("./secret-other")]);
+    await write([
+      server("secret-project"),
+      server(f.root),
+      server("./secret-other"),
+      server(undefined, "./secret-start.sh"),
+      server(undefined, "secret-bin/server"),
+    ]);
     const relative = await check();
     expect(relative).toEqual({
       id: "mcp_config",
       state: "warn",
-      code: "mcp_config_cwd_relative",
-      count: 2,
+      code: "mcp_config_path_relative",
+      count: 4,
       fix: "review_mcp_config",
     });
     expect(JSON.stringify(relative)).not.toContain("secret");
     expect(diagnosticSummary([relative as DiagnosticCheck], VERSION)).toContain(
-      "mcp_config: warn mcp_config_cwd_relative count=2 fix=review_mcp_config",
+      "mcp_config: warn mcp_config_path_relative count=4 fix=review_mcp_config",
     );
   } finally {
     await f.dispose();
