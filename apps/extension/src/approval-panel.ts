@@ -1047,6 +1047,8 @@ export class ApprovalPanel {
       const running = el("p", "rq-outcome__meta");
       running.dataset.role = "running-meta";
       outcome.append(running);
+      // The record's buttons share one row after the reason line, like other action rows.
+      const actions = el("div", "rq-outcome__actions");
       // A write whose result is unknown: only a read of the authoritative state, never a retry.
       if (
         isImportItem(item) &&
@@ -1054,14 +1056,15 @@ export class ApprovalPanel {
         artifactImportDisplayState(item) === "uncertain" &&
         this.refreshState
       )
-        outcome.append(this.refreshButton());
+        actions.append(this.refreshButton());
       const fileAction = isImportItem(item) && !justApproved ? importFileAction(item) : undefined;
       if (fileAction && this.openFile && isImportItem(item)) {
         const open = this.openFile;
         const button = textButton(fileAction.label, "k-btn k-btn--secondary k-btn--sm", "Eye");
         button.addEventListener("click", () => open(item));
-        outcome.append(button);
+        actions.append(button);
       }
+      if (actions.firstChild) outcome.append(actions);
       this.detail.replaceChildren(
         outcome,
         ...(isImportItem(item)

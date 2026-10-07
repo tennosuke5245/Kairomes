@@ -76,6 +76,10 @@ test("the Tunnel row offers one recovery per failure class", () => {
       pill,
       actions,
     });
+  // Under the 安全通道 title and its 中斷 pill, the line adds the cause and never restates them.
+  const unknown = tunnelRow(withTunnel("ready", { state: "error", reason: "unknown" }), NOW);
+  expect(unknown.meta).toBe("意外停止，原因不明。");
+  expect(unknown.meta).not.toContain("安全通道");
   expect(tunnelRow(withTunnel("ready", { state: "stopped", reason: null }), NOW)).toMatchObject({
     pill: "已暫停",
     pillIcon: "PauseCircle",
@@ -84,7 +88,7 @@ test("the Tunnel row offers one recovery per failure class", () => {
   expect(CONNECTION_ACTION_LABELS.restart_runtime).toBe("重新啟動本機服務…");
   const retry = tunnelRow(snapshotFor("tunnel-retry"), NOW);
   expect(retry).toMatchObject({ tone: "running", actions: [] });
-  expect(retry.meta).toMatch(/^安全通道中斷，將於 \d+ 秒後重試。$/);
+  expect(retry.meta).toMatch(/^連線中斷，將於 \d+ 秒後重試。$/);
 });
 
 test("a rejected key says once that the Tunnel reconnects: on the key row, not the Tunnel row", () => {
@@ -99,10 +103,10 @@ test("a rejected key says once that the Tunnel reconnects: on the key row, not t
     expect(tunnelRow(snapshotFor(mode), NOW).meta).not.toContain("Profile");
 });
 
-test("the side-panel row says 側欄已連線 or 已設定，未連線 and pairs from one button", () => {
+test("the side-panel row says 已連線 or 已設定，未連線 and pairs from one button", () => {
   expect(panelRow(snapshotFor("ready"), IDLE)).toMatchObject({
     tone: "success",
-    pill: "側欄已連線",
+    pill: "已連線",
     meta: PANEL_META,
     actions: ["pair"],
   });

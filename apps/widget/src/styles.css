@@ -286,6 +286,19 @@ body {
   .wb-group .k-row__meta,
   .wb-records .k-row__meta {
     flex-wrap: wrap;
+    column-gap: 0;
+    margin-left: -16px;
+    clip-path: inset(-8px -8px -8px 16px);
+  }
+  :is(.wb-group, .wb-records) .k-row__meta > :first-child {
+    margin-left: 16px;
+  }
+  :is(.wb-group, .wb-records) .k-row__meta > .wb-mi {
+    gap: 0;
+  }
+  :is(.wb-group, .wb-records) .k-row__meta > .wb-mi > .k-sep {
+    width: 16px;
+    text-align: center;
   }
   .wb-group .k-row__meta > .wb-mi--tag,
   .wb-records .k-row__meta > .wb-mi--tag {
@@ -494,6 +507,27 @@ body.resizing-inspector * {
 .wb-mi > .k-sep {
   flex: none;
 }
+/*
+ * Meta lines that wrap (inspector head, file viewer, image caption, narrow rows): every item
+ * after the first carries its own 16px-wide ·. The line is shifted 16px left and that gutter
+ * is clipped, so the · of an item that wraps to the start of a line is never seen either (the
+ * side panel's .sp-meta does the same).
+ */
+:is(.insp-meta, .fv-meta, .artifact-caption) {
+  column-gap: 0;
+  margin-left: -16px;
+  clip-path: inset(-8px -8px -8px 16px);
+}
+:is(.insp-meta, .fv-meta, .artifact-caption) > :first-child {
+  margin-left: 16px;
+}
+:is(.insp-meta, .fv-meta, .artifact-caption) > .wb-mi {
+  gap: 0;
+}
+:is(.insp-meta, .fv-meta, .artifact-caption) > .wb-mi > .k-sep {
+  width: 16px;
+  text-align: center;
+}
 .insp-meta .k-tag {
   min-width: 0;
 }
@@ -522,9 +556,11 @@ body.resizing-inspector * {
   margin: 0;
 }
 /* Facts stay on one row; values wrap inside their cell instead of the strip wrapping. */
+/* Content-sized columns: a short 結束碼 gives its spare width to 輸出, so 最近 77 B · 2 行
+   stays on one line instead of breaking after the dot. */
 .insp-facts {
   grid-template-columns: none;
-  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-columns: auto;
   grid-auto-flow: column;
 }
 .insp-facts > div {

@@ -1424,12 +1424,16 @@
   height: 14px;
 }
 .k-countdown[data-urgency="soon"] {
-  margin: 0 -2px;
   padding: 1px 6px;
   border-radius: var(--k-radius-pill);
   background: var(--k-warning-soft);
   color: var(--k-warning-on);
   box-shadow: inset 0 0 0 1px var(--k-warning-line);
+}
+/* The inline countdown's tint bleeds 2px into the text around it; the pill sets no margin,
+   so a layout's own margin (margin-left: auto in a header) still applies under 1 minute. */
+.k-countdown:not(.k-countdown--pill)[data-urgency="soon"] {
+  margin: 0 -2px;
 }
 .k-countdown[data-urgency="expired"] {
   color: var(--k-neutral-on);
@@ -1448,7 +1452,6 @@
   height: 16px;
 }
 .k-countdown--pill[data-urgency="soon"] {
-  margin: 0;
   padding: 0 10px;
 }
 

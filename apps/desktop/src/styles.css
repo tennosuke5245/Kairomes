@@ -335,7 +335,11 @@ button.desk-chip:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Desktop only: the absolute root is the one value allowed to ellipsize (full path in title). */
+/*
+ * Desktop only: the absolute root is the one value allowed to ellipsize (full path in title).
+ * It is cut at the start, so the folder name that tells projects apart stays visible: the line
+ * runs right to left and the path itself is an isolated left-to-right run (<bdi>).
+ */
 .desk-project__path {
   overflow: hidden;
   color: var(--k-ink-3);
@@ -343,6 +347,8 @@ button.desk-chip:hover {
   font-size: var(--k-text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
+  direction: rtl;
+  text-align: left;
 }
 .desk-project__pills {
   display: flex;
@@ -662,9 +668,11 @@ button.desk-chip:hover {
   gap: var(--k-space-2);
   margin-left: auto;
 }
+/* The pill column has one minimum width (the longest pill, 自動重試中), so every row's detail
+   starts at the same x instead of following its own pill's width. */
 .desk-health {
   display: grid;
-  grid-template-columns: 32px minmax(0, 168px) auto minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 168px) minmax(7.5em, max-content) minmax(0, 1fr) auto;
   column-gap: 14px;
   align-items: center;
   min-height: 52px;
@@ -687,6 +695,9 @@ button.desk-chip:hover {
 }
 .desk-health__name {
   font-weight: var(--k-weight-strong);
+}
+.desk-health > .k-pill {
+  justify-self: start;
 }
 .desk-health__detail {
   min-width: 0;

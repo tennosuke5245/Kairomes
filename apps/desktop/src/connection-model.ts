@@ -123,7 +123,7 @@ export function tunnelRow(snapshot: DesktopSnapshot, now: number): ConnectionRow
       : state("neutral", "已暫停", "設定 Runtime API Key 後才能啟動。", [], "PauseCircle");
   const retryIn = secondsUntil(tunnel.nextRetryAt, now);
   if (retryIn !== null)
-    return state("running", "自動重試中", `安全通道中斷，將於 ${retryIn} 秒後重試。`);
+    return state("running", "自動重試中", `連線中斷，將於 ${retryIn} 秒後重試。`);
   if (tunnel.reason === "auth")
     // The key row names the cause, the fix and that the Tunnel reconnects; this row adds the profile.
     return state("neutral", "等待金鑰", PROFILE_FACT, [], "PauseCircle");
@@ -136,7 +136,8 @@ export function tunnelRow(snapshot: DesktopSnapshot, now: number): ConnectionRow
     );
   // A workbench failure restarts the local service behind its confirmation (tunnelReasonAction).
   const fix = tunnelReasonAction(tunnel.reason);
-  return state("danger", "中斷", TUNNEL_FAILURE[tunnel.reason ?? ""] ?? "安全通道意外停止。", [
+  // The row title names 安全通道 and the pill says 中斷; the line adds only the cause.
+  return state("danger", "中斷", TUNNEL_FAILURE[tunnel.reason ?? ""] ?? "意外停止，原因不明。", [
     fix === "restart_runtime" ? "restart_runtime" : "restart_tunnel",
   ]);
 }
@@ -157,7 +158,8 @@ export function panelRow(snapshot: DesktopSnapshot, pairing: PairingState): Conn
   const actions: ConnectionAction[] =
     configured && !pairing.live ? [pairing.cleared ? "repair" : "pair"] : [];
   const paired = companion.attention.pairedPanels;
-  if (paired !== null && paired > 0) return state("success", "側欄已連線", PANEL_META, actions);
+  // The row title already says 瀏覽器側欄; the pill states only the connection.
+  if (paired !== null && paired > 0) return state("success", "已連線", PANEL_META, actions);
   if (!configured) return state("warning", "尚未配對", PANEL_META);
   // An external workbench may not report pairings; then only the setting is known.
   return paired === null

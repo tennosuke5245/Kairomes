@@ -19,3 +19,17 @@ export function panelView(state: {
 export function settingsBackLabel(hasWorkbench: boolean) {
   return hasWorkbench ? "返回工作台" : "返回配對";
 }
+
+/**
+ * Trusted diagnostic for image imports in 設定 › 一般: how ChatGPT's image_import_request calls
+ * arrived since the workbench started (file attached, no file, or a file reference rejected).
+ * Undefined before the first call or from an older workbench, so nothing is claimed.
+ */
+export function importHydrationText(
+  counts: { hydrated: number; omitted: number; rejected: number } | undefined,
+) {
+  if (!counts) return undefined;
+  const { hydrated, omitted, rejected } = counts;
+  if (hydrated + omitted + rejected === 0) return undefined;
+  return `圖片匯入請求：附圖 ${hydrated} · 未附圖 ${omitted} · 被拒 ${rejected}`;
+}

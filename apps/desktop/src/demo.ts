@@ -193,7 +193,7 @@ function companionStatus(state: DemoState, now: number): CompanionStatus {
       ? {
           state: "external",
           label: "既有程序",
-          message: `既有工作台版本 ${OLDER_VERSION} 與 Kairomes ${VERSION} 不同；停止舊程序後按重新接管。`,
+          message: `既有工作台版本 ${OLDER_VERSION} 與 Kairomes ${VERSION} 不同；停止舊程序後再重試工作台。`,
           meta: "既有工作台保持原本生命週期",
         }
       : {

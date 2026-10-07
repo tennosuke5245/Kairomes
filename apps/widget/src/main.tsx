@@ -1193,6 +1193,9 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     const openFiles = (focusSearch: boolean) => {
       if (!detailOpen) rememberDetailTrigger();
       pauseFollow();
+      // Going to 檔案 or 搜尋 leaves the record opened from 動態, like the other views.
+      setSelectedEntry(undefined);
+      setUnavailableResult(undefined);
       setView("files");
       if (focusSearch) showSearch();
       else showFileList();
@@ -1218,7 +1221,10 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
     };
     // Wide (≥760px, design spec §5.3 e2): the views and search move into the toolbar.
     const wide = containerWidth > 760 && !nativeControls;
-    const currentTab = workbenchTabForView(view);
+    // Wide, the 動態 list stays beside the inspector: a record opened from it stays under 動態,
+    // and only a tab click moves the toolbar to another view (narrow keeps the view's tab).
+    const fromActivity = wide && !!selectedEntry;
+    const currentTab = fromActivity ? "overview" : workbenchTabForView(view);
     const toolbarTabs = workbenchTabs({
       projects: workspaces.length,
       filtered: !!workspaceFilter,
@@ -1249,6 +1255,15 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
             back: returnFromFile,
           }
         : { label: "返回動態", back: selectOverview });
+    // 動態 is already on screen beside a record opened from it, so the way back only closes it.
+    const closesDetail = fromActivity && headingBack.back === selectOverview;
+    // Wide, a view opened from its toolbar tab needs no 返回動態: the 動態 tab is beside it
+    // (design spec §5.3: that back button belongs to the narrow overlay). Esc still goes back.
+    const showBack = !(wide && !fromActivity && headingBack.back === selectOverview);
+    // Wide, the selected toolbar tab already names the view.
+    const showTitle = !(
+      wide && toolbarTabs.find((item) => item.id === currentTab)?.label === inspectorTitle
+    );
     // In 全部專案 the switcher names no project, so 檔案 and 搜尋 say which one they show.
     const browsedProject =
       !workspaceFilter && selectedId
@@ -1404,21 +1419,24 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
               lockReading();
           }}
         >
-          {(view !== "overview" || selectedEntry) && (
+          {(view !== "overview" || selectedEntry) && (showBack || showTitle) && (
             <header className="detail-heading">
-              <button
-                ref={detailBackButton}
-                type="button"
-                className="k-btn k-btn--quiet k-btn--sm wb-back"
-                onClick={headingBack.back}
-              >
-                <ArrowLeftIcon {...iconProps("md")} />
-                {headingBack.label}
-              </button>
-              {/* Wide, the selected toolbar tab already names the view. */}
-              {!(wide && toolbarTabs.some((item) => item.label === inspectorTitle)) && (
-                <strong className="detail-heading__title">{inspectorTitle}</strong>
+              {showBack && (
+                <button
+                  ref={detailBackButton}
+                  type="button"
+                  className="k-btn k-btn--quiet k-btn--sm wb-back"
+                  onClick={headingBack.back}
+                >
+                  {closesDetail ? (
+                    <XIcon {...iconProps("md")} />
+                  ) : (
+                    <ArrowLeftIcon {...iconProps("md")} />
+                  )}
+                  {closesDetail ? "關閉詳情" : headingBack.label}
+                </button>
               )}
+              {showTitle && <strong className="detail-heading__title">{inspectorTitle}</strong>}
             </header>
           )}
           {workspaceRemoved && (

@@ -120,7 +120,18 @@ test("a row that needs the user carries one sentence and the matching action", (
   expect(stopped.projects).toMatchObject({ tone: "warning", state: "尚未加入" });
   expect(stopped.mcp?.state).toBe("未設定");
   // No pairing link without a running workbench or a saved Extension ID.
-  expect(stopped.panel).toMatchObject({ state: "尚未設定", action: null });
+  expect(stopped.panel).toMatchObject({ state: "尚未配對", action: null });
+  // A stopped Tunnel reads 已暫停, as on Desktop 連線設定 and 疑難排解.
+  const paused = byId(
+    companionRail(status({ tunnel: { ...status().tunnel, state: "stopped" } }), {
+      enabled: 0,
+      total: 0,
+    }),
+  );
+  expect(paused.tunnel).toMatchObject({
+    state: "已暫停",
+    action: { action: "start_tunnel", label: "啟動" },
+  });
 });
 
 test("a version mismatch asks to take over the workbench instead of claiming it is fine", () => {
@@ -128,7 +139,7 @@ test("a version mismatch asks to take over the workbench instead of claiming it 
   expect(row.workbench).toMatchObject({
     tone: "warning",
     state: "版本不同",
-    action: { action: "retry_workbench", label: "重新接管" },
+    action: { action: "retry_workbench", label: "重試工作台" },
   });
 });
 
@@ -170,4 +181,13 @@ test("a pairing link is noticed as used even after saving an Extension ID reset 
   expect(pairingProgress(2, 2)).toEqual({ baseline: 2, used: false });
   // The page inlines the same function.
   expect(companionPage("0.3.0")).toContain("const pairingProgress = (");
+});
+
+test("the log disclosure uses the product caret, not the browser's native marker", () => {
+  const html = companionPage("0.3.0");
+  expect(html).toMatch(
+    /<summary><svg class="caret"[^>]*aria-hidden="true"[^>]*>.*<\/svg>最近訊息<\/summary>/,
+  );
+  expect(html).toContain(".logs summary::-webkit-details-marker{display:none}");
+  expect(html).toMatch(/\.logs summary\{[^}]*list-style:none/);
 });

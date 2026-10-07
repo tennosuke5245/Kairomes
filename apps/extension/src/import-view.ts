@@ -429,11 +429,7 @@ export class ImportView {
           }),
         ),
       );
-    if (item.sha256_short) {
-      const hash = el("span", "k-mono", `${item.sha256_short}…`);
-      hash.title = "完整 SHA-256 在「技術資訊」";
-      rows.push(fact("SHA-256", hash));
-    }
+    // The content hash is stated once, in full, under 技術資訊.
     this.facts.replaceChildren(...rows);
     this.facts.hidden = !rows.length;
   }

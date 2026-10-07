@@ -89,6 +89,24 @@ test("timeline labels come from artifactImportLabel, including 結果待確認 f
   expect(activityHeadline(entry({}))).toEqual({ verb: "匯入圖片", code: "design/cover.png" });
 });
 
+test("a conflict reads its own cause, matching the side panel, and its title suffix is shown once", () => {
+  const missing = entry({
+    state: "conflict",
+    errorCode: "PARENT_NOT_FOUND",
+    title: "匯入圖片 · 找不到資料夾",
+  });
+  expect(activityState(missing)).toMatchObject({ label: "找不到資料夾", dataTone: "danger" });
+  expect(activityTitle(missing)).toBe("匯入圖片");
+  expect(activityState(entry({ state: "conflict", errorCode: "FILE_EXISTS" })).label).toBe(
+    "目的檔案已存在",
+  );
+  expect(activityState(entry({ state: "conflict", errorCode: "LINK_BLOCKED" })).label).toBe(
+    "儲存位置已變更",
+  );
+  // An entry without a code (older daemon) keeps the original wording.
+  expect(activityState(entry({ state: "conflict" })).label).toBe("目的檔案已存在");
+});
+
 test("a waiting import shows its countdown in the timeline", () => {
   const snapshot = { imports: [value] } as unknown as ActivitySnapshot;
   const row = timelineRow(entry({}), { snapshot, now: 60_000 });
@@ -134,6 +152,9 @@ test("the widget asks for the image in the side panel and offers no upload or ap
     />,
   );
   expect(html).toContain("請在 Kairomes 側欄提供圖片");
+  // The pill says 等待圖片 once and the title names the path once; neither is repeated.
+  expect(html.match(/等待圖片/g)).toHaveLength(1);
+  expect(html.match(/design\/cover\.png/g)).toHaveLength(1);
   expect(html).not.toContain('type="file"');
   expect(html).not.toContain("匯入圖片</button>");
   expect(html).not.toContain("拒絕");

@@ -71,7 +71,7 @@ export function ProjectCard({
           <h3 className="desk-project__name">{workspace.name}</h3>
           {root ? (
             <p className="desk-project__path" title={root}>
-              {root}
+              <bdi dir="ltr">{root}</bdi>
             </p>
           ) : null}
         </div>

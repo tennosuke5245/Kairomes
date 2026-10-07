@@ -1,5 +1,6 @@
 import type { McpAuthIdentity } from "../apps/extension/src/mcp-auth-tracker.ts";
 import { McpPanel } from "../apps/extension/src/mcp-panel.ts";
+import { importHydrationText } from "../apps/extension/src/panel-view.ts";
 import type {
   McpAuthInput,
   McpAuthResult,
@@ -293,6 +294,13 @@ if (channel) {
   channel.querySelector(".k-dot")?.setAttribute("data-tone", "success");
   const label = channel.querySelector("span:last-child");
   if (label) label.textContent = "已連線";
+}
+// The trusted import diagnostic, as sidepanel.ts renders it from the panel snapshot.
+const hydration = document.querySelector<HTMLElement>("#import-hydration");
+const hydrationText = importHydrationText({ hydrated: 2, omitted: 1, rejected: 0 });
+if (hydration && hydrationText) {
+  hydration.hidden = false;
+  hydration.textContent = hydrationText;
 }
 const version = document.querySelector<HTMLElement>("#extension-version");
 if (version) version.textContent = "0.2.0";

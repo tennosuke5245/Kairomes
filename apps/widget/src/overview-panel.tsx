@@ -9,6 +9,7 @@ import {
   type McpCall,
   type SearchResult,
 } from "@kairomes/protocol";
+import { imageTypeName } from "@kairomes/protocol/image-path";
 import {
   CircleNotchIcon,
   FolderOpenIcon,
@@ -114,8 +115,7 @@ export function McpImagePreview({
         )}
       </div>
       <p className="artifact-caption">
-        {formatDimensions(media.width, media.height)} ·{" "}
-        {media.mime_type.replace("image/", "").toUpperCase()}
+        {formatDimensions(media.width, media.height)} · {imageTypeName(media.mime_type)}
       </p>
     </figure>
   );
@@ -186,9 +186,8 @@ function ImportStateNotice({ value }: { value: ArtifactImport }) {
     return (
       <p className="k-notice" data-tone="brand" role="status">
         <TrayIcon {...iconProps("lg")} />
-        <span className="k-notice__body">
-          <span className="k-notice__title">等待圖片</span> · 請在 Kairomes 側欄提供圖片
-        </span>
+        {/* The pill above already says 等待圖片; the notice only adds where to act. */}
+        <span className="k-notice__body">請在 Kairomes 側欄提供圖片</span>
       </p>
     );
   if (value.state === "preparing" || value.state === "applying")
@@ -246,12 +245,7 @@ function ArtifactImportSummary({
           value: part,
         }))}
       />
-      <dl className="k-dl">
-        <div>
-          <dt>目的檔案</dt>
-          <dd className="k-codebox">{value.path}</dd>
-        </div>
-      </dl>
+      {/* The inspector title already names the target path (匯入圖片 <path>). */}
       {written && <ArtifactPreview artifact={written} bridge={bridge} compact />}
     </>
   );

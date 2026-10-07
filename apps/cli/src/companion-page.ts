@@ -16,7 +16,7 @@ export type CompanionRailRow = {
   state: string;
   /** One sentence, only when the row needs the user; empty otherwise. */
   detail: string;
-  /** Quiet when the row is healthy and the action is optional (停止, 重新接管). */
+  /** Quiet when the row is healthy and the action is optional (停止, 重試工作台). */
   action: { action: string; label: string; quiet?: boolean } | null;
 };
 /** Enabled and configured MCP servers; undefined before the first read, null when unreadable. */
@@ -48,8 +48,8 @@ export function companionRail(
       name: "本機工作台",
       tone: "warning",
       state: "版本不同",
-      detail: "工作台與這個 Kairomes 版本不同，重新接管後再使用。",
-      action: { action: "retry_workbench", label: "重新接管" },
+      detail: "工作台與這個 Kairomes 版本不同；停止舊程序後再重試工作台。",
+      action: { action: "retry_workbench", label: "重試工作台" },
     };
   else if (workbench.state === "running")
     workbenchRow = {
@@ -67,7 +67,7 @@ export function companionRail(
       tone: "success",
       state: "執行中",
       detail: "沿用先前啟動的工作台。",
-      action: { action: "retry_workbench", label: "重新接管", quiet: true },
+      action: { action: "retry_workbench", label: "重試工作台", quiet: true },
     };
   else if (workbench.state === "starting")
     workbenchRow = {
@@ -115,7 +115,8 @@ export function companionRail(
       id: "tunnel",
       name: "安全通道",
       tone: "neutral",
-      state: "已停止",
+      // Same words as Desktop 連線設定 and 疑難排解 for the same state.
+      state: "已暫停",
       detail: "",
       action: { action: "start_tunnel", label: "啟動" },
     };
@@ -226,7 +227,7 @@ export function companionRail(
         id: "panel",
         name: "瀏覽器側欄",
         tone: "neutral",
-        state: "尚未設定",
+        state: "尚未配對",
         detail: "從側欄複製 Extension ID，貼到下面。",
         action: null,
       }
@@ -257,6 +258,10 @@ const RAIL: readonly [CompanionRailRow["id"], string][] = [
   ["mcp", "MCP"],
   ["panel", "瀏覽器側欄"],
 ];
+
+/** Phosphor CaretDown (regular), the same disclosure caret as Desktop and the side panel. */
+const CARET =
+  '<svg class="caret" viewBox="0 0 256 256" aria-hidden="true" focusable="false"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></svg>';
 
 /** The K mark from app-icon.svg; its fill follows --k-brand-mark in both themes. */
 const K_MARK =
@@ -310,7 +315,10 @@ h1{margin:0;font-size:var(--k-text-lg);font-weight:var(--k-weight-strong);line-h
 .countdown{font-variant-numeric:tabular-nums}
 .countdown::before{display:none}
 .logs{margin-top:6px}
-.logs summary{width:max-content;min-height:28px;color:var(--k-ink-2);font-weight:var(--k-weight-strong);cursor:pointer}
+.logs summary{display:flex;align-items:center;gap:6px;width:max-content;min-height:28px;color:var(--k-ink-2);font-weight:var(--k-weight-strong);list-style:none;cursor:pointer}
+.logs summary::-webkit-details-marker{display:none}
+.caret{flex:none;width:16px;height:16px;fill:currentColor;transform:rotate(-90deg);transition:transform var(--k-dur-1) var(--k-ease)}
+.logs[open] .caret{transform:none}
 .logs pre{max-height:160px;margin:6px 0 0;padding:8px 10px;overflow:auto;border-radius:var(--k-radius-sm);background:var(--k-code-bg);color:var(--k-code-ink);font-family:var(--k-font-mono);font-size:var(--k-text-base);white-space:pre-wrap;overflow-wrap:anywhere}
 .foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px}
 .foot .ver{margin-left:auto;color:var(--k-ink-3)}
@@ -571,8 +579,7 @@ pollTimer = setInterval(() => { if (!busy) void refresh(); }, 1800);
 setInterval(tickPairing, 1000);
 `;
 
-const TUNNEL_EXTRA =
-  '<details id="tunnel-logs" class="row__extra logs" hidden><summary>最近訊息</summary><pre id="tunnel-log"></pre></details>';
+const TUNNEL_EXTRA = `<details id="tunnel-logs" class="row__extra logs" hidden><summary>${CARET}最近訊息</summary><pre id="tunnel-log"></pre></details>`;
 const PANEL_EXTRA =
   '<form id="extension-form" class="row__extra" hidden><label class="label" for="extension-id">Extension ID</label><div class="field"><input id="extension-id" class="input" autocomplete="off" spellcheck="false" maxlength="32" placeholder="貼上 32 位 Extension ID"><button id="extension-save" class="btn btn--secondary" type="submit">儲存並配對</button></div></form>' +
   '<div id="pairing" class="row__extra" hidden><div class="pairing"><span>配對連結已產生</span><span id="pairing-time" class="pill countdown" data-tone="neutral"></span><button id="pairing-copy" class="btn btn--secondary btn--sm" type="button">複製連結</button></div><input id="pairing-url" class="input" readonly aria-label="一次性配對連結" hidden></div>';

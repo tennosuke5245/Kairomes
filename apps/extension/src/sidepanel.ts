@@ -46,7 +46,7 @@ import { parsePairingUrl, parseWorkbenchUrl } from "./pairing.ts";
 import { PanelAnnouncements } from "./panel-announcements.ts";
 import { type NoticeTone, panelRecoveryNotice, STALE_NOTICE } from "./panel-error.ts";
 import { PanelStreamAvailability } from "./panel-stream-availability.ts";
-import { panelView, settingsBackLabel } from "./panel-view.ts";
+import { importHydrationText, panelView, settingsBackLabel } from "./panel-view.ts";
 import { commandTokens, setupCommands } from "./setup-commands.ts";
 import {
   actionBadgeText,
@@ -74,6 +74,7 @@ const statusDot = required<HTMLElement>("#connection-status .k-dot");
 const brand = required<HTMLElement>("#brand");
 const approvalChannel = required<HTMLElement>("#approval-channel");
 const workbenchChannel = required<HTMLElement>("#workbench-channel");
+const importHydration = required<HTMLElement>("#import-hydration");
 const settingsReconnect = required<HTMLButtonElement>("#settings-reconnect");
 const workspaceSwitcher = required<HTMLElement>("#workspace-switcher");
 const workspaceFilter = required<HTMLSelectElement>("#workspace-filter");
@@ -153,6 +154,13 @@ function approvalItems(snapshot: PanelSnapshot) {
     ...(snapshot.commands ?? []),
     ...snapshot.sessions,
   ];
+}
+
+/** 設定 › 一般: whether ChatGPT attached the image to its import requests (trusted counts). */
+function renderImportHydration(snapshot: PanelSnapshot | undefined) {
+  const text = importHydrationText(snapshot?.importHydration);
+  importHydration.hidden = !text;
+  importHydration.textContent = text ?? "";
 }
 
 function approvalUncertain(item: ApprovalItem) {
@@ -1150,6 +1158,7 @@ function startStream(target: PanelConnection) {
             throw new Error("工作台實例已變更，請重新配對。");
           }
           latest = next;
+          renderImportHydration(next);
           streamAvailability.receivedSnapshot();
           available = true;
           needsPairing = false;
@@ -1539,6 +1548,7 @@ async function disconnectPanel() {
   selectedWorkspace = null;
   workbenchChannel.hidden = true;
   workbenchChannel.textContent = "";
+  renderImportHydration(undefined);
   setConnectionStatus("unpaired");
   showPanelError("");
   address.focus();

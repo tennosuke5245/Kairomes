@@ -753,7 +753,12 @@ body.sp {
 .rq-outcome {
   display: grid;
   justify-items: start;
-  gap: 6px;
+  gap: 8px;
+}
+.rq-outcome__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .rq-outcome__reason {
   overflow-wrap: anywhere;

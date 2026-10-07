@@ -101,7 +101,8 @@ test("連線設定 has three rows, each with one pill, and the MCP command behin
     expect(markup).toContain(title);
   expect(markup.match(/class="desk-setting"/g)).toHaveLength(3);
   expect(markup.match(/class="k-pill"/g)).toHaveLength(3);
-  expect(markup).toContain("側欄已連線");
+  expect(markup).toMatch(/瀏覽器側欄[\s\S]*已連線/);
+  expect(markup).not.toContain("側欄已連線");
   expect(markup).toMatch(/<details class="desk-advanced">[\s\S]*進階[\s\S]*本機 MCP 指令/);
   expect(markup).toContain("移除金鑰…");
   expect(markup).toContain("產生配對連結");

@@ -637,8 +637,8 @@ class CompanionRuntime {
           this.workbenchVersion = health.version;
           this.workbenchMessage =
             health.version === VERSION
-              ? "偵測到另一個 CMD 啟動的工作台。Companion 不會強制關閉它；停止舊程序後可重新接管。"
-              : `既有工作台版本 ${health.version ?? "未知"} 與 Kairomes ${VERSION} 不同；停止舊程序後按重新接管。`;
+              ? "偵測到另一個 CMD 啟動的工作台。Companion 不會強制關閉它；停止舊程序後再重試工作台。"
+              : `既有工作台版本 ${health.version ?? "未知"} 與 Kairomes ${VERSION} 不同；停止舊程序後再重試工作台。`;
           return;
         } catch {
           // Fall through to the original safe startup error.
@@ -957,7 +957,7 @@ class CompanionRuntime {
         await this.workbenchConnection();
         throw new KairomesError(
           "WORKBENCH_RUNNING",
-          "舊工作台仍在執行；請先在原 CMD 按 Ctrl+C，再按重新接管。",
+          "舊工作台仍在執行；請先在原 CMD 按 Ctrl+C，再重試工作台。",
         );
       } catch (error) {
         if (error instanceof KairomesError && error.code === "WORKBENCH_RUNNING") throw error;
@@ -978,7 +978,7 @@ class CompanionRuntime {
     if (this.external)
       throw new KairomesError(
         "WORKBENCH_RUNNING",
-        "Extension ID 已保存。請先停止舊工作台，再按重新接管完成配對。",
+        "Extension ID 已保存。請先停止舊工作台，再重試工作台完成配對。",
       );
     await this.tunnel.stop();
     await this.closeOwnedWorkbench();
