@@ -34,6 +34,7 @@ import { McpPanel } from "./mcp-panel.ts";
 import { parsePairingUrl, parseWorkbenchUrl } from "./pairing.ts";
 import { PanelAnnouncements } from "./panel-announcements.ts";
 import { panelErrorMessage } from "./panel-error.ts";
+import { PanelRequestError, panelRequestError } from "./panel-request-error.ts";
 import { PanelStreamAvailability } from "./panel-stream-availability.ts";
 import { reconcileWorkspaceSelection } from "./workspace-selection.ts";
 
@@ -387,37 +388,8 @@ async function api(
     ),
   });
   if (response.status === 401 || response.status === 403) invalidatePairing(target);
-  if (!response.ok) {
-    let code: string | undefined;
-    try {
-      const data: unknown = await response.json();
-      if (data && typeof data === "object" && "code" in data && typeof data.code === "string")
-        code = data.code;
-    } catch {
-      /* The status alone still classifies the failure. */
-    }
-    throw new PanelRequestError(response.status, code);
-  }
+  if (!response.ok) throw await panelRequestError(response);
   return response.json();
-}
-class PanelRequestError extends Error {
-  constructor(
-    readonly status: number,
-    /** Daemon error code, e.g. MCP_CWD_INVALID; only fixed-map text is ever shown for it. */
-    readonly code?: string,
-  ) {
-    super(
-      status === 401 || status === 403
-        ? "配對已失效。"
-        : status === 409
-          ? "請求已變更；請重新審閱。"
-          : status === 429
-            ? "請稍後再查詢狀態。"
-            : status < 500
-              ? "請求未被接受。"
-              : "結果待確認。",
-    );
-  }
 }
 async function decideApproval(session: ApprovalItem, action: "approve" | "deny" | "stop") {
   const target = connection;

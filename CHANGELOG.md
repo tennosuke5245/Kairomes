@@ -29,4 +29,4 @@
 - Layer 修補後已有使用者回報連線成功；特定工具、長期登入、ChatGPT／Tunnel 及跨平台實機流程未全部驗收。
 - 此版本目前為原始碼準備；下載仍為 0.1.4。詳細證據見[產品設計文件](docs/product-design/README.md)。
 
-提交前已通過 `bun run check`（576 個測試）與 `bun run desktop:check`，並檢查文件相對連結。
+提交前已通過 `bun run check`（579 個測試）與 `bun run desktop:check`，並檢查文件相對連結。
