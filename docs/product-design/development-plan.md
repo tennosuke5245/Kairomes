@@ -1,6 +1,6 @@
 # Kairomes 側欄後續開發計畫
 
-規劃更新：2026-10-03。原研究基準：`0.1.4`、revision `5edf3dcb61eb5021135ccf200f0aa7af97ddceb1`。狀態：**D01～D09 已有程式碼與合成證據；實機相容仍待驗證，D10 是後續選用研究，H2／P2 仍是條件方案**。當次修改與檢查詳見[實作報告](implementation.md)，不能以本計畫推斷已發布。
+規劃更新：2026-10-03。原研究基準：`0.1.4`、revision `5edf3dcb61eb5021135ccf200f0aa7af97ddceb1`。狀態：**D01～D09 已有程式碼與合成證據；實機相容仍待驗證，D10 是後續選用研究，H2／P2 仍是條件方案**。當次修改與檢查詳見[實作報告](implementation.md)，不能以本計畫推斷已發布。0.3.0（2026-10-07）以[設計系統](design-system.md)重做 Desktop、側欄與工作台，並加入圖片匯入；跟隨改以「即時／已暫停跟隨」與「回到最新」呈現，取代下文的「最新」按鈕。範圍與限制見[更新紀錄](../../CHANGELOG.md)。
 
 依據：[README](../../README.md)、[CONTRIBUTING](../../CONTRIBUTING.md)、[SECURITY](../../SECURITY.md)、[現況盤點](kairomes-current-state.md)、[官方研究與模式](agent-app-patterns.md)、[畫面檢視](sidebar-audit.md)。交接契約見 [handoff-spec.md](handoff-spec.md)。第二輪的失敗恢復、取消及無障礙修補見 [續作紀錄](continuation.md)。
 

@@ -1,0 +1,386 @@
+/*
+ * Kairomes UI tokens (design snapshot): "Paper & Ink", final.
+ * Design-time snapshot used by mockup.html only. The shipped tokens live in
+ * packages/ui-tokens/tokens.css and may differ. Pair it with components.css.
+ *
+ * One meaning per colour:
+ *   brand    crimson    logo, Desktop active-nav marker, 需確認 (a human decision is waiting)
+ *   primary  ink        the single main action of a view (允許這次, 套用這批, 儲存, 設定金鑰)
+ *   running  blue       starting, running, applying, connecting, live
+ *   success  green      a finished run result; 已連上 ChatGPT (stated once)
+ *   warning  amber      結果待確認, 全自主, host privilege, expiring soon, stale snapshot
+ *   danger   vermilion  errors, failed runs, destructive actions. Its hue is kept >= 20 degrees
+ *                       from brand so 失敗 never reads as 需確認.
+ *   neutral  ink        denied, cancelled, stopped, expired, idle, setup steps
+ *
+ * Each tone has a base colour (icon, dot, solid fill; >= 3:1), -soft (tinted
+ * background), -on (text on -soft and on every surface; >= 4.5:1) and -line
+ * (decorative border for tinted boxes). Solid fills that carry text also get -ink.
+ * The file uses no color-mix(), because the Desktop WebView build targets chrome105.
+ *
+ * Theme selection:
+ *   light  :root (default) and any [data-theme="light"] subtree
+ *   dark   prefers-color-scheme: dark unless :root[data-theme="light"],
+ *          and :root[data-theme="dark"] or any [data-theme="dark"] subtree
+ * The subtree form lets the widget follow a ChatGPT host's theme, and the
+ * side-panel iframe follow the panel, without touching <html>.
+ * The two dark blocks must stay identical; tools/contrast.cjs fails the build on drift.
+ */
+
+/* 1. Theme-independent scales ------------------------------------------- */
+:root {
+  /* Type: system stacks only. Every Kairomes CSP forbids web fonts. */
+  --k-font-sans:
+    "Segoe UI Variable Text", "Segoe UI", "Microsoft JhengHei UI", "Microsoft JhengHei",
+    "PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", system-ui, sans-serif;
+  --k-font-mono:
+    "Cascadia Mono", "Cascadia Code", ui-monospace, "SF Mono", Menlo, Consolas,
+    "Microsoft JhengHei UI", "Noto Sans Mono CJK TC", monospace;
+
+  --k-text-meta: 13px; /* timestamps, counts, field labels, status pills: never decision text */
+  --k-text-base: 14px; /* every decision field, button, error, hint, argv, diff code */
+  --k-text-md: 16px; /* toolbar titles, card titles, status line */
+  --k-text-lg: 18px; /* section titles, inspector title */
+  --k-text-xl: 22px; /* Desktop page titles, dashboard values */
+  --k-text-2xl: 28px; /* rare: first-run headline on static pages */
+  --k-leading-body: 1.5;
+  --k-leading-tight: 1.3;
+  --k-leading-code: 22px;
+  --k-weight-regular: 400;
+  --k-weight-medium: 500;
+  --k-weight-strong: 600;
+  --k-weight-bold: 700;
+
+  /* Spacing: 4px grid */
+  --k-space-1: 4px;
+  --k-space-2: 8px;
+  --k-space-3: 12px;
+  --k-space-4: 16px;
+  --k-space-5: 20px;
+  --k-space-6: 24px;
+  --k-space-7: 32px;
+  --k-space-8: 40px;
+  --k-space-9: 48px;
+
+  /* Radius: replaces the 42 radius values in use today */
+  --k-radius-xs: 4px; /* kbd, argv cells, diff badge */
+  --k-radius-sm: 6px; /* buttons, inputs, chips (non-pill), kind tiles */
+  --k-radius-md: 10px; /* cards, notices, diff files, popovers */
+  --k-radius-lg: 14px; /* Desktop main sheet, dialogs, MCP result card */
+  --k-radius-pill: 999px;
+
+  /* Sizing */
+  --k-control-sm: 28px; /* minimum interactive size in dense rows (>= 24px rule) */
+  --k-control: 32px; /* default: recommended target size */
+  --k-control-lg: 40px; /* approval action bar, dialog buttons */
+  --k-toolbar: 48px; /* side-panel toolbar, widget toolbar, sub-bars */
+  --k-sidebar: 216px; /* Desktop navigation */
+  --k-content-max: 960px;
+  --k-inspector-min: 360px;
+
+  /* Layering */
+  --k-z-sticky: 10;
+  --k-z-popover: 40;
+  --k-z-dialog: 50;
+  --k-z-toast: 60;
+
+  /* Motion */
+  --k-dur-1: 120ms;
+  --k-dur-2: 200ms;
+  --k-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 2. Light (default) ------------------------------------------------------ */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces: warm paper */
+  --k-bg: #f6f2ea;
+  --k-surface: #fffdf9;
+  --k-surface-2: #f2ece2;
+  --k-surface-3: #e8e1d5;
+  --k-line: #e4dccf; /* decorative hairline */
+  --k-line-strong: #cdc3b5; /* decorative: secondary-button / chip outline */
+  --k-line-control: #8c8278; /* input, switch, checkbox boundary (>= 3:1) */
+
+  /* Ink */
+  --k-ink-1: #1f1b1c;
+  --k-ink-2: #554e49;
+  --k-ink-3: #6a625c;
+  --k-ink-disabled: #a59c93; /* decorative only, never essential text */
+
+  /* Brand: a human decision is waiting */
+  --k-brand: #a8233f;
+  --k-brand-soft: #f8e4ec;
+  --k-brand-on: #8a1a33;
+  --k-brand-line: #e4b0c2;
+  --k-brand-ink: #ffffff;
+  --k-brand-mark: #b5474b; /* the K logo, same fill as app-icon.svg */
+
+  /* Primary action: ink */
+  --k-primary-bg: #25201f;
+  --k-primary-bg-hover: #3d3634;
+  --k-primary-ink: #fffdf9;
+
+  /* Semantic tones */
+  --k-running: #3456a3;
+  --k-running-soft: #e9eef9;
+  --k-running-on: #2a4686;
+  --k-running-line: #bccbea;
+
+  --k-success: #2d6a46;
+  --k-success-soft: #e5f1e8;
+  --k-success-on: #235738;
+  --k-success-line: #b2d4bd;
+
+  --k-warning: #8b5210;
+  --k-warning-soft: #fbefd9;
+  --k-warning-on: #6d3f09;
+  --k-warning-line: #e3c08a;
+
+  --k-danger: #b5361b;
+  --k-danger-soft: #fce9e3;
+  --k-danger-on: #942a12;
+  --k-danger-line: #efb7a6;
+  --k-danger-ink: #ffffff;
+
+  --k-neutral: #6a625c;
+  --k-neutral-soft: #efe9df;
+  --k-neutral-on: #4d4642;
+  --k-neutral-line: #cdc3b5;
+
+  /* Focus ring: 2px solid, 2px offset */
+  --k-focus: #2c5fd6;
+
+  /* Code, diff, output, search highlight */
+  --k-code-bg: #f4efe7;
+  --k-code-ink: #262122;
+  --k-diff-add-bg: #e4f1e7;
+  --k-diff-add-mark: #22573a;
+  --k-diff-del-bg: #fbe8e3;
+  --k-diff-del-mark: #942a12;
+  --k-diff-hunk-bg: #eef1f8;
+  --k-diff-hunk-ink: #3d4f78;
+  --k-mark-bg: #fbe08f; /* <mark> on search matches */
+  --k-mark-ink: #1f1b1c;
+  --k-selection: #c9d7f5;
+
+  /* Workspace identity hues: decorative, the name is always shown beside them */
+  --k-ws-1: #2a7a76;
+  --k-ws-2: #6a54b3;
+  --k-ws-3: #8a5a2c;
+  --k-ws-4: #4f6a87;
+  --k-ws-5: #7a6a1f;
+  --k-ws-ink: #ffffff;
+
+  /* Elevation */
+  --k-shadow-1: 0 1px 2px rgb(45 34 28 / 0.06), 0 0 0 0.5px rgb(45 34 28 / 0.02);
+  --k-shadow-2: 0 1px 2px rgb(45 34 28 / 0.05), 0 6px 16px rgb(45 34 28 / 0.07);
+  --k-shadow-3: 0 2px 6px rgb(45 34 28 / 0.08), 0 16px 40px rgb(45 34 28 / 0.16);
+  --k-shadow-up: 0 -10px 24px -16px rgb(45 34 28 / 0.25); /* sticky action bar */
+  --k-inset-hi: inset 0 1px 0 rgb(255 255 255 / 0.6);
+  --k-overlay: rgb(31 27 28 / 0.32);
+}
+
+/* 3. Dark: follows the OS unless forced light ----------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --k-bg: #1a1716;
+    --k-surface: #23201e;
+    --k-surface-2: #2c2826;
+    --k-surface-3: #36312e;
+    --k-line: #393431;
+    --k-line-strong: #4d4642;
+    --k-line-control: #7c736c;
+    --k-ink-1: #f2ede7;
+    --k-ink-2: #cbc2b9;
+    --k-ink-3: #a89e95;
+    --k-ink-disabled: #6f6761;
+    --k-brand: #f07a92;
+    --k-brand-soft: #3b2028;
+    --k-brand-on: #f8b4c2;
+    --k-brand-line: #6a3140;
+    --k-brand-ink: #2a0c14;
+    --k-brand-mark: #e8707a;
+    --k-primary-bg: #f2ede7;
+    --k-primary-bg-hover: #ffffff;
+    --k-primary-ink: #1a1716;
+    --k-running: #9db4f3;
+    --k-running-soft: #212a3c;
+    --k-running-on: #c1cff8;
+    --k-running-line: #3a4a6e;
+    --k-success: #86c8a0;
+    --k-success-soft: #1d3026;
+    --k-success-on: #addfbf;
+    --k-success-line: #33513f;
+    --k-warning: #e8ad62;
+    --k-warning-soft: #362916;
+    --k-warning-on: #f4cd97;
+    --k-warning-line: #6a4f25;
+    --k-danger: #ff8f6b;
+    --k-danger-soft: #3d2118;
+    --k-danger-on: #ffbba3;
+    --k-danger-line: #6e3424;
+    --k-danger-ink: #2b0e06;
+    --k-neutral: #a89e95;
+    --k-neutral-soft: #2f2a28;
+    --k-neutral-on: #d2c9c0;
+    --k-neutral-line: #4d4642;
+    --k-focus: #8fb2ff;
+    --k-code-bg: #171413;
+    --k-code-ink: #ebe5de;
+    --k-diff-add-bg: #1b2f22;
+    --k-diff-add-mark: #9ad6b0;
+    --k-diff-del-bg: #3b211b;
+    --k-diff-del-mark: #ffb29b;
+    --k-diff-hunk-bg: #212736;
+    --k-diff-hunk-ink: #b9c6ea;
+    --k-mark-bg: #6b5212;
+    --k-mark-ink: #fff6e0;
+    --k-selection: #34446b;
+    --k-ws-1: #6cc2bc;
+    --k-ws-2: #b4a3f0;
+    --k-ws-3: #e0a874;
+    --k-ws-4: #9db7d6;
+    --k-ws-5: #d3c272;
+    --k-ws-ink: #1a1716;
+    --k-shadow-1: 0 1px 2px rgb(0 0 0 / 0.35);
+    --k-shadow-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 20px rgb(0 0 0 / 0.32);
+    --k-shadow-3: 0 2px 8px rgb(0 0 0 / 0.4), 0 18px 44px rgb(0 0 0 / 0.5);
+    --k-shadow-up: 0 -10px 24px -16px rgb(0 0 0 / 0.6);
+    --k-inset-hi: inset 0 1px 0 rgb(255 255 255 / 0.04);
+    --k-overlay: rgb(0 0 0 / 0.5);
+  }
+}
+
+/* 4. Dark: forced (root) or scoped to a subtree --------------------------- */
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+  --k-bg: #1a1716;
+  --k-surface: #23201e;
+  --k-surface-2: #2c2826;
+  --k-surface-3: #36312e;
+  --k-line: #393431;
+  --k-line-strong: #4d4642;
+  --k-line-control: #7c736c;
+  --k-ink-1: #f2ede7;
+  --k-ink-2: #cbc2b9;
+  --k-ink-3: #a89e95;
+  --k-ink-disabled: #6f6761;
+  --k-brand: #f07a92;
+  --k-brand-soft: #3b2028;
+  --k-brand-on: #f8b4c2;
+  --k-brand-line: #6a3140;
+  --k-brand-ink: #2a0c14;
+  --k-brand-mark: #e8707a;
+  --k-primary-bg: #f2ede7;
+  --k-primary-bg-hover: #ffffff;
+  --k-primary-ink: #1a1716;
+  --k-running: #9db4f3;
+  --k-running-soft: #212a3c;
+  --k-running-on: #c1cff8;
+  --k-running-line: #3a4a6e;
+  --k-success: #86c8a0;
+  --k-success-soft: #1d3026;
+  --k-success-on: #addfbf;
+  --k-success-line: #33513f;
+  --k-warning: #e8ad62;
+  --k-warning-soft: #362916;
+  --k-warning-on: #f4cd97;
+  --k-warning-line: #6a4f25;
+  --k-danger: #ff8f6b;
+  --k-danger-soft: #3d2118;
+  --k-danger-on: #ffbba3;
+  --k-danger-line: #6e3424;
+  --k-danger-ink: #2b0e06;
+  --k-neutral: #a89e95;
+  --k-neutral-soft: #2f2a28;
+  --k-neutral-on: #d2c9c0;
+  --k-neutral-line: #4d4642;
+  --k-focus: #8fb2ff;
+  --k-code-bg: #171413;
+  --k-code-ink: #ebe5de;
+  --k-diff-add-bg: #1b2f22;
+  --k-diff-add-mark: #9ad6b0;
+  --k-diff-del-bg: #3b211b;
+  --k-diff-del-mark: #ffb29b;
+  --k-diff-hunk-bg: #212736;
+  --k-diff-hunk-ink: #b9c6ea;
+  --k-mark-bg: #6b5212;
+  --k-mark-ink: #fff6e0;
+  --k-selection: #34446b;
+  --k-ws-1: #6cc2bc;
+  --k-ws-2: #b4a3f0;
+  --k-ws-3: #e0a874;
+  --k-ws-4: #9db7d6;
+  --k-ws-5: #d3c272;
+  --k-ws-ink: #1a1716;
+  --k-shadow-1: 0 1px 2px rgb(0 0 0 / 0.35);
+  --k-shadow-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 20px rgb(0 0 0 / 0.32);
+  --k-shadow-3: 0 2px 8px rgb(0 0 0 / 0.4), 0 18px 44px rgb(0 0 0 / 0.5);
+  --k-shadow-up: 0 -10px 24px -16px rgb(0 0 0 / 0.6);
+  --k-inset-hi: inset 0 1px 0 rgb(255 255 255 / 0.04);
+  --k-overlay: rgb(0 0 0 / 0.5);
+}
+
+/* 5. Tone plumbing ---------------------------------------------------------
+ * Any component reads --tone / --tone-soft / --tone-on / --tone-line, so one
+ * data-tone attribute styles it. Components set their own neutral default with
+ * :where() (zero specificity), so an untoned pill inside a toned card stays
+ * neutral instead of inheriting the card's tone.
+ */
+[data-tone="brand"] {
+  --tone: var(--k-brand);
+  --tone-soft: var(--k-brand-soft);
+  --tone-on: var(--k-brand-on);
+  --tone-line: var(--k-brand-line);
+}
+[data-tone="running"] {
+  --tone: var(--k-running);
+  --tone-soft: var(--k-running-soft);
+  --tone-on: var(--k-running-on);
+  --tone-line: var(--k-running-line);
+}
+[data-tone="success"] {
+  --tone: var(--k-success);
+  --tone-soft: var(--k-success-soft);
+  --tone-on: var(--k-success-on);
+  --tone-line: var(--k-success-line);
+}
+[data-tone="warning"] {
+  --tone: var(--k-warning);
+  --tone-soft: var(--k-warning-soft);
+  --tone-on: var(--k-warning-on);
+  --tone-line: var(--k-warning-line);
+}
+[data-tone="danger"] {
+  --tone: var(--k-danger);
+  --tone-soft: var(--k-danger-soft);
+  --tone-on: var(--k-danger-on);
+  --tone-line: var(--k-danger-line);
+}
+[data-tone="neutral"] {
+  --tone: var(--k-neutral);
+  --tone-soft: var(--k-neutral-soft);
+  --tone-on: var(--k-neutral-on);
+  --tone-line: var(--k-neutral-line);
+}
+
+/* 6. Reduced motion: also covers pseudo-elements and high-specificity rules */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --k-dur-1: 0.01ms;
+    --k-dur-2: 0.01ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

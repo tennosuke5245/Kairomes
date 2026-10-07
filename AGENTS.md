@@ -11,6 +11,7 @@
 - `apps/extension`：Chrome／Edge 側欄；`apps/widget`：聊天內 MCP App。
 - `apps/cli`：CLI 與 Desktop sidecar 入口；`apps/daemon`：本機服務、MCP、核准與工具執行。
 - `packages/protocol`：共享 schema；`packages/workspace-core`：工作區登錄與檔案操作；`scripts`：建置與檢查。
+- `packages/ui-tokens`：共用設計 token 與 `.k-*` 元件樣式，由 `tests/ui-style-guard.test.ts` 守門。
 
 ## 修改與驗證
 

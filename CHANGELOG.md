@@ -1,5 +1,51 @@
 # 更新紀錄
 
+## 0.3.0（待發佈）
+
+0.2.0 沒有單獨發佈，這版一併包含其後的修補。介面改用共用設計系統並支援深色模式，模型新增唯讀 Git、批次讀檔、檔名尋找與 ChatGPT 圖片匯入工具；從 0.1.4 更新時，請一併閱讀 0.2.0 一節。
+
+### 新增
+
+- **模型工具**（25 → 33 個）：唯讀 `git_status`／`git_diff`／`git_log`；`file_read_many` 一次讀 1～8 個檔案；`file_find` 依名稱或 glob 找檔；`file_search` 新增資料夾範圍、`include` glob、大小寫與前後文；`image_import_request`／`image_import_poll`／`image_import_cancel`。
+- **核准模式與長輪詢**：`workspace_list`、`workbench_open` 回報各專案的核准模式與到期時間；`command_poll`、`terminal_poll` 可帶 `wait_ms`（最多 20 秒）。
+- **圖片匯入**：ChatGPT 交出圖片時由 Kairomes 下載並在側欄預覽；沒有交出時顯示「等待圖片」，可在側欄貼上、選擇檔案或拖放。也能不經 ChatGPT 自行匯入。每張都需在側欄個別核准，只建立新檔。
+- **拒絕附原因**：側欄「拒絕並說明原因…」（單行、最多 200 字），模型從 poll／list 讀到 `denial_reason`。
+- **設計系統**：`packages/ui-tokens` 提供 token 與 `.k-*` 元件；Desktop、側欄、工作台、MCP 結果卡、Companion 頁、OAuth 回呼頁與本機核准頁共用，並跟隨淺色／深色主題。
+- **Desktop**：總覽儀表板（需注意卡片與專案卡）、六步首次設定清單、疑難排解檢查項目與「複製診斷摘要」；專案可改名、在檔案總管中顯示、多選或拖入資料夾；系統匣顯示狀態，有待確認時加紅點並提醒視窗。
+- **側欄**：單列工具列（需確認、執行中、操作模式倒數）、`Alt+Shift+K` 快捷鍵與圖示徽章；核准頁分「需確認／執行中／最近」，決定後自動開啟下一件；MCP 設定有篩選晶片、`/` 搜尋與加入範本。
+- **工作台**：動態時間軸有篩選晶片、分組、相對時間、倒數與失敗原因；跟隨可暫停並以「回到最新」恢復；命令、變更、終端機改為紀錄清單，可複製輸出、指令與路徑；檔案瀏覽有路徑導覽與篩選。ChatGPT 宿主檢視改用同一外殼。
+- **Companion**：Tunnel 失敗原因分類，意外結束後自動重啟；工作台、Companion 與 Desktop 版本握手；`kairomes doctor` 輸出可分享的診斷摘要。
+
+### 改善與修正
+
+- `mcp_tool_call`／`mcp_read_call` 在 Host 執行期間，同一 `request_id` 至多送出一次；結果不明回 `MCP_CALL_UNKNOWN`，不再重送。
+- stdio relay 請求上限由 32 KiB 改為 320 KiB，過大、逾時、忙碌與離線各自回報。
+- 側欄快照只附待核准與套用中的差異，保留大量變更時核准串流不再反覆重連；命令與終端機輸出不再觸發側欄快照。
+- 審閱差異的後置上下文改取變更旁的行；換行差異在側欄、本機核准頁與工作台顯示一致。
+- 圖片匯入的需確認數、衝突原因、到期用語、圖片大小（KiB／MiB）與專案色塊在各介面一致；匯入結束立即釋放影像記憶體。
+- 工作台與 MCP 結果卡的載入、錯誤畫面跟隨主題；移除淺色工作台上對比僅 1.18:1 的 hover 色；次要文字對比提高到 4.5:1。MCP 結果卡錯誤優先，JSON 可收合。
+- ChatGPT 宿主檢視移除重複的聊天輸入框，改用 ChatGPT 本身的輸入框。
+- Desktop 狀態改為推送；重新啟動本機服務、移除金鑰、解除掛載與更換 Extension ID 都先確認；配對連結遮蔽並倒數，到期或離開頁面即清除；第一次關閉視窗會提示縮到系統匣；從 Codex 接續改為三步驟。
+- Desktop 錯誤訊息含中日韓文字時截斷不再當機；使用者停止 Tunnel 後，接管工作台、重試工作台或設定 Extension 都不會自動重新啟動。
+- 開發用合成預覽恢復可建置，每頁支援 `?theme=light|dark` 與 `?motion=reduce`；`bun run desktop:check` 加入 `cargo test`。
+
+### 安全
+
+- 升級 `@modelcontextprotocol/sdk` 1.30.1 → 1.32.1（GHSA-6qxp-vccf-f47h）；鎖檔更新 `proxy-addr` 2.0.8（GHSA-jqcg-44mw-7w3h）與 `source-map-js` 1.2.2（GHSA-68fv-2mgg-jv7q）。HTTP MCP 仍不跟隨重新導向。
+- Git 工具停用 hooks、fsmonitor、外部 diff、textconv、儲存庫 filter 與所有傳輸；拒絕外部 gitfile、`commondir`、替代物件庫與 partial clone；私有路徑不輸出，含私鑰標記的檔案整段遮蔽。
+- 圖片下載只接受 OpenAI 網域的 HTTPS，DNS 結果須為公開位址並固定連線；核准須由同一配對側欄先讀取並核對原圖；本機核准頁與 admin 權杖不能核准匯入。
+- 拒絕原因拒收不可見與雙向控制字元，並遮蔽已知金鑰、本機網址與 64 位十六進位權杖。
+- Desktop 外部連結維持固定允許清單，絕對路徑只顯示在 Desktop 專案卡；本機控制連線不經系統 proxy，webview 仍不取得權杖。
+
+### 更新與限制
+
+- 需同步更新 Desktop 與 Extension；`WIDGET_URI` 改為 v7、`MCP_RESULT_URI` 改為 v3。ChatGPT 仍顯示舊工作台或舊工具清單時，到 Connector 設定按「重新整理」。
+- 圖片匯入已在原始碼實作，**由 ChatGPT 交出檔案的途徑尚未以真實 ChatGPT 驗證**；側欄貼上、選擇檔案與拖放隨時可用。匯入紀錄與 `request_id` 只存在記憶體，Host 重啟後不保留。
+- 命令／終端機仍使用主機使用者權限，不是 OS sandbox。新介面只以合成預覽、Vite 預覽與 `desktop:check` 檢查，尚未在原生視窗、WebView2、真實 Extension 或 Tunnel 實機驗收。
+- 此版本目前為原始碼準備；下載仍為 0.1.4。
+
+提交前已通過 `bun run check`（941 個測試）與 `bun run desktop:check`（23 個 Rust 測試），並檢查文件相對連結。
+
 ## 0.2.0（待發佈）
 
 相較 0.1.4，這版新增 MCP 原生登入與 Codex 接續，並整理側欄的設定、核准和成果閱讀流程。

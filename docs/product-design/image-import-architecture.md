@@ -1,6 +1,13 @@
 # ChatGPT 圖片匯入本機：架構與驗證設計稿
 
-日期：2026-10-03。狀態：**規劃稿，尚未恢復公開 MCP 匯入工具，尚未通過真實 ChatGPT／Tunnel 端到端驗證**。
+日期：2026-10-03（規劃）；狀態更新：2026-10-07。狀態：**0.3.0 原始碼已實作公開匯入工具；尚未通過真實 ChatGPT／Tunnel 端到端驗證（G0）**。以下正文保留規劃當時的現況與差距，例如「工具清單沒有匯入工具」已不再成立。已實作：
+
+- 公開工具為 `image_import_request`／`image_import_poll`／`image_import_cancel`，頂層 `file` 並宣告 `_meta["openai/fileParams"] = ["file"]`；名稱與草案的 `artifact_import_*` 不同，也沒有 `expected_instance_id`。
+- ChatGPT 未交出檔案時進入 `awaiting_file`，由使用者在側欄貼上、選擇或拖放圖片；側欄可信路由為 `POST /api/panel/imports`（自行匯入）、`POST /api/panel/imports/:id/file`（上傳原圖）與 `GET /api/panel/imports/:id/content`（讀回待審原圖，可不帶 Origin，條件見 [SECURITY](../../SECURITY.md#chatgpt-圖片匯入)）。
+- 下載前先保留請求身份，`preparing` 可查詢與取消；DNS 結果核對後固定連線；模型與側欄的名額分開，記憶體最多 3 張圖片，匯入結束即釋放。
+- 核准綁定預覽：同一配對須先讀回原圖（`IMPORT_PREVIEW_REQUIRED`）；admin 權杖與本機核准頁不能核准（`IMPORT_APPROVAL_PANEL_ONLY`）；任何 grant 都不代替個別核准。衝突依錯誤碼顯示「目的檔案已存在」「找不到資料夾」或「儲存位置已變更」。
+- 側欄審閱、貼上／選擇／拖放上傳與自行匯入對話框；工作台顯示各狀態，ChatGPT 宿主檢視在宿主提供選檔功能時顯示「從 ChatGPT 選擇圖片」。
+- **G0 真實宿主閘門仍未執行**：尚未確認 ChatGPT 會交付生成圖片及其下載網域。側欄設定與 admin 清單的 `importHydration` 計數（附圖／未附圖／被拒）供 G0 診斷。
 
 本稿依目前程式碼、[README](../../README.md)、[CONTRIBUTING](../../CONTRIBUTING.md)、[SECURITY](../../SECURITY.md)及[側欄決策邊界](../../.agents/skills/kairomes-sidebar-planning/references/boundaries.md)規劃。目標是讓使用者在 ChatGPT 指定一張圖片與本機專案目的地，經可信側欄審閱後建立本機圖片檔。這次只產出設計，沒有啟用工具、修改權限、執行真實帳號測試或搬移圖片。
 
