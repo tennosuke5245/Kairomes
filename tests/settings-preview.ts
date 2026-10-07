@@ -303,4 +303,4 @@ if (hydration && hydrationText) {
   hydration.textContent = hydrationText;
 }
 const version = document.querySelector<HTMLElement>("#extension-version");
-if (version) version.textContent = "0.2.0";
+if (version) version.textContent = "0.3.0";

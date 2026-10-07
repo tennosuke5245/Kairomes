@@ -257,7 +257,7 @@ export async function createPreviewPages(bundles: PreviewBundles) {
   sidepanelHtml = swap(
     sidepanelHtml,
     '<span id="extension-version"></span>',
-    '<span id="extension-version">0.2.0</span>',
+    '<span id="extension-version">0.3.0</span>',
   );
   const base = sidepanelHtml.replace(
     /<link rel="stylesheet" href="([^"]+)">/g,

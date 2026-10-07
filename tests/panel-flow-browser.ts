@@ -25,7 +25,7 @@ const persist = () => sessionStorage.setItem(sessionKey, JSON.stringify(stored))
 export const browser = {
   runtime: {
     id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    getManifest: () => ({ version: "0.2.0" }),
+    getManifest: () => ({ version: "0.3.0" }),
   },
   // The synthetic page has no toolbar button; the badge text is only kept for inspection.
   action: {
