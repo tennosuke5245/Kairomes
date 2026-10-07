@@ -48,6 +48,7 @@ export const DIAGNOSTIC_CODES = [
   "mcp_config_absent",
   "mcp_config_ok",
   "mcp_config_invalid",
+  "mcp_config_path_relative",
   "mcp_config_unreadable",
   "workspaces_ok",
   "workspaces_none",
@@ -78,7 +79,8 @@ export type DiagnosticCheck = {
   code: DiagnosticCode;
   fix?: DiagnosticFix;
   /**
-   * mcp_config: mounted servers when ok, schema issues when invalid.
+   * mcp_config: mounted servers when ok, schema issues when invalid, stdio servers whose stored
+   * working directory or command path is relative (and therefore not started) when path_relative.
    * workspaces: mounted projects when ok, unavailable projects when unavailable.
    */
   count?: number;

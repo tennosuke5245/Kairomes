@@ -11,6 +11,7 @@ import {
   VERSION,
 } from "@kairomes/protocol";
 import { resolveChecked, WorkspaceRegistry } from "@kairomes/workspace-core";
+import { launchPathProblem } from "./mcp-launch.ts";
 import { readWorkbenchConnection, verifyWorkbenchConnection } from "./workbench-connection.ts";
 
 const MCP_CONFIG_FILE = "mcp-servers.json";
@@ -142,7 +143,8 @@ function tunnelCheck(probe: TunnelProbe | undefined): DiagnosticCheck {
 
 /**
  * Parses mcp-servers.json the same way McpHostManager does, without connecting to or spawning
- * any server. Reports only counts: servers when valid, schema issues when invalid.
+ * any server. Reports only counts: servers when valid, schema issues when invalid, and stdio
+ * servers the Host will not start until their working directory or command path is absolute.
  */
 async function mcpConfigCheck(directory: string): Promise<DiagnosticCheck> {
   const file = path.join(directory, MCP_CONFIG_FILE);
@@ -171,15 +173,27 @@ async function mcpConfigCheck(directory: string): Promise<DiagnosticCheck> {
     };
   }
   const result = McpMountFileSchema.safeParse(parsed);
-  return result.success
-    ? { id: "mcp_config", state: "ok", code: "mcp_config_ok", count: result.data.servers.length }
-    : {
+  if (!result.success)
+    return {
+      id: "mcp_config",
+      state: "error",
+      code: "mcp_config_invalid",
+      count: result.error.issues.length,
+      fix: "review_mcp_config",
+    };
+  // A stored relative path is no longer resolved against the Host's folder; the mount is not started.
+  const relative = result.data.servers.filter(
+    ({ transport }) => transport.kind === "stdio" && launchPathProblem(transport) !== undefined,
+  ).length;
+  return relative
+    ? {
         id: "mcp_config",
-        state: "error",
-        code: "mcp_config_invalid",
-        count: result.error.issues.length,
+        state: "warn",
+        code: "mcp_config_path_relative",
+        count: relative,
         fix: "review_mcp_config",
-      };
+      }
+    : { id: "mcp_config", state: "ok", code: "mcp_config_ok", count: result.data.servers.length };
 }
 
 /** Counts mounted roots that are missing or replaced, using the same check as every file read. */

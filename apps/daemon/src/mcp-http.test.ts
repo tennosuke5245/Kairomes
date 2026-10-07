@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  MCP_COMMAND_RELATIVE_MESSAGE,
+  MCP_CWD_INVALID_MESSAGE,
   McpCallSchema,
   McpCatalogSchema,
   McpPanelStateSchema,
@@ -49,6 +51,33 @@ test("a missing synthetic MCP executable leaves a committed, fingerprinted unava
     const command = path.join(f.directory, "never-created-synthetic-mcp.exe");
     const args = ["synthetic-private-argument"];
     const env: string[] = [];
+    // A relative working directory is refused with its own code before anything is saved.
+    const relative = await post("/api/panel/mcp", panel.panelToken, {
+      action: "add_stdio",
+      name: "相對工作目錄",
+      command,
+      args,
+      env,
+      cwd: "synthetic-private-folder",
+    });
+    expect(relative.status).toBe(400);
+    expect(await relative.json()).toEqual({
+      code: "MCP_CWD_INVALID",
+      message: MCP_CWD_INVALID_MESSAGE,
+    });
+    // So is a relative command path without a working directory, with the same field to mark.
+    const relativeCommand = await post("/api/panel/mcp", panel.panelToken, {
+      action: "add_stdio",
+      name: "相對啟動程式",
+      command: "./synthetic-private-start.sh",
+      args,
+      env,
+    });
+    expect(relativeCommand.status).toBe(400);
+    expect(await relativeCommand.json()).toEqual({
+      code: "MCP_COMMAND_RELATIVE",
+      message: MCP_COMMAND_RELATIVE_MESSAGE,
+    });
     const body = { action: "add_stdio", name: "無法啟動的合成服務", command, args, env };
     const response = await post("/api/panel/mcp", panel.panelToken, body);
     expect(response.status).toBe(200);
@@ -70,7 +99,7 @@ test("a missing synthetic MCP executable leaves a committed, fingerprinted unava
     );
     // Missing-process errors vary by OS; only these safe diagnostics are acceptable.
     expect([
-      "找不到啟動程式或工作目錄。",
+      "找不到啟動程式。",
       "無法連線；請由本機使用者檢查這個 MCP 的設定與執行狀態。",
     ]).toContain(server?.message ?? "");
     for (const privateValue of [command, f.directory, ...args, ...env])

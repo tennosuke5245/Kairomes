@@ -709,7 +709,7 @@ describe("downstream MCP broker", () => {
     const connectFailure = spyOn(Client.prototype, "connect");
     const generic = "無法連線；請由本機使用者檢查這個 MCP 的設定與執行狀態。";
     const failures = [
-      ["stdio", "ENOENT", "找不到啟動程式或工作目錄。"],
+      ["stdio", "ENOENT", "找不到啟動程式。"],
       ["stdio", "EACCES", "啟動權限不足。"],
       ["stdio", "EPERM", "啟動權限不足。"],
       ["stdio", "SYNTHETIC_UNKNOWN", generic],
@@ -888,7 +888,7 @@ describe("downstream MCP broker", () => {
       name: "同名服務",
       command: "synthetic-program",
       args: ["synthetic-argument"],
-      cwd: "synthetic-directory",
+      cwd: path.join(f.directory, "synthetic-directory"),
       env: ["SYNTHETIC_KEY"],
     });
     const first = await manager.panelState();

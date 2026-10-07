@@ -52,6 +52,19 @@
   font-size: 14px;
   line-height: 1.6;
 }
+/* The working directory keeps its message beside the label, spanning the form like it. */
+.mcp-add-form > .mcp-cwd-field {
+  grid-column: 1 / -1;
+}
+.mcp-field-error {
+  margin: 6px 0 0;
+  color: var(--red-dark);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.mcp-add-form [aria-invalid="true"] {
+  border-color: var(--red);
+}
 .mcp-diagnostic {
   margin: 0 16px;
 }

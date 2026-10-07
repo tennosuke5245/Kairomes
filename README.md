@@ -88,6 +88,8 @@ tunnel-client init `
 
 點「設定 → MCP 整合 → 加入 MCP」，選擇本機程式或遠端網址。工具可搜尋、篩選與開關；服務未連線或清單失敗時，按卡片的重試入口。
 
+本機程式未指定工作目錄時，在 Kairomes 資料目錄的 `mcp-runtime` 資料夾啟動，不受 Kairomes 從哪裡啟動影響；參數中的相對路徑也以此為準。伺服器需要特定資料夾，或啟動程式寫成相對路徑（如 `./start.sh`）時，「工作目錄」請填絕對路徑。舊設定的相對工作目錄或相對啟動程式不再啟動，請解除掛載後重新加入。
+
 需要 OAuth 的遠端服務：填名稱與 MCP URL → 儲存 → 按「登入」→ 在系統瀏覽器完成授權。取得最新工具清單後才顯示已連線；等待時可取消。登入保留於當次 Host，重啟需再登入；「清除登入」只清除本機資料。
 
 目前支援公開 HTTPS、PKCE S256 與 DCR public client；內網 OAuth、CIMD 專用服務及跨重啟登入尚未支援。Layer 的網址為 `https://mcp.app.layer.ai/mcp`，使用者已回報修補後連線成功，詳見[相容性紀錄](docs/product-design/mcp-oauth-recovery.md)。既有 stdio 與靜態 Authorization 配置可繼續使用。

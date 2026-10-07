@@ -5,6 +5,8 @@ import {
   type CompanionGrantSummary,
   KairomesError,
   LIMITS,
+  MCP_COMMAND_RELATIVE_MESSAGE,
+  MCP_CWD_INVALID_MESSAGE,
   McpAuthInputSchema,
   McpPanelInputSchema,
   PanelAccessInputSchema,
@@ -363,7 +365,14 @@ function startLocalServer(
             return Response.json(receipt, { headers: panelHeaders });
           }
           if (url.pathname === "/api/panel/mcp") {
-            const input = McpPanelInputSchema.parse(await request.json());
+            const parsed = McpPanelInputSchema.safeParse(await request.json());
+            // A working-directory problem gets its own code so the panel can mark that field.
+            const cwdIssue = parsed.error?.issues.find((issue) => issue.path[0] === "cwd");
+            if (cwdIssue?.message === MCP_COMMAND_RELATIVE_MESSAGE)
+              throw new KairomesError("MCP_COMMAND_RELATIVE", MCP_COMMAND_RELATIVE_MESSAGE);
+            if (cwdIssue) throw new KairomesError("MCP_CWD_INVALID", MCP_CWD_INVALID_MESSAGE);
+            if (!parsed.success) throw parsed.error;
+            const input = parsed.data;
             if (!pairing.valid(panelToken))
               return Response.json(
                 { message: "配對已失效。" },
