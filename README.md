@@ -126,6 +126,8 @@ Kairomes is an independent open-source project. It is not endorsed by OpenAI and
 
 If Kairomes is useful to you, you can [buy me a coffee on Ko-fi](https://ko-fi.com/tennosuke5245). It helps me keep working on it.
 
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/tennosuke5245)
+
 ## Development
 
 See the [contributing guide](CONTRIBUTING.md) for build steps and checks, and read the [code of conduct](CODE_OF_CONDUCT.md) before contributing. The code is released under the [MIT license](LICENSE).

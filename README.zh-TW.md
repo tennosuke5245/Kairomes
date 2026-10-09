@@ -124,6 +124,8 @@ Kairomes 是獨立的開源專案，沒有獲得 OpenAI 背書，也沒有上架
 
 如果 Kairomes 對你有幫助，可以在 [Ko-fi 請我喝杯咖啡](https://ko-fi.com/tennosuke5245)，讓我有動力繼續做下去。
 
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/tennosuke5245)
+
 ## 開發
 
 建置方式和檢查指令見[貢獻指南](CONTRIBUTING.md)，參與前請先看[行為準則](CODE_OF_CONDUCT.md)。程式碼採用 [MIT 授權](LICENSE)。

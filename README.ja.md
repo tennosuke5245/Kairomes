@@ -126,6 +126,8 @@ Kairomes は独立したオープンソースプロジェクトです。OpenAI �
 
 Kairomes が役に立ったら、[Ko-fi でコーヒーを一杯](https://ko-fi.com/tennosuke5245)おごってもらえるとうれしいです。開発を続ける励みになります。
 
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/tennosuke5245)
+
 ## 開発
 
 ビルド方法とチェック用のコマンドは[コントリビューションガイド](CONTRIBUTING.md)を、参加する前に[行動規範](CODE_OF_CONDUCT.md)を読んでください。コードは [MIT ライセンス](LICENSE)で公開しています。
