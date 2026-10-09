@@ -52,7 +52,7 @@ Tunnel 失敗原因的比對規則在 `apps/cli/src/tunnel-status.ts`，屬於�
 
 Headless 模式需先結束 Desktop 或既有 Host，再以 `bun run app --port 0 --extension-id YOUR_EXTENSION_ID` 啟動工作台。另建立指向 `bun run kairomes serve --attach --stdio` 的 Tunnel profile；若使用自訂 `--data-dir`，工作台與 relay 必須一致。手動執行 `tunnel-client run` 時，需自行安全地提供 `CONTROL_PLANE_API_KEY` 環境變數。Desktop 的憑證保管庫不會替手動終端機注入金鑰；若未安裝 Desktop sidecar，也不能沿用 Desktop 複製的 profile 指令。此模式的程序由你自行管理。
 
-`bun run companion` 與 `bun run preview` 主要供開發及復原使用。Desktop「從 Codex 接續」與選用的 `kairomes handoff` 唯讀來源預覽需要 Codex CLI；Desktop 手動摘要不需要。H1 管理通道與原生側欄授權分離，接續不會改變 grant。Desktop H1 接續介面尚未包含於 `v0.1.4` 發佈檔案。
+`bun run companion` 與 `bun run preview` 主要供開發及復原使用。Desktop「從 Codex 接續」與選用的 `kairomes handoff` 唯讀來源預覽需要 Codex CLI；Desktop 手動摘要不需要。H1 管理通道與原生側欄授權分離，接續不會改變 grant。
 
 ### 開發用合成側欄預覽
 

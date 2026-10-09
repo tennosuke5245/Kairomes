@@ -1,6 +1,6 @@
 # 安全回報
 
-目前原始碼為 `0.3.0`，公開下載仍為 `0.1.4` 預覽版，尚無正式支援的穩定發佈版本。本文安全邊界依原始碼說明；0.2.0 起的精簡側欄、原生 MCP OAuth、Desktop H1 接續，以及 0.3.0 的新介面、唯讀 Git、批次讀檔與 ChatGPT 圖片匯入，都尚未包含於 `v0.1.4` 發佈檔案。主線包含 ChatGPT 網頁 MCP 工具、瀏覽器側欄、工作區檔案讀取與結構化變更、唯讀 Git、一次性命令、需本機批准的終端機、使用者掛載的下游 MCP，以及會向 OpenAI 檔案網域發出 HTTPS 下載的圖片匯入。不要把本工具當作能隔離本機惡意程序的 sandbox。
+目前公開下載為 `0.3.0` 預覽版，尚無正式支援的穩定發佈版本。本文安全邊界依原始碼說明；0.2.0 起的精簡側欄、原生 MCP OAuth、Desktop H1 接續，以及 0.3.0 的新介面、唯讀 Git、批次讀檔與 ChatGPT 圖片匯入，都包含在 `v0.3.0` 發佈檔案中。主線包含 ChatGPT 網頁 MCP 工具、瀏覽器側欄、工作區檔案讀取與結構化變更、唯讀 Git、一次性命令、需本機批准的終端機、使用者掛載的下游 MCP，以及會向 OpenAI 檔案網域發出 HTTPS 下載的圖片匯入。不要把本工具當作能隔離本機惡意程序的 sandbox。
 
 目前公開倉庫尚未啟用 GitHub 的 [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository)。若發現能讀取未掛載路徑、繞過核准或預覽權限、洩漏憑證等問題，請先開一則不含漏洞細節的 issue，請求私人聯絡方式。啟用並驗證 **Security → Report a vulnerability** 入口後，可從該處私密回報。絕對不要在公開 issue／PR 張貼密鑰、私人檔案或利用步驟。
 
