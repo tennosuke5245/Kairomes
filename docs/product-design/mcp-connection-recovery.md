@@ -6,7 +6,7 @@
 
 使用者畫面顯示新增 MCP 已出現在目錄，但無法連線、零工具，且「結果待確認」使管理控制停用。這不足以證明設定保存失敗，也不能單靠通用錯誤認定 OAuth 是唯一原因。
 
-[Layer 官方說明](https://layer.ai/mcp)要求首次 OAuth 登入，stdio 客戶端可使用 `mcp-remote`。當時 Kairomes 的直接 HTTP 掛載沒有 OAuth 登入流程；stdio 橋接可由外部程式處理 OAuth。原先 Host 初始化與側欄請求都只等 10 秒，可能先於 npm 啟動或使用者登入完成而逾時。[mcp-remote 說明](https://github.com/punkpeye/mcp-remote/blob/main/README.md)另有自己的登入回呼期限，可用 `--auth-timeout` 設定。可填入的公開參數見 [README](../../README.md#加入-mcp-與登入)。
+[Layer 官方說明](https://layer.ai/mcp)要求首次 OAuth 登入，stdio 客戶端可使用 `mcp-remote`。當時 Kairomes 的直接 HTTP 掛載沒有 OAuth 登入流程；stdio 橋接可由外部程式處理 OAuth。原先 Host 初始化與側欄請求都只等 10 秒，可能先於 npm 啟動或使用者登入完成而逾時。[mcp-remote 說明](https://github.com/punkpeye/mcp-remote/blob/main/README.md)另有自己的登入回呼期限，可用 `--auth-timeout` 設定。可填入的公開參數見 [操作指南](../usage.md#加入-mcp-與登入)。
 
 ## 已修正
 

@@ -2,7 +2,7 @@
 
 日期：2026-10-03。基準為現行 0.1.4 原始碼，HEAD `5edf3dcb61eb5021135ccf200f0aa7af97ddceb1` 加上目前工作樹內容。本文件為新增功能提案；這輪只產出規劃、合成設計稿與設計檢查，沒有啟用圖片匯入，也沒有執行真實 ChatGPT／Tunnel 傳檔。
 
-**0.3.0 狀態（2026-10-07）：原始碼已實作，真實宿主未驗證。** 以下正文保留規劃當時的描述；現行操作見 [README](../../README.md#保存-chatgpt-圖片)。
+**0.3.0 狀態（2026-10-07）：原始碼已實作，真實宿主未驗證。** 以下正文保留規劃當時的描述；現行操作見 [操作指南](../usage.md#保存-chatgpt-圖片)。
 
 - 公開工具為 `image_import_request`／`image_import_poll`／`image_import_cancel`，頂層 `file` 並宣告 `_meta["openai/fileParams"] = ["file"]`；名稱與草案的 `artifact_import_*` 不同，也沒有 `expected_instance_id`。
 - ChatGPT 未交出檔案時進入 `awaiting_file`，由使用者在側欄貼上、選擇或拖放圖片；側欄可信路由為 `POST /api/panel/imports`（自行匯入）、`POST /api/panel/imports/:id/file`（上傳原圖）與 `GET /api/panel/imports/:id/content`（讀回待審原圖，可不帶 Origin，條件見 [SECURITY](../../SECURITY.md#chatgpt-圖片匯入)）。
