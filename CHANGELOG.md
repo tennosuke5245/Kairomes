@@ -31,6 +31,7 @@
 - Desktop 錯誤訊息含中日韓文字時截斷不再當機；使用者停止 Tunnel 後，接管工作台、重試工作台或設定 Extension 都不會自動重新啟動。
 - 開發用合成預覽恢復可建置，每頁支援 `?theme=light|dark` 與 `?motion=reduce`；`bun run desktop:check` 加入 `cargo test`。
 - README 改寫為較短的入門說明，新增英文版 `README.en.md` 與日文版 `README.ja.md`；日常操作移到[操作指南](docs/usage.md)。
+- MCP 登入卡在「登入狀態待確認」：Host 已不記得那次登入（超過 10 分鐘或已重啟）時，查詢後改依 Host 目前的登入狀態顯示，不再永遠停在待確認；這個畫面也一律提供「清除登入」。
 
 ### 安全
 

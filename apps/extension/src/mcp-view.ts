@@ -240,11 +240,11 @@ export function mcpServerView(server: Server, auth?: McpServerAuth): McpServerVi
         notice: {
           tone: "warning",
           icon: "Question",
-          text: "還不確定登入操作是否完成；查詢後再決定下一步。",
+          text: "還不確定登入操作是否完成；查詢後再決定下一步，或清除登入後重新登入。",
           action: { kind: "query", label: presentation.button, primary: false },
         },
         refreshVisible: false,
-        forgetVisible: false,
+        forgetVisible: true,
       });
     if (presentation.action === "none" && auth.summary.error_code === "auth_unsupported")
       return view("unsupported", {
