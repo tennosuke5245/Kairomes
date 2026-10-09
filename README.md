@@ -1,18 +1,32 @@
-<p align="center">
-  <img src="apps/desktop/src-tauri/app-icon.svg" width="96" alt="Kairomes 標誌">
+<div align="center">
+
+<img src="apps/desktop/src-tauri/app-icon.svg" width="112" alt="Kairomes 標誌">
+
+<h1>Kairomes</h1>
+
+<p><b>讓 ChatGPT 使用你電腦上的專案資料夾。<br>每一次改檔案、跑命令，都由你按下核准才會發生。</b></p>
+
+<p>
+  <a href="https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml"><img src="https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/tennosuke5245/Kairomes/releases"><img src="https://img.shields.io/github/v/release/tennosuke5245/Kairomes?include_prereleases&label=preview&color=b5474b" alt="最新預覽版"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tennosuke5245/Kairomes?color=b5474b" alt="MIT 授權"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2011-555" alt="Windows 11">
+  <img src="https://img.shields.io/badge/side%20panel-Chrome%20%7C%20Edge-555" alt="Chrome | Edge">
+  <img src="https://img.shields.io/badge/ChatGPT-Secure%20MCP%20Tunnel-555" alt="ChatGPT Secure MCP Tunnel">
+  <img src="https://img.shields.io/badge/Bun-runtime-555?logo=bun&logoColor=white" alt="Bun">
+  <img src="https://img.shields.io/badge/Tauri-2-555?logo=tauri&logoColor=white" alt="Tauri 2">
 </p>
 
-# Kairomes
+<p><b>繁體中文</b> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a></p>
 
-繁體中文 · [English](README.en.md) · [日本語](README.ja.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-ready-dark.png">
+  <img src="docs/images/desktop-ready-light.png" alt="Kairomes Desktop 總覽：本機服務與安全通道運作正常、最近的 ChatGPT 呼叫與專案列表" width="100%">
+</picture>
 
-[![CI](https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml)
-[![最新預覽版](https://img.shields.io/github/v/release/tennosuke5245/Kairomes?include_prereleases&label=preview)](https://github.com/tennosuke5245/Kairomes/releases)
-[![MIT 授權](https://img.shields.io/badge/license-MIT-2d6a4f)](LICENSE)
+</div>
 
-Kairomes 讓 ChatGPT 能使用你電腦上的專案資料夾。
-
-它在 Windows 背景執行，透過 OpenAI Secure MCP Tunnel 接收 ChatGPT 的請求。要改檔案、執行命令或存圖片時，會先在 Chrome／Edge 側欄問你，你按下核准才會動手。
+Kairomes 在 Windows 背景執行，透過 OpenAI Secure MCP Tunnel 接收 ChatGPT 的請求。要改檔案、執行命令或存圖片時，會先在 Chrome／Edge 側欄問你，你按下核准才會動手。
 
 Kairomes 不讀 ChatGPT 的 Cookie 或聊天頁面，也不會替你送出訊息。名字來自 Kairo（回路）和 Hermes（使者）。
 
@@ -42,6 +56,13 @@ Kairomes 不讀 ChatGPT 的 Cookie 或聊天頁面，也不會替你送出訊息
 ### 1. 安裝 Desktop 和側欄
 
 安裝並打開 Kairomes Desktop。「總覽」頁有六個設定步驟，照順序做就好，第一步是加入一個專案資料夾。
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-setup-dark.png">
+  <img src="docs/images/desktop-setup-light.png" alt="Kairomes Desktop 的六個設定步驟" width="100%">
+</picture>
+</div>
 
 側欄的部分：把 ZIP 解壓縮，到 Chrome／Edge 的擴充功能頁打開「開發人員模式」，按「載入未封裝項目」，選有 `manifest.json` 的那個資料夾。之後這個資料夾不要刪。
 

@@ -1,18 +1,32 @@
-<p align="center">
-  <img src="apps/desktop/src-tauri/app-icon.svg" width="96" alt="Kairomes logo">
+<div align="center">
+
+<img src="apps/desktop/src-tauri/app-icon.svg" width="112" alt="Kairomes logo">
+
+<h1>Kairomes</h1>
+
+<p><b>Let ChatGPT work with project folders on your own computer.<br>Every file edit and every command waits for your approval.</b></p>
+
+<p>
+  <a href="https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml"><img src="https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/tennosuke5245/Kairomes/releases"><img src="https://img.shields.io/github/v/release/tennosuke5245/Kairomes?include_prereleases&label=preview&color=b5474b" alt="Latest preview"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tennosuke5245/Kairomes?color=b5474b" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2011-555" alt="Windows 11">
+  <img src="https://img.shields.io/badge/side%20panel-Chrome%20%7C%20Edge-555" alt="Chrome | Edge">
+  <img src="https://img.shields.io/badge/ChatGPT-Secure%20MCP%20Tunnel-555" alt="ChatGPT Secure MCP Tunnel">
+  <img src="https://img.shields.io/badge/Bun-runtime-555?logo=bun&logoColor=white" alt="Bun">
+  <img src="https://img.shields.io/badge/Tauri-2-555?logo=tauri&logoColor=white" alt="Tauri 2">
 </p>
 
-# Kairomes
+<p><a href="README.md">繁體中文</a> · <b>English</b> · <a href="README.ja.md">日本語</a></p>
 
-[繁體中文](README.md) · English · [日本語](README.ja.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-ready-dark.png">
+  <img src="docs/images/desktop-ready-light.png" alt="Kairomes Desktop overview: local service and secure tunnel running, recent ChatGPT call, project list" width="100%">
+</picture>
 
-[![CI](https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml)
-[![Latest preview](https://img.shields.io/github/v/release/tennosuke5245/Kairomes?include_prereleases&label=preview)](https://github.com/tennosuke5245/Kairomes/releases)
-[![MIT license](https://img.shields.io/badge/license-MIT-2d6a4f)](LICENSE)
+</div>
 
-Kairomes lets ChatGPT work with project folders on your own computer.
-
-It runs in the background on Windows and receives ChatGPT's requests through the OpenAI Secure MCP Tunnel. Before it edits a file, runs a command, or saves an image, it asks you in a Chrome/Edge side panel. Nothing happens until you approve.
+Kairomes runs in the background on Windows and receives ChatGPT's requests through the OpenAI Secure MCP Tunnel. Before it edits a file, runs a command, or saves an image, it asks you in a Chrome/Edge side panel. Nothing happens until you approve.
 
 Kairomes does not read your ChatGPT cookies or chat page, and it never sends messages for you. The name comes from Kairo (回路, "circuit") and Hermes, the messenger.
 
@@ -44,6 +58,13 @@ You'll need:
 ### 1. Install the desktop app and side panel
 
 Install and open Kairomes Desktop. The 「總覽」 (Overview) page lists six setup steps. Follow them in order; the first is adding a project folder.
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-setup-dark.png">
+  <img src="docs/images/desktop-setup-light.png" alt="The six setup steps in Kairomes Desktop" width="100%">
+</picture>
+</div>
 
 For the side panel, unzip the file, open the extensions page in Chrome/Edge, turn on Developer mode, click "Load unpacked", and pick the folder that contains `manifest.json`. Keep that folder around afterwards.
 

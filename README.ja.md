@@ -1,18 +1,32 @@
-<p align="center">
-  <img src="apps/desktop/src-tauri/app-icon.svg" width="96" alt="Kairomes のロゴ">
+<div align="center">
+
+<img src="apps/desktop/src-tauri/app-icon.svg" width="112" alt="Kairomes のロゴ">
+
+<h1>Kairomes</h1>
+
+<p><b>ChatGPT が、あなたのパソコン上のプロジェクトフォルダを使えるように。<br>ファイルの変更もコマンドの実行も、あなたが承認するまで動きません。</b></p>
+
+<p>
+  <a href="https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml"><img src="https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/tennosuke5245/Kairomes/releases"><img src="https://img.shields.io/github/v/release/tennosuke5245/Kairomes?include_prereleases&label=preview&color=b5474b" alt="最新プレビュー"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tennosuke5245/Kairomes?color=b5474b" alt="MIT ライセンス"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2011-555" alt="Windows 11">
+  <img src="https://img.shields.io/badge/side%20panel-Chrome%20%7C%20Edge-555" alt="Chrome | Edge">
+  <img src="https://img.shields.io/badge/ChatGPT-Secure%20MCP%20Tunnel-555" alt="ChatGPT Secure MCP Tunnel">
+  <img src="https://img.shields.io/badge/Bun-runtime-555?logo=bun&logoColor=white" alt="Bun">
+  <img src="https://img.shields.io/badge/Tauri-2-555?logo=tauri&logoColor=white" alt="Tauri 2">
 </p>
 
-# Kairomes
+<p><a href="README.md">繁體中文</a> · <a href="README.en.md">English</a> · <b>日本語</b></p>
 
-[繁體中文](README.md) · [English](README.en.md) · 日本語
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-ready-dark.png">
+  <img src="docs/images/desktop-ready-light.png" alt="Kairomes Desktop の概要画面：ローカルサービスと安全なトンネルが稼働中、最近の ChatGPT の呼び出し、プロジェクト一覧" width="100%">
+</picture>
 
-[![CI](https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tennosuke5245/Kairomes/actions/workflows/ci.yml)
-[![最新プレビュー](https://img.shields.io/github/v/release/tennosuke5245/Kairomes?include_prereleases&label=preview)](https://github.com/tennosuke5245/Kairomes/releases)
-[![MIT ライセンス](https://img.shields.io/badge/license-MIT-2d6a4f)](LICENSE)
+</div>
 
-Kairomes は、ChatGPT があなたのパソコン上のプロジェクトフォルダを使えるようにするアプリです。
-
-Windows のバックグラウンドで動き、OpenAI Secure MCP Tunnel 経由で ChatGPT からのリクエストを受け取ります。ファイルの変更、コマンドの実行、画像の保存をする前に、Chrome／Edge のサイドパネルで確認を求めます。あなたが承認するまで何も実行されません。
+Kairomes は Windows のバックグラウンドで動き、OpenAI Secure MCP Tunnel 経由で ChatGPT からのリクエストを受け取ります。ファイルの変更、コマンドの実行、画像の保存をする前に、Chrome／Edge のサイドパネルで確認を求めます。あなたが承認するまで何も実行されません。
 
 ChatGPT の Cookie やチャット画面は読み取らず、あなたの代わりにメッセージを送ることもありません。名前は Kairo（回路）と Hermes（使者）に由来します。
 
@@ -44,6 +58,13 @@ ChatGPT の Cookie やチャット画面は読み取らず、あなたの代わ�
 ### 1. Desktop とサイドパネルをインストールする
 
 Kairomes Desktop をインストールして開きます。「總覽」（概要）ページに 6 つの設定手順が並んでいるので、順番に進めてください。最初の手順はプロジェクトフォルダの追加です。
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-setup-dark.png">
+  <img src="docs/images/desktop-setup-light.png" alt="Kairomes Desktop の 6 つの設定手順" width="100%">
+</picture>
+</div>
 
 サイドパネルは、ZIP を展開し、Chrome／Edge の拡張機能ページで「デベロッパーモード」をオンにして「パッケージ化されていない拡張機能を読み込む」を選び、`manifest.json` があるフォルダを指定します。このフォルダは後で消さないでください。
 
