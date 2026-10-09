@@ -31,6 +31,8 @@ export class McpAuthTracker {
   private pending = new Map<string, Pending>();
   private summaries = new Map<string, McpAuthSummary>();
 
+  constructor(private readonly now: () => number = Date.now) {}
+
   bind(source?: string) {
     if (source === this.source) return;
     this.source = source;
@@ -117,7 +119,16 @@ export class McpAuthTracker {
     )
       return false;
     this.observeSummary(result, result);
-    if (result.receipt_outcome === "missing" || result.receipt_outcome === "expired") {
+    if (
+      result.receipt_outcome === "expired" ||
+      (result.receipt_outcome === "missing" &&
+        this.now() > Date.parse(pending.request.accept_before))
+    ) {
+      // The Host no longer tracks this operation and can no longer admit it, so the summary it
+      // just returned is all there is to know; keeping the record would block a new login.
+      this.pending.delete(result.server_id);
+    } else if (result.receipt_outcome === "missing") {
+      // The request may still reach the Host before its admission deadline.
       pending.unknown = true;
     } else if (result.receipt_outcome === "pending") {
       // A pending start is accepted evidence; it cannot prove a lost cancel finished.

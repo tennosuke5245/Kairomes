@@ -36,8 +36,10 @@ const result = (overrides: Partial<McpAuthResult> = {}): McpAuthResult => ({
   ...summary(),
   ...overrides,
 });
-const tracker = () => {
-  const value = new McpAuthTracker();
+// Before the synthetic intents' admission deadline.
+const start = Date.parse("2026-10-03T00:00:00.000Z");
+const tracker = (now = () => start) => {
+  const value = new McpAuthTracker(now);
   value.bind(source);
   return value;
 };
@@ -64,14 +66,53 @@ test("a lost start queries its original identity without starting another login"
   expect(value.summary(identity)?.phase_version).toBe(4);
 });
 
-test("missing and expired receipts remain unknown; wrong identities never acknowledge", () => {
+test("a missing receipt stays unknown only while the request can still be admitted", () => {
+  let clock = start;
+  const value = tracker(() => clock);
+  value.begin(source, intent());
+  expect(value.accept(source, result({ receipt_outcome: "missing" }))).toBe(true);
+  expect(value.current(identity)?.unknown).toBe(true);
+  expect(value.begin(source, intent())).toBe(false);
+  // After the deadline the Host can never admit it: the returned summary decides what to show.
+  clock = Date.parse(intent().accept_before) + 1;
+  const required = { auth_phase: "required", tools_status: "stale", phase_version: 2 } as const;
+  expect(value.accept(source, result({ receipt_outcome: "missing", ...required }))).toBe(true);
+  expect(value.current(identity)).toBeUndefined();
+  expect(mcpAuthPresentation(summary(required), value.current(identity))).toEqual({
+    label: "需重新登入",
+    action: "start",
+    button: "登入",
+  });
+  expect(value.begin(source, intent("start", "00000000-0000-4000-8000-000000000005"))).toBe(true);
+});
+
+test("an expired receipt settles on the Host's current summary instead of staying unknown", () => {
+  const value = tracker();
+  for (const forget of [false, true]) {
+    value.begin(source, intent());
+    if (forget) value.begin(source, intent("forget", "00000000-0000-4000-8000-000000000004"));
+    const operation = forget
+      ? { operation: "forget" as const, operation_id: "00000000-0000-4000-8000-000000000004" }
+      : {};
+    const connected = {
+      auth_phase: "authenticated",
+      tools_status: "current",
+      phase_version: forget ? 4 : 3,
+    } as const;
+    expect(
+      value.accept(source, result({ receipt_outcome: "expired", ...connected, ...operation })),
+    ).toBe(true);
+    // Neither the forget nor the login it replaced is left behind to block the next action.
+    expect(value.current(identity)).toBeUndefined();
+    expect(value.saved(identity)).toBeUndefined();
+    expect(mcpAuthPresentation(summary(connected), value.current(identity)).label).toBe("已連線");
+  }
+});
+
+test("wrong identities never acknowledge a pending login", () => {
   const value = tracker();
   value.begin(source, intent());
-  for (const receipt_outcome of ["missing", "expired"] as const) {
-    expect(value.accept(source, result({ receipt_outcome }))).toBe(true);
-    expect(value.current(identity)?.unknown).toBe(true);
-    expect(value.begin(source, intent())).toBe(false);
-  }
+  value.markUnknown(source, intent());
   for (const wrong of [
     { instance_id: "00000000-0000-4000-8000-000000000009" },
     { server_id: "00000000-0000-4000-8000-000000000009" },

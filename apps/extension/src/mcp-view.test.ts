@@ -189,7 +189,8 @@ test("login in progress, unknown results and authenticated states", () => {
     summary: auth,
     view: { label: "登入狀態待確認", action: "query", button: "查詢狀態" },
   });
-  expect(unknown).toMatchObject({ mode: "auth_unknown", attention: true });
+  // Clearing the login is always available so an unanswerable query never strands the server.
+  expect(unknown).toMatchObject({ mode: "auth_unknown", attention: true, forgetVisible: true });
   expect(unknown.notice?.action).toEqual({ kind: "query", label: "查詢狀態", primary: false });
   const forgetting = mcpServerView(server({ transport: "http", auth, tools: [] }), {
     summary: auth,
