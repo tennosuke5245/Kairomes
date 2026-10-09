@@ -16,7 +16,7 @@ Windows のバックグラウンドで動き、OpenAI Secure MCP Tunnel 経由�
 
 ChatGPT の Cookie やチャット画面は読み取らず、あなたの代わりにメッセージを送ることもありません。名前は Kairo（回路）と Hermes（使者）に由来します。
 
-> 現在の状況：ソースコードは 0.3.0 ですが、ダウンロードできるインストーラーはまだ [v0.1.4](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.4) です。新しいバージョンを使うには[コントリビューションガイド](CONTRIBUTING.md)に沿って自分でビルドしてください。変更点は[更新履歴](CHANGELOG.md)にあります。インストーラーはまだ署名されておらず、サイドパネルは手動で読み込む必要があります。
+> 現在のバージョン：[v0.3.0](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.3.0)（プレビュー版）。変更点は[更新履歴](CHANGELOG.md)にあります。インストーラーはまだ署名されていないため、Windows で SmartScreen の警告が出ることがあります。サイドパネルは手動で読み込む必要があります。
 >
 > アプリの画面と詳しいドキュメントは、今のところ繁体字中国語のみです。以下ではボタン名を中国語のまま書き、日本語の意味を添えています。
 
@@ -37,7 +37,7 @@ ChatGPT の Cookie やチャット画面は読み取らず、あなたの代わ�
 事前に用意するもの：
 
 - Windows 11 と Chrome または Edge。
-- [Releases](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.4) にある Kairomes のインストーラーとサイドパネルの ZIP。
+- [Releases](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.3.0) にある Kairomes のインストーラーとサイドパネルの ZIP。
 - OpenAI 公式の [`tunnel-client`](https://github.com/openai/tunnel-client/releases/latest)。Windows 版を一式インストールし、`tunnel-client.exe` を PATH に追加してください。
 - ChatGPT の developer mode を有効にしておくこと。OpenAI Platform で Tunnel を作るには Tunnels Read + Manage、使うには Tunnels Read + Use の権限が必要です。詳しくは[公式ガイド](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)を見てください。
 

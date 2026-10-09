@@ -16,7 +16,7 @@ It runs in the background on Windows and receives ChatGPT's requests through the
 
 Kairomes does not read your ChatGPT cookies or chat page, and it never sends messages for you. The name comes from Kairo (回路, "circuit") and Hermes, the messenger.
 
-> Status: the source code is at 0.3.0, but the downloadable installer is still [v0.1.4](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.4). To try the new version, build it yourself following the [contributing guide](CONTRIBUTING.md). See the [changelog](CHANGELOG.md) for what changed. The installer is not signed yet, and the side panel has to be loaded by hand.
+> Current version: [v0.3.0](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.3.0) (preview). See the [changelog](CHANGELOG.md) for what changed. The installer is not signed yet, so Windows may show a SmartScreen warning, and the side panel has to be loaded by hand.
 >
 > The app interface and the detailed docs are currently in Traditional Chinese only. Button names below are given in Chinese with an English gloss.
 
@@ -37,7 +37,7 @@ Light and dark mode are both supported.
 You'll need:
 
 - Windows 11 and Chrome or Edge.
-- The Kairomes installer and side panel ZIP from [Releases](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.4).
+- The Kairomes installer and side panel ZIP from [Releases](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.3.0).
 - OpenAI's official [`tunnel-client`](https://github.com/openai/tunnel-client/releases/latest). Install the full Windows client and add `tunnel-client.exe` to your PATH.
 - Developer mode turned on in ChatGPT. Creating a Tunnel on the OpenAI Platform needs the Tunnels Read + Manage permissions; using one needs Tunnels Read + Use. See the [official guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
 

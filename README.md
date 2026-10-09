@@ -16,7 +16,7 @@ Kairomes 讓 ChatGPT 能使用你電腦上的專案資料夾。
 
 Kairomes 不讀 ChatGPT 的 Cookie 或聊天頁面，也不會替你送出訊息。名字來自 Kairo（回路）和 Hermes（使者）。
 
-> 目前狀態：原始碼是 0.3.0，可以下載的安裝程式還是 [v0.1.4](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.4)。想用新版請照[貢獻指南](CONTRIBUTING.md)自行建置，改了什麼見[更新紀錄](CHANGELOG.md)。安裝程式還沒簽章，側欄要手動載入。
+> 目前版本：[v0.3.0](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.3.0) 預覽版，改了什麼見[更新紀錄](CHANGELOG.md)。安裝程式還沒簽章，Windows 可能會跳出 SmartScreen 警告；側欄要手動載入。
 
 ## 可以做什麼
 
@@ -35,7 +35,7 @@ Kairomes 不讀 ChatGPT 的 Cookie 或聊天頁面，也不會替你送出訊息
 需要先準備：
 
 - Windows 11，以及 Chrome 或 Edge。
-- Kairomes 安裝程式和側欄 ZIP，在 [Releases](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.1.4) 下載。
+- Kairomes 安裝程式和側欄 ZIP，在 [Releases](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.3.0) 下載。
 - OpenAI 官方的 [`tunnel-client`](https://github.com/openai/tunnel-client/releases/latest)。安裝完整的 Windows 版，並把 `tunnel-client.exe` 加進 PATH。
 - ChatGPT 開啟 developer mode。在 OpenAI Platform 建立 Tunnel 需要 Tunnels Read + Manage 權限，使用時需要 Tunnels Read + Use。詳見[官方說明](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)。
 

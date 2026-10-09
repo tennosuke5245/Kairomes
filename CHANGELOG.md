@@ -1,6 +1,6 @@
 # 更新紀錄
 
-## 0.3.0（待發佈）
+## 0.3.0（2026-10-09）
 
 0.2.0 沒有單獨發佈，這版一併包含其後的修補。介面改用共用設計系統並支援深色模式，模型新增唯讀 Git、批次讀檔、檔名尋找與 ChatGPT 圖片匯入工具；從 0.1.4 更新時，請一併閱讀 0.2.0 一節。
 
@@ -45,12 +45,12 @@
 - 需同步更新 Desktop 與 Extension；`WIDGET_URI` 改為 v8、`MCP_RESULT_URI` 改為 v4。ChatGPT 仍顯示舊工作台或舊工具清單時，到 Connector 設定按「重新整理」。
 - 未指定工作目錄的本機 MCP 改在 `mcp-runtime` 啟動，參數中的相對路徑（如 `node dist/index.js`）也以此為準；請改成絕對路徑或補上絕對工作目錄。使用相對工作目錄或相對啟動程式的設定不會再啟動，請移除後以絕對路徑重新加入。
 - 圖片匯入已在原始碼實作，**由 ChatGPT 交出檔案的途徑尚未以真實 ChatGPT 驗證**；側欄貼上、選擇檔案與拖放隨時可用。匯入紀錄與 `request_id` 只存在記憶體，Host 重啟後不保留。
-- 命令／終端機仍使用主機使用者權限，不是 OS sandbox。新介面只以合成預覽、Vite 預覽與 `desktop:check` 檢查，尚未在原生視窗、WebView2、真實 Extension 或 Tunnel 實機驗收。
-- 此版本目前為原始碼準備；下載仍為 0.1.4。
+- 命令／終端機仍使用主機使用者權限，不是 OS sandbox。發佈前已由維護者在 Windows 實機試用；macOS／Linux 的 Desktop 仍未實機驗證。
+- Windows 安裝程式與側欄 ZIP 見 [v0.3.0 Release](https://github.com/tennosuke5245/Kairomes/releases/tag/v0.3.0)。安裝程式尚未簽章。
 
-提交前已通過 `bun run check`（968 個測試）與 `bun run desktop:check`（23 個 Rust 測試），並檢查文件相對連結。
+提交前已通過 `bun run check`（972 個測試）與 `bun run desktop:check`（23 個 Rust 測試），並檢查文件相對連結。
 
-## 0.2.0（待發佈）
+## 0.2.0（未單獨發佈，內容併入 0.3.0）
 
 相較 0.1.4，這版新增 MCP 原生登入與 Codex 接續，並整理側欄的設定、核准和成果閱讀流程。
 
@@ -74,6 +74,6 @@
 - 更新時需同步 Desktop 與 Extension；Extension ID 變更時重新配對。Host 重啟後，使用 Kairomes 原生 OAuth 的服務需再登入。
 - 接續不自動傳送訊息或授權。命令／終端機仍使用主機使用者權限，不是 OS sandbox。
 - Layer 修補後已有使用者回報連線成功；特定工具、長期登入、ChatGPT／Tunnel 及跨平台實機流程未全部驗收。
-- 此版本目前為原始碼準備；下載仍為 0.1.4。詳細證據見[產品設計文件](docs/product-design/README.md)。
+- 這版沒有單獨的下載檔案，內容包含在 0.3.0。詳細證據見[產品設計文件](docs/product-design/README.md)。
 
 提交前已通過 `bun run check`（381 個測試）與 `bun run desktop:check`，並檢查文件相對連結。
