@@ -8,7 +8,7 @@
 - 修改 Desktop 或建置桌面程式時，依 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)安裝 Rust 1.90 或以上與作業系統套件。Windows 需要 Microsoft C++ Build Tools、WebView2 與 Rust MSVC toolchain。
 - Linux 建置 Desktop 另需 WebKitGTK 4.1 等系統套件；Debian／Ubuntu 依 Tauri 前置需求安裝 `libwebkit2gtk-4.1-dev`、`build-essential`、`curl`、`wget`、`file`、`libxdo-dev`、`libssl-dev`、`libayatana-appindicator3-dev`（系統匣）與 `librsvg2-dev`。
 - Windows 11 是目前已驗證的 Desktop 開發環境。CI 會在 Windows、macOS 與 Linux 執行核心檢查；macOS／Linux 的 Desktop 發佈與真實 Tunnel 流程尚未完成實機驗證。
-- 現行操作方式見 [README](README.md) 與[操作指南](docs/usage.md)；安全邊界與回報方式見 [SECURITY.md](SECURITY.md)。
+- 現行操作方式見 [README](README.zh-TW.md) 與[操作指南](docs/usage.md)；安全邊界與回報方式見 [SECURITY.md](SECURITY.md)。
 
 修改後先執行：
 
@@ -22,7 +22,7 @@ bun run check
 
 ## 模型工具與上限
 
-目前公開 33 個 MCP 工具。新增或修改工具時，同步更新 `packages/protocol` 的 schema 與 `LIMITS`、工具描述、測試、[README](README.md)（含英文版 `README.en.md`、日文版 `README.ja.md`）、[操作指南](docs/usage.md) 與 [SECURITY.md](SECURITY.md)。
+目前公開 33 個 MCP 工具。新增或修改工具時，同步更新 `packages/protocol` 的 schema 與 `LIMITS`、工具描述、測試、README（英文版 [README.md](README.md)、[繁中版](README.zh-TW.md)、[日文版](README.ja.md)）、[操作指南](docs/usage.md) 與 [SECURITY.md](SECURITY.md)。
 
 | 範圍 | 工具 | 主要上限 |
 | --- | --- | --- |

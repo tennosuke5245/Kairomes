@@ -1,6 +1,6 @@
 # Kairomes 操作指南
 
-安裝與連線步驟見 [README](../README.md)。這份指南說明安裝後每天會用到的畫面與操作。安全邊界見 [SECURITY](../SECURITY.md)。
+安裝與連線步驟見 [README](../README.zh-TW.md)。這份指南說明安裝後每天會用到的畫面與操作。安全邊界見 [SECURITY](../SECURITY.md)。
 
 ## Desktop
 

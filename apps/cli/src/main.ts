@@ -54,7 +54,7 @@ const help = `Kairomes ${VERSION} — ChatGPT 本機工作台
 
 所有指令支援 --data-dir <folder>。若發生未分類錯誤，可加 --debug 顯示本機診斷訊息。
 serve 的 stdout 僅輸出 MCP JSON-RPC。
-Tunnel 設定見根目錄 README.md；憑證由官方 tunnel-client 管理。
+Tunnel 設定見根目錄 README.zh-TW.md；憑證由官方 tunnel-client 管理。
 `.replaceAll("bun run kairomes", commandPrefix);
 
 async function main() {

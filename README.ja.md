@@ -15,9 +15,10 @@
   <img src="https://img.shields.io/badge/ChatGPT-Secure%20MCP%20Tunnel-555" alt="ChatGPT Secure MCP Tunnel">
   <img src="https://img.shields.io/badge/Bun-runtime-555?logo=bun&logoColor=white" alt="Bun">
   <img src="https://img.shields.io/badge/Tauri-2-555?logo=tauri&logoColor=white" alt="Tauri 2">
+  <a href="https://ko-fi.com/tennosuke5245"><img src="https://img.shields.io/badge/Ko--fi-support-b5474b?logo=ko-fi&logoColor=white" alt="Support on Ko-fi"></a>
 </p>
 
-<p><a href="README.md">繁體中文</a> · <a href="README.en.md">English</a> · <b>日本語</b></p>
+<p><a href="README.md">English</a> · <a href="README.zh-TW.md">繁體中文</a> · <b>日本語</b></p>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-ready-dark.png">
@@ -120,6 +121,10 @@ ChatGPT が自分でフォルダを追加したり、操作を承認したりす
 Runtime API Key、ペアリング用のリンク、ローカルのワークベンチ URL、診断ログは共有しないでください。詳しくは [SECURITY.md](SECURITY.md) を見てください。
 
 Kairomes は独立したオープンソースプロジェクトです。OpenAI の公認を受けておらず、ChatGPT の公開ストアにも掲載されていません。
+
+## サポート
+
+Kairomes が役に立ったら、[Ko-fi でコーヒーを一杯](https://ko-fi.com/tennosuke5245)おごってもらえるとうれしいです。開発を続ける励みになります。
 
 ## 開発
 
