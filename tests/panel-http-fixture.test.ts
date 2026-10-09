@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { type PanelSnapshot, readSnapshots } from "../packages/protocol/src/index.ts";
+import { onePixelPng } from "../apps/daemon/src/__fixtures__/images.ts";
+import { prepareImage } from "../apps/extension/src/image-file.ts";
+import { ImageUploadTracker } from "../apps/extension/src/image-upload.ts";
+import { ImportClient } from "../apps/extension/src/import-client.ts";
+import {
+  IMAGE_IMPORT_UPLOAD_ID_HEADER,
+  type PanelImportResponse,
+  type PanelSnapshot,
+  readSnapshots,
+} from "../packages/protocol/src/index.ts";
 import type {
   PanelAccessResponse,
   TrackedPanelAccessMutation,
@@ -289,6 +298,128 @@ test("a held catalog failure arrives after EOF and reset clears it without reusi
     expect(transport.fixture.probe().mutations).toBe(0);
   } finally {
     abort.abort();
+    transport.close();
+  }
+});
+
+test("synthetic image routes follow the daemon contract: create, idempotent upload, preview before approve", async () => {
+  const transport = startFixture();
+  const workspace_id = "00000000-0000-4000-8000-000000000010";
+  const request_id = crypto.randomUUID();
+  const auth = { origin: transport.origin, authorization: `Bearer ${"0".repeat(64)}` };
+  const create = (body: unknown) => transport.post("/api/panel/imports", body);
+  try {
+    expect(
+      (await create({ workspace_id, request_id: crypto.randomUUID(), path: "missing/a.png" }))
+        .status,
+    ).toBe(400);
+    const created = await create({ workspace_id, request_id, path: "images/a.png" });
+    const first = (await created.json()) as PanelImportResponse;
+    expect(first.import).toMatchObject({
+      state: "awaiting_file",
+      delivery: "user_supplied",
+      origin: "panel",
+    });
+    // The same request ID with the same input is the same import; a changed input is refused.
+    const again = (await (
+      await create({ workspace_id, request_id, path: "images/a.png" })
+    ).json()) as PanelImportResponse;
+    expect(again.import.id).toBe(first.import.id);
+    expect((await create({ workspace_id, request_id, path: "images/b.png" })).status).toBe(409);
+
+    const upload = (uploadId: string, body: Blob = new Blob([onePixelPng])) =>
+      fetch(`${transport.origin}/api/panel/imports/${first.import.id}/file`, {
+        method: "POST",
+        headers: {
+          ...auth,
+          "content-type": "image/png",
+          [IMAGE_IMPORT_UPLOAD_ID_HEADER]: uploadId,
+        },
+        body,
+      });
+    const uploadId = crypto.randomUUID();
+    const uploaded = (await (await upload(uploadId)).json()) as PanelImportResponse;
+    expect(uploaded.import).toMatchObject({
+      state: "pending",
+      upload_id: uploadId,
+      byte_size: onePixelPng.length,
+    });
+    // A retry with the same upload ID replays the first answer; a new ID finds no waiting slot.
+    expect(
+      ((await (await upload(uploadId)).json()) as PanelImportResponse).import.fingerprint,
+    ).toBe(uploaded.import.fingerprint);
+    expect((await upload(crypto.randomUUID())).status).toBe(409);
+
+    const approve = () =>
+      transport.post("/api/panel/approvals", {
+        action: "approve",
+        import_id: first.import.id,
+        fingerprint: uploaded.import.fingerprint,
+      });
+    const early = await approve();
+    expect(early.status).toBe(400);
+    expect(await early.json()).toMatchObject({ code: "IMPORT_PREVIEW_REQUIRED" });
+    const content = await fetch(
+      `${transport.origin}/api/panel/imports/${first.import.id}/content`,
+      {
+        headers: auth,
+      },
+    );
+    expect(content.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await content.arrayBuffer())).toEqual(new Uint8Array(onePixelPng));
+    expect((await approve()).status).toBe(200);
+    expect(transport.fixture.imports.list()[0]).toMatchObject({
+      state: "applied",
+      write_outcome: "written_verified",
+    });
+    // Pending bytes are gone once decided.
+    expect(
+      (
+        await fetch(`${transport.origin}/api/panel/imports/${first.import.id}/content`, {
+          headers: auth,
+        })
+      ).status,
+    ).toBe(404);
+  } finally {
+    transport.close();
+  }
+});
+
+test("a lost upload answer is settled by the same upload ID, never by a second upload", async () => {
+  const transport = startFixture();
+  const source = "synthetic";
+  const uploads = new ImageUploadTracker();
+  uploads.bind(source);
+  const client = new ImportClient({
+    fetch: (path, { timeoutMs: _timeout, ...init }) =>
+      fetch(`${transport.origin}${path}`, {
+        ...init,
+        headers: {
+          ...(init.headers as Record<string, string>),
+          origin: transport.origin,
+          authorization: `Bearer ${"0".repeat(64)}`,
+        },
+      }),
+    uploads,
+    source: () => source,
+  });
+  try {
+    const created = await client.create({
+      workspace_id: "00000000-0000-4000-8000-000000000010",
+      request_id: crypto.randomUUID(),
+      path: "images/lost.png",
+    });
+    const prepared = await prepareImage(new File([onePixelPng], "image.png"));
+    if (!prepared.ok) throw new Error("fixture image");
+    transport.fixture.imports.loseNextUpload();
+    await expect(client.upload(created.import, prepared.image)).rejects.toMatchObject({
+      unknown: true,
+    });
+    const lostId = uploads.status(source, created.import.id)?.uploadId;
+    const settled = await client.upload(created.import, prepared.image);
+    expect(settled.import).toMatchObject({ state: "pending", upload_id: lostId });
+    expect(transport.fixture.imports.counts.uploads).toBe(2);
+  } finally {
     transport.close();
   }
 });

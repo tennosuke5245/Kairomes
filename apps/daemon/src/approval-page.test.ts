@@ -47,13 +47,21 @@ test("the legacy approval page neither lists nor decides image imports", async (
             request_id: crypto.randomUUID(),
             path: target,
             summary: "保存圖片",
-            file: { download_url: "https://files.example/signed", file_id: "file_fixture" },
+            file: {
+              download_url: "https://files.oaiusercontent.com/file-fixture/signed",
+              file_id: "file_fixture",
+            },
           },
           "mcp",
         )
-      ).artifact_import;
+      ).image_import;
+    const settled = async (id: string) => {
+      while (service.imports.poll(id).image_import.state === "preparing") await Bun.sleep(5);
+    };
     const pending = await request("generated.png");
+    await settled(pending.id);
     const list = await (await post({ action: "list" })).json();
+    expect(list.importHydration).toEqual({ hydrated: 1, omitted: 0, rejected: 0 });
     const review = (list.imports as ArtifactImportApproval[]).find(
       (item) => item.id === pending.id,
     );
@@ -67,7 +75,7 @@ test("the legacy approval page neither lists nor decides image imports", async (
     });
     expect(approve.status).toBe(400);
     expect(await approve.json()).toMatchObject({ code: "IMPORT_APPROVAL_PANEL_ONLY" });
-    expect(service.imports.poll(pending.id).artifact_import.state).toBe("pending");
+    expect(service.imports.poll(pending.id).image_import.state).toBe("pending");
     expect(await Bun.file(path.join(f.root, "generated.png")).exists()).toBe(false);
 
     // Denying (with a reason) or stopping only reduces what can happen and stays available.
@@ -78,23 +86,30 @@ test("the legacy approval page neither lists nor decides image imports", async (
       reason: " 換一張圖 ",
     });
     expect(denied.status).toBe(200);
-    expect(service.imports.poll(pending.id).artifact_import).toMatchObject({
+    expect(service.imports.poll(pending.id).image_import).toMatchObject({
       state: "denied",
       denial_reason: "換一張圖",
     });
     const second = await request("second.png");
+    await settled(second.id);
     expect((await post({ action: "stop", import_id: second.id })).status).toBe(200);
-    expect(service.imports.poll(second.id).artifact_import.state).toBe("cancelled");
+    expect(service.imports.poll(second.id).image_import.state).toBe("cancelled");
 
-    // The paired panel's path (the same service call without the admin gate) still approves.
+    // The paired panel's path (the same service call without the admin gate) still approves,
+    // once that panel has read the pending bytes.
     const third = await request("third.png");
+    await settled(third.id);
     const thirdReview = service.imports.approvals().find((item) => item.id === third.id);
-    await service.decideApproval({
-      action: "approve",
-      import_id: third.id,
-      fingerprint: thirdReview?.fingerprint ?? "",
-    });
-    expect(service.imports.poll(third.id).artifact_import.state).toBe("applied");
+    const panelToken = "c".repeat(64);
+    const approveThird = () =>
+      service.decideApproval(
+        { action: "approve", import_id: third.id, fingerprint: thirdReview?.fingerprint ?? "" },
+        panelToken,
+      );
+    await expect(approveThird()).rejects.toMatchObject({ code: "IMPORT_PREVIEW_REQUIRED" });
+    service.imports.content(third.id, panelToken);
+    await approveThird();
+    expect(service.imports.poll(third.id).image_import.state).toBe("applied");
     expect(await Bun.file(path.join(f.root, "third.png")).exists()).toBe(true);
   } finally {
     await app.close();

@@ -1,6 +1,8 @@
 import { AccessReceipts } from "../apps/daemon/src/access-receipts.ts";
+import { ApprovalInputSchema } from "../packages/protocol/src/approval.ts";
 import type { CommandApproval, PanelSnapshot } from "../packages/protocol/src/index.ts";
 import { PanelAccessInputSchema } from "../packages/protocol/src/panel-access.ts";
+import { createSyntheticImports, syntheticImport } from "./import-fixture.ts";
 
 // Public, in-memory transport fixture. Never launches a host, shell, reader or MCP server.
 const syntheticToken = "0".repeat(64);
@@ -57,7 +59,33 @@ export function createPanelHttpFixture() {
     commands: [command()],
     accessGrants: [],
   };
-  const bytes = () => encoder.encode(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
+  // Image imports: the same memory-only stand-in as the in-page fixtures.
+  const imports = createSyntheticImports({
+    workspaces: [
+      {
+        id: workspaceId,
+        name: "HTTP 合成測試專案",
+        folders: ["", "images", "design", "design/placeholders"],
+        existing: ["images/logo.png"],
+      },
+    ],
+    changed: () => emit(),
+  });
+  const frame = (): PanelSnapshot => ({ ...snapshot, imports: imports.list() });
+  imports.setSnapshot(frame);
+  let importSeq = 0;
+  const modelImport = () =>
+    imports.seed(
+      syntheticImport(
+        {
+          id: `${String(++importSeq).padStart(8, "0")}-0000-4000-8000-0000000000cc`,
+          workspace: { id: workspaceId, name: "HTTP 合成測試專案" },
+          now: Date.now(),
+        },
+        { created_at: Date.now(), expires_at: Date.now() + 10 * 60_000 },
+      ),
+    );
+  const bytes = () => encoder.encode(`event: snapshot\ndata: ${JSON.stringify(frame())}\n\n`);
   const send = (controller: ReadableStreamDefaultController<Uint8Array>) => {
     const data = bytes();
     // Intentionally split bytes, including UTF-8 text. HTTP may coalesce these chunks.
@@ -104,11 +132,33 @@ export function createPanelHttpFixture() {
       for (const release of heldCatalogs) release(503);
     },
     probe,
+    imports,
     async handle(request: Request): Promise<Response | null> {
       const url = new URL(request.url);
       const route = url.pathname;
       if (route === "/synthetic-panel/probe" && request.method === "GET") return reply(probe());
       if (!route.startsWith("/synthetic-panel/") && !route.startsWith("/api/panel/")) return null;
+      // Image routes: exact origin and token like the daemon; the content route is a GET.
+      if (route.startsWith("/api/panel/imports")) {
+        // The daemon accepts an Origin-less GET of pending bytes (Chromium omits it for the
+        // extension). This harness page is same-origin with the fixture, so its GET reports
+        // Sec-Fetch-Site: same-origin; only this synthetic stand-in lets that through.
+        const originless =
+          request.method === "GET" &&
+          request.headers.get("origin") === null &&
+          ["same-origin", "none", null].includes(request.headers.get("sec-fetch-site"));
+        if (request.headers.get("origin") !== url.origin && !originless)
+          return reply({ message: "Synthetic origin rejected" }, 403);
+        if (request.headers.get("authorization") !== `Bearer ${syntheticToken}` || !authorized)
+          return reply({}, 401);
+        if (!online) return reply({}, 503);
+        try {
+          return (await imports.handle(request)) ?? reply({}, 404);
+        } catch {
+          // An accepted upload whose answer is lost: the client sees a gateway failure.
+          return reply({}, 502);
+        }
+      }
       if (request.method !== "POST" || request.headers.get("origin") !== url.origin)
         return reply({ message: "Synthetic origin rejected" }, 403);
       let body: Record<string, unknown>;
@@ -143,6 +193,13 @@ export function createPanelHttpFixture() {
           case "pending":
             snapshot.commands?.push(command());
             emit();
+            break;
+          case "import":
+            await modelImport();
+            emit();
+            break;
+          case "lose-upload":
+            imports.loseNextUpload();
             break;
           case "offline":
             online = false;
@@ -316,7 +373,7 @@ export function createPanelHttpFixture() {
           return reply({ message: "合成 catalog 延遲失敗" }, status);
         }
         const response = reply(
-          route.endsWith("/mcp") ? { catalog_revision: "synthetic-http", servers: [] } : snapshot,
+          route.endsWith("/mcp") ? { catalog_revision: "synthetic-http", servers: [] } : frame(),
         );
         if (holdNextList && route.endsWith("/approvals")) {
           holdNextList = false;
@@ -334,12 +391,25 @@ export function createPanelHttpFixture() {
         }
         return response;
       }
+      if (route.endsWith("/approvals") && typeof body.import_id === "string") {
+        const decision = ApprovalInputSchema.safeParse(body);
+        if (!decision.success) return reply({ code: "VALIDATION" }, 400);
+        counts.mutations++;
+        const decided = await imports.decide(body);
+        return decided ?? reply({}, 400);
+      }
+      // Same decision contract as the daemon: a reason is accepted only with deny.
+      const decision = ApprovalInputSchema.safeParse(body);
       if (
         !route.endsWith("/approvals") ||
-        !["approve", "deny", "stop"].includes(String(body.action)) ||
-        Object.keys(body).some((key) => !["action", "command_id", "fingerprint"].includes(key))
+        !decision.success ||
+        decision.data.action === "list" ||
+        Object.keys(body).some(
+          (key) => !["action", "command_id", "fingerprint", "reason"].includes(key),
+        )
       )
         return reply({}, 400);
+      const reason = decision.data.action === "deny" ? decision.data.reason : undefined;
       const selected = snapshot.commands?.find((item) => item.id === body.command_id);
       if (
         !selected ||
@@ -358,13 +428,14 @@ export function createPanelHttpFixture() {
       selected.state =
         body.action === "approve" ? "running" : body.action === "deny" ? "denied" : "cancelled";
       selected.started_at = Date.now();
+      if (reason) selected.denial_reason = reason;
       if (loseNextResponse) {
         loseNextResponse = false;
         // A transport failure response after commit, before an SSE observation.
         return reply({}, 502);
       }
       emit();
-      return reply(snapshot);
+      return reply(frame());
     },
   };
 }

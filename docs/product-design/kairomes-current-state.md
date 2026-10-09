@@ -2,7 +2,9 @@
 
 盤點日期：2026-10-02（Asia/Taipei）。程式碼基準：`5edf3dcb61eb5021135ccf200f0aa7af97ddceb1`，manifest 版本 `0.1.4`。
 
-本文件以目前程式碼、[README](../../README.md)、[CONTRIBUTING](../../CONTRIBUTING.md) 與 [SECURITY](../../SECURITY.md) 為依據。以下「已實作」表示能在原始碼中確認；不代表此次使用真實 ChatGPT 帳號、Tunnel、Desktop sidecar 或使用者的 Codex 歷史完成端到端驗證。UI 尺寸與遮擋問題標為待視覺驗證，不能直接當成已重現的缺陷。
+> 0.3.0 後續變更：圖片匯入已改為公開工具（`image_import_request`／`image_import_poll`／`image_import_cancel`），公開工具共 33 個，`WIDGET_URI` 為 v7、`MCP_RESULT_URI` 為 v3；介面改用[設計系統](design-system.md)。本文其餘內容保留盤點當時的狀態。
+
+帶行號的原始碼連結固定在盤點基準 revision。本文件以目前程式碼、[README](../../README.md)、[CONTRIBUTING](../../CONTRIBUTING.md) 與 [SECURITY](../../SECURITY.md) 為依據。以下「已實作」表示能在原始碼中確認；不代表此次使用真實 ChatGPT 帳號、Tunnel、Desktop sidecar 或使用者的 Codex 歷史完成端到端驗證。UI 尺寸與遮擋問題標為待視覺驗證，不能直接當成已重現的缺陷。
 
 ## 1. 產品定位與表面分工
 
@@ -10,12 +12,12 @@ Kairomes 是 ChatGPT 使用本機專案的工具橋接與管理介面。目前�
 
 | 表面 | 目前責任 | 程式碼依據 |
 | --- | --- | --- |
-| Desktop | 背景 Host 與 Tunnel 生命週期、Credential Manager 金鑰設定、專案掛載、Extension 配對、疑難排解 | [App.tsx](../../apps/desktop/src/App.tsx#L490)、[api.ts](../../apps/desktop/src/api.ts#L70) |
-| Extension 原生 DOM | 本機配對、核准／拒絕、停止命令／終端機、逐步確認／自主模式、下游 MCP 管理 | [sidepanel.html](../../apps/extension/sidepanel.html#L10)、[sidepanel.ts](../../apps/extension/src/sidepanel.ts#L218) |
-| Extension 內 localhost iframe | 動態、專案檔案、搜尋、操作結果、圖片、變更／命令／終端機詳情 | [main.tsx workbench 分支](../../apps/widget/src/main.tsx#L681) |
-| 聊天內 MCP App | 選用嵌入工作台、工具結果卡；宿主具備能力時才可送文字或更新模型上下文 | [bridge.ts](../../apps/widget/src/bridge.ts#L134)、[tools.ts](../../apps/daemon/src/tools.ts#L214) |
-| Daemon 與共享 protocol | 授權分離、工具 schema、工作區操作與程序管理、活動快照 | [preview.ts](../../apps/daemon/src/preview.ts#L175)、[activity.ts](../../packages/protocol/src/activity.ts#L1) |
-| 選用本機 handoff CLI | Codex 工作階段清單與有限歷史快照，僅輸出本機預覽 | [handoff.ts](../../apps/cli/src/handoff.ts#L9) |
+| Desktop | 背景 Host 與 Tunnel 生命週期、Credential Manager 金鑰設定、專案掛載、Extension 配對、疑難排解 | [App.tsx](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/desktop/src/App.tsx#L490)、[api.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/desktop/src/api.ts#L70) |
+| Extension 原生 DOM | 本機配對、核准／拒絕、停止命令／終端機、逐步確認／自主模式、下游 MCP 管理 | [sidepanel.html](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/sidepanel.html#L10)、[sidepanel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/sidepanel.ts#L218) |
+| Extension 內 localhost iframe | 動態、專案檔案、搜尋、操作結果、圖片、變更／命令／終端機詳情 | [main.tsx workbench 分支](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/main.tsx#L681) |
+| 聊天內 MCP App | 選用嵌入工作台、工具結果卡；宿主具備能力時才可送文字或更新模型上下文 | [bridge.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/bridge.ts#L134)、[tools.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/tools.ts#L214) |
+| Daemon 與共享 protocol | 授權分離、工具 schema、工作區操作與程序管理、活動快照 | [preview.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/preview.ts#L175)、[activity.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/packages/protocol/src/activity.ts#L1) |
+| 選用本機 handoff CLI | Codex 工作階段清單與有限歷史快照，僅輸出本機預覽 | [handoff.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/cli/src/handoff.ts#L9) |
 
 `workbench_open` 的公開描述明確要求使用者想在聊天中嵌入工作台時才呼叫。日常工作已有 Extension，因此設計不應把嵌入工作台當成配對或工具連線的前提。
 
@@ -29,7 +31,7 @@ Kairomes 是 ChatGPT 使用本機專案的工具橋接與管理介面。目前�
 4. 已過期但符合續發條件的配對連結可換新；服務重啟或實例不符則需要重新配對。
 5. 舊式工作台網址可進入瀏覽模式，但沒有側欄核准憑證。應區分「可看工作台」與「可核准」。
 
-依據：[配對 HTML](../../apps/extension/sidepanel.html#L32)、[配對流程](../../apps/extension/src/sidepanel.ts#L501)、[URL 驗證](../../apps/extension/src/pairing.ts)、[manifest](../../apps/extension/manifest.json)。
+依據：[配對 HTML](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/sidepanel.html#L32)、[配對流程](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/sidepanel.ts#L501)、[URL 驗證](../../apps/extension/src/pairing.ts)、[manifest](../../apps/extension/manifest.json)。
 
 ### 2.2 日常側欄
 
@@ -43,20 +45,20 @@ iframe 的 `workbench` 模式有：
 - 小於或等於 760 px 時，專案列維持 58 px；詳情覆蓋中央畫面，開啟時動態設為不可見，使用「返回動態」回到串流。
 - 底列顯示工作台連線狀態與版本。設定入口位於專案列底部，傳送限定類型的訊息讓 Extension 開啟設定。
 
-依據：[主要布局](../../apps/widget/src/main.tsx#L720)、[詳情](../../apps/widget/src/main.tsx#L846)、[窄版 CSS](../../apps/widget/src/styles.css#L2162)、[ActivityPanel](../../apps/widget/src/activity-panel.tsx#L126)、[設定訊息檢查](../../apps/extension/src/sidepanel.ts#L489)。
+依據：[主要布局](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/main.tsx#L720)、[詳情](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/main.tsx#L846)、[窄版 CSS](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/styles.css#L2162)、[ActivityPanel](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/activity-panel.tsx#L126)、[設定訊息檢查](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/sidepanel.ts#L489)。
 
 ### 2.3 核准、權限與停止
 
 | 功能 | 目前行為 | 依據 |
 | --- | --- | --- |
-| 檔案變更核准 | 顯示摘要、操作與相對路徑、到期時間；以同一批次再檢查版本並套用。原生核准通道提供完整 diff；超過 192 KiB 則準備階段拒絕整批，要求拆小 | [approval-panel.ts](../../apps/extension/src/approval-panel.ts#L88)、[file-changes.ts](../../apps/daemon/src/file-changes.ts#L170)、[changes.ts](../../packages/workspace-core/src/changes.ts#L310) |
-| 一次性命令核准 | 顯示 argv、執行檔、起始絕對位置、timeout 與主機權限說明；只核准這次請求 | [approval-panel.ts](../../apps/extension/src/approval-panel.ts#L98)、[command.ts](../../packages/protocol/src/command.ts) |
-| 終端機核准 | 核准整個主機 shell 工作階段 15 分鐘；並非逐條命令核准或 OS sandbox | [approval-panel.ts](../../apps/extension/src/approval-panel.ts#L105)、[terminal.ts](../../apps/daemon/src/terminal.ts) |
-| 逐步確認 | 每批檔案變更、命令與終端機等待本機使用者決定 | [access-panel.ts](../../apps/extension/src/access-panel.ts#L51) |
-| 檔案自主 | 工作區內具版本檢查的結構化變更可自動套用；不授予 shell | [access-panel.ts](../../apps/extension/src/access-panel.ts#L53)、[access.test.ts](../../apps/daemon/src/access.test.ts#L102) |
-| 全自主 | 授權指定起始專案的命令與終端機，15／60／240 分鐘或直到手動收回；程序仍有自身期限 | [access-panel.ts](../../apps/extension/src/access-panel.ts#L82)、[SECURITY](../../SECURITY.md) |
-| 執行中工作 | 待核准與正在執行分開；只有合適狀態的命令／終端機有取消或停止按鈕 | [active-work-panel.ts](../../apps/extension/src/active-work-panel.ts#L20)、[approval-state.ts](../../apps/extension/src/approval-state.ts) |
-| 未確認的核准結果 | 重新讀取狀態，不自動重送核准；連線未恢復時停用操作 | [sidepanel.ts](../../apps/extension/src/sidepanel.ts#L234) |
+| 檔案變更核准 | 顯示摘要、操作與相對路徑、到期時間；以同一批次再檢查版本並套用。原生核准通道提供完整 diff；超過 192 KiB 則準備階段拒絕整批，要求拆小 | [approval-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/approval-panel.ts#L88)、[file-changes.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/file-changes.ts#L170)、[changes.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/packages/workspace-core/src/changes.ts#L310) |
+| 一次性命令核准 | 顯示 argv、執行檔、起始絕對位置、timeout 與主機權限說明；只核准這次請求 | [approval-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/approval-panel.ts#L98)、[command.ts](../../packages/protocol/src/command.ts) |
+| 終端機核准 | 核准整個主機 shell 工作階段 15 分鐘；並非逐條命令核准或 OS sandbox | [approval-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/approval-panel.ts#L105)、[terminal.ts](../../apps/daemon/src/terminal.ts) |
+| 逐步確認 | 每批檔案變更、命令與終端機等待本機使用者決定 | [access-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/access-panel.ts#L51) |
+| 檔案自主 | 工作區內具版本檢查的結構化變更可自動套用；不授予 shell | [access-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/access-panel.ts#L53)、[access.test.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/access.test.ts#L102) |
+| 全自主 | 授權指定起始專案的命令與終端機，15／60／240 分鐘或直到手動收回；程序仍有自身期限 | [access-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/access-panel.ts#L82)、[SECURITY](../../SECURITY.md) |
+| 執行中工作 | 待核准與正在執行分開；只有合適狀態的命令／終端機有取消或停止按鈕 | [active-work-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/active-work-panel.ts#L20)、[approval-state.ts](../../apps/extension/src/approval-state.ts) |
+| 未確認的核准結果 | 重新讀取狀態，不自動重送核准；連線未恢復時停用操作 | [sidepanel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/sidepanel.ts#L234) |
 
 自主模式作用於同一服務實例的專案，沒有聊天級歸屬隔離；其他聊天也可能使用。UI 不能以「只允許這個聊天」描述目前的 grant。全自主可以存取工作區外和網路；起始專案選擇不等於安全隔離。
 
@@ -64,7 +66,7 @@ iframe 的 `workbench` 模式有：
 
 側欄設定有「一般」與「MCP 整合」。一般說明操作權限與 Tunnel；MCP 整合可新增 stdio 或 Streamable HTTP server、重新整理 catalog、啟停 server 與個別工具、移除整合。新增後目前所有工具立即開啟，介面明示只加入信任的 MCP；風險標示來自下游 server，屬參考資訊。
 
-模型經固定 broker 搜尋 catalog、讀取工具 schema、以當前 catalog revision 呼叫工具；不能掛載或啟停 server，也不能讀取啟動設定與憑證。依據：[mcp-panel.ts](../../apps/extension/src/mcp-panel.ts#L70)、[MCP 管理端點](../../apps/daemon/src/preview.ts#L329)、[broker tools](../../apps/daemon/src/tools.ts#L174)。
+模型經固定 broker 搜尋 catalog、讀取工具 schema、以當前 catalog revision 呼叫工具；不能掛載或啟停 server，也不能讀取啟動設定與憑證。依據：[mcp-panel.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/mcp-panel.ts#L70)、[MCP 管理端點](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/preview.ts#L329)、[broker tools](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/tools.ts#L174)。
 
 ## 3. 現有能力與不能當成已實作的功能
 
@@ -78,18 +80,18 @@ iframe 的 `workbench` 模式有：
 | 任務 | 操作與專案歸屬、待使用者處理與進行中狀態 | 沒有 task ID、conversation ID、計畫、阻塞原因或多步任務完成模型 |
 | 接力 | Codex 同專案歷史的明確選用本機快照 | 沒有 sidebar 精修／發布／取用交接包，也沒有執行權轉移或來源停止保證 |
 
-公開工具名稱依 [tools.ts](../../apps/daemon/src/tools.ts#L53)；共享 schema 與 UI resource 版本依 [protocol/index.ts](../../packages/protocol/src/index.ts#L20)。目前 `WIDGET_URI` 為 `ui://kairomes/workbench/v6.html`，不相容的 UI resource 變更需依專案規則升版。
+公開工具名稱依 [tools.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/tools.ts#L53)；共享 schema 與 UI resource 版本依 [protocol/index.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/packages/protocol/src/index.ts#L20)。目前 `WIDGET_URI` 為 `ui://kairomes/workbench/v6.html`，不相容的 UI resource 變更需依專案規則升版。
 
-圖片匯入的停用敘述在 [MCP server instructions](../../apps/daemon/src/server.ts#L52)。本機媒體上限與模型回傳上限不是同一概念，設計文件與 UI 不應混用這兩種數字。
+圖片匯入的停用敘述在 [MCP server instructions](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/server.ts#L52)。本機媒體上限與模型回傳上限不是同一概念，設計文件與 UI 不應混用這兩種數字。
 
 ## 4. 狀態、資料與安全邊界
 
 ### 4.1 目前可重用資料
 
-- `ActivityEntry`：`id`、序號與 focus 序號、來源、操作種類、狀態、時間、workspace／file／command／session／change／result ID；**沒有聊天或任務 ID**。見 [activity.ts](../../packages/protocol/src/activity.ts#L6)。
+- `ActivityEntry`：`id`、序號與 focus 序號、來源、操作種類、狀態、時間、workspace／file／command／session／change／result ID；**沒有聊天或任務 ID**。見 [activity.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/packages/protocol/src/activity.ts#L6)。
 - `ActivitySnapshot`：一般 UI 的活動、掛載專案、命令、變更與終端機狀態；不含核准 fingerprint 或絕對 cwd。
-- `PanelSnapshot`：僅可信 Extension 取得核准 fingerprint、絕對 cwd、workspace 名稱與 access grants。見 [PanelSnapshot](../../packages/protocol/src/activity.ts#L48)。
-- `ActivityStore`：最多 200 筆記憶體活動；每筆保留結果最多 256 KiB，五分鐘到期，最多 40 筆與總計 4 MiB。視覺上的完成列不代表詳情仍可讀取，更不代表永久稽核紀錄。見 [activity store](../../apps/daemon/src/activity.ts#L37)。
+- `PanelSnapshot`：僅可信 Extension 取得核准 fingerprint、絕對 cwd、workspace 名稱與 access grants。見 [PanelSnapshot](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/packages/protocol/src/activity.ts#L48)。
+- `ActivityStore`：最多 200 筆記憶體活動；每筆保留結果最多 256 KiB，五分鐘到期，最多 40 筆與總計 4 MiB。視覺上的完成列不代表詳情仍可讀取，更不代表永久稽核紀錄。見 [activity store](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/activity.ts#L37)。
 - 命令與檔案變更已具有 request UUID 與 fingerprint；不確定結果要讀取同 ID 的狀態，不可換 ID 自動重跑。
 
 diff 的兩種通道不同：原生 `FileChangeApproval.diff` 直接使用已準備的完整 diff，最多 192 KiB；一般工具 `file_change_poll` 的結果再裁至 48 KiB。單件核准頁可重用現有原生資料，不應以截斷的 MCP／iframe poll 結果替代，亦不需要為目前受限完整 diff 新增模型端接口。
@@ -98,7 +100,7 @@ diff 的兩種通道不同：原生 `FileChangeApproval.diff` 直接使用已準
 
 Extension 的「核准連線」由 `/api/panel/stream` 的授權快照決定；iframe 的「工作台已連線」表示本機 workbench 可用；Desktop 另有本機、Tunnel 與最近 ChatGPT MCP 請求的狀態。這些是不同證據，不能合併成「ChatGPT 正在執行此任務」。`kairomes_status` 的公開描述也明確不驗證 ChatGPT 或 Tunnel 連線。
 
-Extension 串流失敗會以 1 秒起始、最多 15 秒的退避重連；401／403 使配對失效並停用控制。重連只接收快照，不能把最後資料當成最新狀態。見 [串流](../../apps/extension/src/sidepanel.ts#L382)、[status tool](../../apps/daemon/src/tools.ts#L206)。
+Extension 串流失敗會以 1 秒起始、最多 15 秒的退避重連；401／403 使配對失效並停用控制。重連只接收快照，不能把最後資料當成最新狀態。見 [串流](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/sidepanel.ts#L382)、[status tool](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/tools.ts#L206)。
 
 ### 4.3 可重用端點與不可穿越的責任
 
@@ -112,7 +114,7 @@ Extension 串流失敗會以 1 秒起始、最多 15 秒的退避重連；401／
 | `/api/activity/stream`、`result` | 一般工作台活動快照與有限結果 | 可重構資訊架構；不得當成持久任務或來源聊天歷史 |
 | `/api/tools`、`/api/mcp` | 工具呼叫與共享 MCP relay | 現行沒有 handoff tool；不能把泛用 Codex RPC 接口直接開給模型 |
 
-端點與 origin／token 分離見 [preview.ts](../../apps/daemon/src/preview.ts#L175)、[一般 UI/MCP/admin 檢查](../../apps/daemon/src/preview.ts#L430)。Extension 接收 iframe 訊息時同時檢查來源 window、精確 origin 與訊息類型；目前僅允許開設定。瀏覽器沒有 ChatGPT 網域 permission、content script、cookies 或 debugger 權限。
+端點與 origin／token 分離見 [preview.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/preview.ts#L175)、[一般 UI/MCP/admin 檢查](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/preview.ts#L430)。Extension 接收 iframe 訊息時同時檢查來源 window、精確 origin 與訊息類型；目前僅允許開設定。瀏覽器沒有 ChatGPT 網域 permission、content script、cookies 或 debugger 權限。
 
 ## 5. Codex → ChatGPT + Kairomes 交接現況
 
@@ -129,13 +131,13 @@ Extension 串流失敗會以 1 秒起始、最多 15 秒的退避重連；401／
 - 保留公開 user／agent 文字與命令的有限狀態／退出碼；排除推理、原始工具結果、圖片 URL、附件、未知 item。
 - 文字總預算 24,000 字元、單段預設 6,000；每 turn 訊息／命令動作也有數量上限。使用已知格式遮罩不保證排除所有私人資料。
 
-依據：[CLI](../../apps/cli/src/handoff.ts#L10)、[來源讀取](../../apps/daemon/src/agent-sessions.ts#L83)、[snapshot](../../apps/daemon/src/agent-sessions.ts#L121)、[摘要組裝](../../apps/daemon/src/agent-sessions.ts#L155)、[RPC child](../../apps/daemon/src/codex-rpc.ts#L16)。
+依據：[CLI](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/cli/src/handoff.ts#L10)、[來源讀取](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/agent-sessions.ts#L83)、[snapshot](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/agent-sessions.ts#L121)、[摘要組裝](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/agent-sessions.ts#L155)、[RPC child](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/codex-rpc.ts#L16)。
 
 快照具有 `schemaVersion: 1`、來源、capture timestamp、workspace cwd、完成／partial／pending turns、coverage 與 warnings；`scope` 是 `local-preview`，`permissions` 是 `not-transferred`，`taskState.goal/plan/decisions` 刻意維持 `null`。它是有限證據摘錄，尚未產生能讓另一個 Agent 可靠接手的目標、決策與下一步。
 
-CLI 產物只有 stdout 的格式化 JSON，**沒有檔案產物路徑、資料庫寫入或持久交接包**。`list` 回傳 `{ sessions, nextCursor, note }`；每筆 session 為 `{ id, provider: "codex", title, updatedAt, sourceStatus }`。`snapshot` 回傳上列 `HandoffSnapshot`，另外加上 `workingTree`。其 `workingTree.state` 可能為 `available`（`capturedAt/branch/head/files/truncated/note`）或 `unavailable`（`capturedAt/reason`）。檔案列為 `{ status, path, previousPath? }`；沒有 diff 或內容 digest。完整型別見 [HandoffSnapshot](../../apps/daemon/src/agent-sessions.ts#L28)，stdout 組裝見 [handoff.ts](../../apps/cli/src/handoff.ts#L43)。
+CLI 產物只有 stdout 的格式化 JSON，**沒有檔案產物路徑、資料庫寫入或持久交接包**。`list` 回傳 `{ sessions, nextCursor, note }`；每筆 session 為 `{ id, provider: "codex", title, updatedAt, sourceStatus }`。`snapshot` 回傳上列 `HandoffSnapshot`，另外加上 `workingTree`。其 `workingTree.state` 可能為 `available`（`capturedAt/branch/head/files/truncated/note`）或 `unavailable`（`capturedAt/reason`）。檔案列為 `{ status, path, previousPath? }`；沒有 diff 或內容 digest。完整型別見 [HandoffSnapshot](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/agent-sessions.ts#L28)，stdout 組裝見 [handoff.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/cli/src/handoff.ts#L43)。
 
-Git 觀察只讀取確定屬於交接工作區根目錄的目前 branch、HEAD 與 porcelain 狀態，最多 200 筆。不讀 diff、不自動保存工作、不把目前 dirty files 宣稱為來源 Agent 的改動；無 commit 的 unborn HEAD 是有效狀態。見 [handoff-working-tree.ts](../../apps/daemon/src/handoff-working-tree.ts#L22)。
+Git 觀察只讀取確定屬於交接工作區根目錄的目前 branch、HEAD 與 porcelain 狀態，最多 200 筆。不讀 diff、不自動保存工作、不把目前 dirty files 宣稱為來源 Agent 的改動；無 commit 的 unborn HEAD 是有效狀態。見 [handoff-working-tree.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/daemon/src/handoff-working-tree.ts#L22)。
 
 ### 5.2 明確缺口
 
@@ -184,9 +186,9 @@ Git 觀察只讀取確定屬於交接工作區根目錄的目前 branch、HEAD �
 | 同一筆操作可同時出現於原生核准卡、動態列、待確認 notice、右側摘要；其中有重複名稱／狀態／檔案 | 窄版側欄可能為同一件事重複閱讀多段文字 | 核准卡保留判斷所需資料；其他位置採件數與一行狀態；以 fixture 確認哪些資訊會同時可見 |
 | setup 前言、表單說明、進階區重複解釋配對與連線；一般設定再說明頂列權限 | 首次流程的操作步驟被解釋文字拉長 | 先呈現一個主要動作，操作說明縮成一行，細節移入一次性的說明入口 |
 
-CSS 依據：[窄版頂列](../../apps/extension/sidepanel.css#L1382)、[核准浮層](../../apps/extension/sidepanel.css#L1083)、[核准字級](../../apps/extension/sidepanel.css#L1116)、[widget 窄版詳情](../../apps/widget/src/styles.css#L2162)。已有焦點恢復與 reduced motion 程式碼，重構應保留並以互動測試確認。
+CSS 依據：[窄版頂列](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/sidepanel.css#L1382)、[核准浮層](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/sidepanel.css#L1083)、[核准字級](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/sidepanel.css#L1116)、[widget 窄版詳情](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/styles.css#L2162)。已有焦點恢復與 reduced motion 程式碼，重構應保留並以互動測試確認。
 
-文字密度依據：[setup 與一般設定](../../apps/extension/sidepanel.html#L35)、[待確認 notice 與動態卡](../../apps/widget/src/activity-panel.tsx#L171)、[摘要重複操作狀態](../../apps/widget/src/overview-panel.tsx#L282)、[核准卡詳情](../../apps/extension/src/approval-panel.ts#L88)。使用者要求 UI 嚴禁大量文字與重複敘述，因此後續設計須明確分配同一資訊的主顯示位置；詳細工程文件可以完整，介面應只顯示當下決策需要的短句。這裡是程式碼推論，實際同時顯示的情境與密度由視覺審查文件判定。
+文字密度依據：[setup 與一般設定](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/sidepanel.html#L35)、[待確認 notice 與動態卡](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/activity-panel.tsx#L171)、[摘要重複操作狀態](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/widget/src/overview-panel.tsx#L282)、[核准卡詳情](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/extension/src/approval-panel.ts#L88)。使用者要求 UI 嚴禁大量文字與重複敘述，因此後續設計須明確分配同一資訊的主顯示位置；詳細工程文件可以完整，介面應只顯示當下決策需要的短句。這裡是程式碼推論，實際同時顯示的情境與密度由視覺審查文件判定。
 
 ## 7. 可重用測試與安全視覺入口
 
@@ -209,10 +211,10 @@ CSS 依據：[窄版頂列](../../apps/extension/sidepanel.css#L1382)、[核准�
 
 ### 7.2 不接觸使用者資料的視覺入口
 
-- Desktop 可用 `bun run desktop:web` 啟動前端；[api.ts](../../apps/desktop/src/api.ts#L15) 在非 Tauri 環境提供合成資料。`?demo=setup`、`ready`、`error`、`runtime-error` 可看設定、已準備、Tunnel 錯誤與 runtime 錯誤。不要以這個 mock 宣稱真實流程驗證。
-- [tests/approval-preview.ts](../../tests/approval-preview.ts#L7) 只建立合成的 ApprovalPanel／AccessPanel，沒有 credential、bridge 或主機執行能力；適合以靜態 HTML＋browser bundle 顯示。
+- Desktop 可用 `bun run desktop:web` 啟動前端；[api.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/apps/desktop/src/api.ts#L15) 在非 Tauri 環境提供合成資料。`?demo=setup`、`ready`、`error`、`runtime-error` 可看設定、已準備、Tunnel 錯誤與 runtime 錯誤。不要以這個 mock 宣稱真實流程驗證。
+- [tests/approval-preview.ts](https://github.com/tennosuke5245/Kairomes/blob/5edf3dcb61eb5021135ccf200f0aa7af97ddceb1/tests/approval-preview.ts#L7) 只建立合成的 ApprovalPanel／AccessPanel，沒有 credential、bridge 或主機執行能力；適合以靜態 HTML＋browser bundle 顯示。
 - [tests/settings-preview.ts](../../tests/settings-preview.ts) 提供合成 Chrome DevTools MCP catalog 與整合管理畫面；設定 mutation 只更新 fixture 狀態。
 - [tests/fixtures.ts](../../tests/fixtures.ts) 建立暫存專案與 state，僅有合成 README 與程式碼。
-- [preview-live.ts](../../apps/daemon/src/preview-live.ts#L22) 是隔離 fixture 工作台，但會啟動測試 daemon／MCP child 並包含命令／終端機測試控制，**不是純靜態入口**；其輸出含私人工作台權杖 URL，不可放進公開文件、截圖或聊天。純設計盤點優先使用前兩種 mock fixture。
+- [preview-live.ts](../../apps/daemon/src/preview-live.ts) 是隔離 fixture 工作台，但會啟動測試 daemon／MCP child 並包含命令／終端機測試控制，**不是純靜態入口**；其輸出含私人工作台權杖 URL，不可放進公開文件、截圖或聊天。純設計盤點優先使用前兩種 mock fixture。
 
 本盤點沒有啟動真實 daemon／sidecar，沒有讀取實際 Codex 聊天、配對資訊或本機工作台權杖。

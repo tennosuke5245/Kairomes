@@ -1,4 +1,5 @@
-export const INSPECTOR_LAYOUT = { min: 320, max: 760, canvasMin: 320, handle: 8, gutter: 16 };
+/** The inspector is a flush pane: no gutter after it (design spec §5.3, shot e2). */
+export const INSPECTOR_LAYOUT = { min: 320, max: 760, canvasMin: 320, handle: 8, gutter: 0 };
 
 export function inspectorBounds(containerWidth: number) {
   const { min, max, canvasMin, handle, gutter } = INSPECTOR_LAYOUT;

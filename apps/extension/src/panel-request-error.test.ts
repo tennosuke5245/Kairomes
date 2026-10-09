@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { MCP_COMMAND_RELATIVE_MESSAGE, MCP_CWD_INVALID_MESSAGE } from "@kairomes/protocol";
+import { importErrorText } from "./image-file.ts";
 import { mcpCwdRefusal, settleMcpMutation } from "./mcp-mutation.ts";
 import { PanelRequestError, panelErrorCode, panelRequestError } from "./panel-request-error.ts";
 
@@ -91,4 +92,15 @@ test("a converted Host refusal settles as rejected without a reconciliation read
   );
   expect(unknown).toEqual({ outcome: "unknown", state: "listed" });
   expect(uncoded).toEqual([body, { action: "list" }]);
+});
+
+test("an image approval refused for a missing preview shows the import sentence, not the status text", async () => {
+  const error = await panelRequestError(json(409, { code: "IMPORT_PREVIEW_REQUIRED" }));
+  expect(error.code).toBe("IMPORT_PREVIEW_REQUIRED");
+  expect(error.message).toBe(importErrorText("IMPORT_PREVIEW_REQUIRED"));
+  expect(error.message).not.toBe("請求已變更；請重新審閱。");
+  // An expired pairing still wins over any code.
+  expect((await panelRequestError(json(403, { code: "IMPORT_PREVIEW_REQUIRED" }))).message).toBe(
+    "配對已失效。",
+  );
 });

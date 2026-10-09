@@ -1,8 +1,14 @@
 export {
+  ArtifactImportWriteError,
   type PreparedArtifactImport,
   WorkspaceArtifactImports,
 } from "./artifact-imports.ts";
-export { inspectImageBuffer, WorkspaceArtifacts } from "./artifacts.ts";
+export {
+  imageSignature,
+  inspectImageBuffer,
+  isAnimatedImage,
+  WorkspaceArtifacts,
+} from "./artifacts.ts";
 export {
   type PreparedWorkspaceChange,
   WorkspaceChanges,

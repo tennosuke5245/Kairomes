@@ -3,7 +3,7 @@ import {
   type ActivitySource,
   type Artifact,
   type ArtifactImport,
-  artifactImportLabels,
+  artifactImportLabel,
   type Command,
   commandLabels,
   type FileChange,
@@ -238,8 +238,11 @@ export class ActivityStore {
       path: value.path,
       importId: value.id,
       resultId,
-      title: `${value.summary} · ${artifactImportLabels[value.state]}`,
+      // The model-written summary stays in the import itself; the entry names the action.
+      title: `匯入圖片 · ${artifactImportLabel(value)}`,
       state: value.state,
+      writeOutcome: value.write_outcome,
+      errorCode: value.error_code ?? undefined,
       updatedAt: this.now(),
       message: value.message ?? undefined,
     });

@@ -142,4 +142,32 @@ describe("tool input validation", () => {
       WorkspaceListSchema.safeParse({ kind: "workspaces", workspaces: [workspace] }).success,
     ).toBe(true);
   });
+  test("image imports take a strict top-level file object and never a string or extra field", () => {
+    const base = {
+      workspace_id: "00000000-0000-4000-8000-000000000000",
+      request_id: "00000000-0000-4000-8000-000000000001",
+      path: "design/figure.png",
+      summary: "保存圖片",
+    };
+    const file = { download_url: "https://files.oaiusercontent.com/x", file_id: "file_x" };
+    expect(Inputs.image_import_request.parse(base)).toEqual(base);
+    expect(Inputs.image_import_request.parse({ ...base, file }).file).toEqual(file);
+    expect(
+      Inputs.image_import_request.parse({
+        ...base,
+        file: { ...file, mime_type: "image/png", file_name: "x.png" },
+      }).file?.file_name,
+    ).toBe("x.png");
+    for (const invalid of [
+      { ...base, file: "/mnt/data/figure.png" },
+      { ...base, file: { download_url: file.download_url } },
+      { ...base, file: { ...file, base64: "AAAA" } },
+      { ...base, image_url: "https://example.com/x.png" },
+      { ...base, summary: "x".repeat(201) },
+      { ...base, request_id: "not-a-uuid" },
+    ])
+      expect(() => Inputs.image_import_request.parse(invalid)).toThrow();
+    expect(() => Inputs.image_import_poll.parse({ import_id: "x" })).toThrow();
+    expect(() => Inputs.image_import_cancel.parse({ request_id: base.request_id })).toThrow();
+  });
 });

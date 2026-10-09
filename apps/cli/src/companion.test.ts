@@ -52,13 +52,23 @@ test("Companion is single-instance, locally controlled and can renew browser pai
     const page = await fetch(connection.origin);
     const html = await page.text();
     expect(page.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
-    expect(html).toContain("本機工具，現在有一個看得見的家。");
+    expect(html).toContain("Kairomes 正在背景執行");
+    expect(html).toContain("關閉這個頁面不會停止 Kairomes。");
+    // One compact card: no hero headline, English eyebrow or remote logo image.
+    expect(html).not.toContain("本機工具，現在有一個看得見的家。");
+    expect(html).not.toMatch(/LOCAL APP|SECURE TUNNEL|<img/);
     expect(html).not.toContain(connection.token);
 
     expect((await request("/api/status", {}, "bad-token")).status).toBe(401);
     expect(
       (await request("/api/status", {}, connection.token, "https://evil.example")).status,
     ).toBe(403);
+    // The page's MCP row reads counts only; no mcp-servers.json means none configured.
+    expect(await (await request("/api/action", { action: "mcp_summary" })).json()).toEqual({
+      ok: true,
+      mcp: { enabled: 0, total: 0 },
+    });
+    expect((await request("/api/action", { action: "mcp_summary", extra: 1 })).status).toBe(400);
     const initial = await (await request("/api/status", {})).json();
     expect(initial.workbench.state).toBe("running");
     expect(initial.tunnel.state).toBe("stopped");
@@ -156,7 +166,7 @@ test("Companion automatically takes over when an external workbench disappears",
     expect(attached.versionMismatch).toBe(false);
     // Pending counts come from the admin list; grants of an external process stay unknown.
     expect(attached.attention).toEqual({
-      pending: { total: 0, byWorkspace: [] },
+      pending: { total: 0, byWorkspace: [], byKind: [], earliestExpiresAt: null },
       grants: null,
       grantsKnown: false,
       lastMcpRequestAt: null,

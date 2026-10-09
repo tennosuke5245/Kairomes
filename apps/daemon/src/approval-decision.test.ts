@@ -210,17 +210,21 @@ test("commands, terminals and imports return the user's denial reason to the mod
           request_id: crypto.randomUUID(),
           path: "generated.png",
           summary: "保存圖片",
-          file: { download_url: "https://files.example/signed", file_id: "file_fixture" },
+          file: {
+            download_url: "https://files.oaiusercontent.com/file-fixture/signed",
+            file_id: "file_fixture",
+          },
         },
         "mcp",
       )
-    ).artifact_import;
+    ).image_import;
+    while (imports.poll(pending.id).image_import.state === "preparing") await Bun.sleep(5);
     const importReview = imports.approvals().find((item) => item.id === pending.id);
     expect(
       await rejects(imports.decide(pending.id, importReview?.fingerprint ?? "", true, "好")),
     ).toMatchObject({ code: "APPROVAL_REASON" });
     await imports.decide(pending.id, importReview?.fingerprint ?? "", false, "  換一張  ");
-    expect(imports.poll(pending.id).artifact_import).toMatchObject({
+    expect(imports.poll(pending.id).image_import).toMatchObject({
       state: "denied",
       denial_reason: "換一張",
     });

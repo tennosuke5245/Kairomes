@@ -13,7 +13,7 @@ import {
   deriveAttention,
   deriveDesktopView,
   normalizeDesktopSnapshot,
-  versionMismatchDetail,
+  versionIssue,
 } from "./model.ts";
 
 const NOW = Date.parse("2026-10-06T12:00:00.000Z");
@@ -41,15 +41,23 @@ test("every demo mode is a complete snapshot with increasing sequence numbers", 
 });
 
 test("demo modes reach the states the redesign needs", () => {
-  expect(deriveDesktopView(demo("setup").snapshot).action).toBe("configure_key");
-  expect(deriveDesktopView(demo("waiting").snapshot).action).toBe("open_connectors");
-  expect(deriveDesktopView(demo("ready").snapshot).tone).toBe("ready");
-  expect(deriveDesktopView(demo("runtime-error").snapshot).action).toBe("restart_runtime");
+  const viewOf = (mode: (typeof DEMO_MODES)[number]) =>
+    deriveDesktopView(demo(mode).snapshot, { now: NOW });
+  expect(viewOf("setup")).toMatchObject({ state: "setup", tone: "neutral" });
+  expect(viewOf("setup").setup?.current).toBe("profile");
+  expect(viewOf("waiting")).toMatchObject({ state: "attention", action: "open_connectors" });
+  expect(viewOf("ready")).toMatchObject({ state: "ready", tone: "success" });
+  expect(viewOf("runtime-error")).toMatchObject({ state: "error", action: "restart_runtime" });
   expect(demo("runtime-error").snapshot.companion).toBeNull();
+  expect(viewOf("error")).toMatchObject({ state: "error", action: "restart_tunnel" });
+  expect(viewOf("tunnel-auth")).toMatchObject({ state: "error", action: "configure_key" });
+  expect(viewOf("tunnel-retry")).toMatchObject({ state: "running", action: "none" });
+  // The demo's older workbench was started by another program, so it is taken over.
+  expect(viewOf("mismatch")).toMatchObject({ state: "attention", action: "retry_workbench" });
 
   const empty = demo("empty").snapshot;
   expect(empty.companion?.workspaces).toEqual([]);
-  expect(deriveDesktopView(empty).action).toBe("add_workspace");
+  expect(viewOf("empty").setup?.current).toBe("workspace");
 
   const attention = deriveAttention(demo("attention").snapshot, NOW);
   expect(attention.pending).toBe(2);
@@ -61,7 +69,12 @@ test("demo modes reach the states the redesign needs", () => {
     expect.objectContaining({ level: "full", remainingMs: 12 * 60_000, expiringSoon: true }),
   ]);
   expect(attention.lastMcpAgoMs).toBe(2 * 60_000);
-  expect(deriveDesktopView(demo("attention").snapshot).tone).toBe("ready");
+  expect(attention.pendingGroups.map((group) => [group.kind, group.workspaceName])).toEqual([
+    ["command", "Athori"],
+    ["file_change", "Lumen Notes"],
+  ]);
+  expect(attention.pendingRemainingMs).toBe(252_000);
+  expect(viewOf("attention").state).toBe("ready");
 
   const auth = demo("tunnel-auth").snapshot.companion?.tunnel;
   expect(auth).toMatchObject({ state: "error", reason: "auth", nextRetryAt: null });
@@ -73,11 +86,7 @@ test("demo modes reach the states the redesign needs", () => {
   expect(retryIn).toBeLessThanOrEqual(10_000);
 
   const mismatch = demo("mismatch").snapshot;
-  expect(versionMismatchDetail(mismatch)).toEqual({
-    desktop: VERSION,
-    companion: VERSION,
-    workbench: "0.1.4",
-  });
+  expect(versionIssue(mismatch)).toMatchObject({ side: "workbench", version: "0.1.4" });
   expect(mismatch.companion?.attention.grantsKnown).toBe(false);
   expect(deriveAttention(mismatch, NOW).grants).toBeNull();
 });

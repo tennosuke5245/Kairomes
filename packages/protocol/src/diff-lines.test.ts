@@ -41,7 +41,8 @@ test("review diffs from workspace-core: replacements, create, delete and focused
     " six",
   ].join("\n");
   const parsed = parseUnifiedDiff(diff);
-  expect(parsed).toMatchObject({ additions: 5, deletions: 4, truncated: false });
+  // "+# New" then the bare "+" of its final newline: the file has one line, not two.
+  expect(parsed).toMatchObject({ additions: 4, deletions: 4, truncated: false });
   expect(
     parsed.files.map(({ path, status, additions, deletions }) => [
       path,
@@ -51,7 +52,7 @@ test("review diffs from workspace-core: replacements, create, delete and focused
     ]),
   ).toEqual([
     ["README.md", "modified", 2, 2],
-    ["docs/new.md", "added", 2, 0],
+    ["docs/new.md", "added", 1, 0],
     ["src/old.ts", "deleted", 0, 1],
     ["src/main.ts", "modified", 1, 1],
   ]);
@@ -67,11 +68,8 @@ test("review diffs from workspace-core: replacements, create, delete and focused
     ["del", null, null],
     ["add", null, null],
   ]);
-  expect(numbers(created?.lines ?? [])).toEqual([
-    ["add", null, 1],
-    ["add", null, 2],
-  ]);
-  expect(created?.lines.at(-1)?.text).toBe("");
+  expect(numbers(created?.lines ?? [])).toEqual([["add", null, 1]]);
+  expect(created?.lines.at(-1)?.text).toBe("# New");
   expect(numbers(deleted?.lines ?? [])).toEqual([["del", 1, null]]);
   expect(rewritten?.lines[0]).toMatchObject({ kind: "hunk", label: "第 4 行起" });
   expect(numbers(rewritten?.lines ?? [])).toEqual([
@@ -82,6 +80,64 @@ test("review diffs from workspace-core: replacements, create, delete and focused
     ["context", 5, 5],
     ["context", 6, 6],
   ]);
+});
+
+// Captured from WorkspaceChanges.prepare: an edit of "-- dash item\n" to "-- dashed item\n",
+// a delete of "first\nsecond\n" and a create of "# New\n\nbody\n".
+const prepared =
+  "--- a/notes.md\n+++ b/notes.md\n@@ exact replacement 1 @@\n--- dash item\n-\n+-- dashed item\n+\n\n--- a/gone.md\n+++ /dev/null\n@@ delete file @@\n-first\n-second\n-\n\n--- /dev/null\n+++ b/src/new.md\n@@ create file @@\n+# New\n+\n+body\n+";
+
+test("a review text ending in a newline adds no empty -/+ row and no count", () => {
+  const rows = (lines: readonly { kind: string; text: string }[]) =>
+    lines.map((line) => [line.kind, line.text]);
+  const parsed = parseUnifiedDiff(prepared);
+  expect(
+    parsed.files.map(({ path, additions, deletions }) => [path, additions, deletions]),
+  ).toEqual([
+    ["notes.md", 1, 1],
+    ["gone.md", 0, 2],
+    ["src/new.md", 3, 0],
+  ]);
+  expect([parsed.additions, parsed.deletions]).toEqual([4, 3]);
+  expect(rows(parsed.files[0]?.lines ?? [])).toEqual([
+    ["hunk", "@@ exact replacement 1 @@"],
+    ["del", "-- dash item"],
+    ["add", "-- dashed item"],
+  ]);
+  // A blank line inside the text stays; only the final newline row goes.
+  expect(rows(parsed.files[2]?.lines ?? [])).toEqual([
+    ["hunk", "@@ create file @@"],
+    ["add", "# New"],
+    ["add", ""],
+    ["add", "body"],
+  ]);
+  expect(parsed.files[1]?.lines.map((line) => line.oldLine)).toEqual([undefined, 1, 2]);
+  expect(parsed.files[2]?.lines.map((line) => line.newLine)).toEqual([undefined, 1, 2, 3]);
+
+  // A replacement that adds or removes a newline keeps both rows, so the change stays visible.
+  const joined = ["--- a/a.txt", "+++ b/a.txt", "@@ exact replacement 1 @@", "-x", "-", "+y"];
+  expect(rows(parseUnifiedDiff(joined.join("\n")).files[0]?.lines ?? [])).toEqual([
+    ["hunk", "@@ exact replacement 1 @@"],
+    ["del", "x"],
+    ["del", ""],
+    ["add", "y"],
+  ]);
+  // Two trailing blank rows are one blank line plus the newline: one row stays.
+  const blank = ["--- /dev/null", "+++ b/a.txt", "@@ create file @@", "+a", "+", "+"];
+  expect(rows(parseUnifiedDiff(blank.join("\n")).files[0]?.lines ?? [])).toEqual([
+    ["hunk", "@@ create file @@"],
+    ["add", "a"],
+    ["add", ""],
+  ]);
+  // Focused hunks share the final newline as context and are left alone.
+  const focused = ["--- a/a.ts", "+++ b/a.ts", "@@ 2 @@", " one", "-", "+two", " three"];
+  expect(parseUnifiedDiff(focused.join("\n")).files[0]?.lines).toHaveLength(5);
+  // The last row of a cut diff may stop mid-text, so it is kept.
+  const cut = parseUnifiedDiff(
+    ["--- /dev/null", "+++ b/a.txt", "@@ create file @@", "+a", "+"].join("\n"),
+    { truncated: true },
+  );
+  expect(cut.additions).toBe(2);
 });
 
 test("removed lines that look like headers stay content inside a review hunk", () => {

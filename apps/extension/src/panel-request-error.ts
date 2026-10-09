@@ -1,20 +1,24 @@
-/** A refused or failed side-panel request. Its message is fixed text chosen by status only. */
+import { importErrorText } from "./image-file.ts";
+
+/** A refused or failed side-panel request. Its message is fixed text chosen by status (and a few known codes). */
 export class PanelRequestError extends Error {
   constructor(
     readonly status: number,
-    /** Daemon error code, e.g. MCP_CWD_INVALID; only fixed-map text is ever shown for it. */
+    /** Daemon error code, e.g. MCP_CWD_INVALID or IMPORT_PREVIEW_REQUIRED; only fixed-map text is ever shown for it. */
     readonly code?: string,
   ) {
     super(
       status === 401 || status === 403
         ? "配對已失效。"
-        : status === 409
-          ? "請求已變更；請重新審閱。"
-          : status === 429
-            ? "請稍後再查詢狀態。"
-            : status < 500
-              ? "請求未被接受。"
-              : "結果待確認。",
+        : code === "IMPORT_PREVIEW_REQUIRED"
+          ? importErrorText(code)
+          : status === 409
+            ? "請求已變更；請重新審閱。"
+            : status === 429
+              ? "請稍後再查詢狀態。"
+              : status < 500
+                ? "請求未被接受。"
+                : "結果待確認。",
     );
   }
 }

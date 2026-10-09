@@ -166,6 +166,8 @@ function companionStatus(state: DemoState, now: number): CompanionStatus {
       : tunnel.state === "running"
         ? { tone: "busy" as const, label: "等待 ChatGPT 使用工具" }
         : { tone: "warn" as const, label: "有一件事情需要處理" };
+  // The earliest request reads 剩 4:12 at page load and restarts its five-minute cycle.
+  const earliest = now + 300_000 - ((now - state.startedAt + 48_000) % 300_000);
   const pending =
     state.mode === "attention"
       ? {
@@ -174,8 +176,13 @@ function companionStatus(state: DemoState, now: number): CompanionStatus {
             { workspace_id: ATHORI.id, count: 1 },
             { workspace_id: LUMEN.id, count: 1 },
           ],
+          byKind: [
+            { kind: "command" as const, workspace_id: ATHORI.id, count: 1 },
+            { kind: "file_change" as const, workspace_id: LUMEN.id, count: 1 },
+          ],
+          earliestExpiresAt: iso(earliest),
         }
-      : { total: 0, byWorkspace: [] };
+      : { total: 0, byWorkspace: [], byKind: [], earliestExpiresAt: null };
   return {
     version: VERSION,
     workbenchVersion: mismatch ? OLDER_VERSION : VERSION,
@@ -186,7 +193,7 @@ function companionStatus(state: DemoState, now: number): CompanionStatus {
       ? {
           state: "external",
           label: "既有程序",
-          message: `既有工作台版本 ${OLDER_VERSION} 與 Kairomes ${VERSION} 不同；停止舊程序後按重新接管。`,
+          message: `既有工作台版本 ${OLDER_VERSION} 與 Kairomes ${VERSION} 不同；停止舊程序後再重試工作台。`,
           meta: "既有工作台保持原本生命週期",
         }
       : {
@@ -197,7 +204,8 @@ function companionStatus(state: DemoState, now: number): CompanionStatus {
         },
     tunnel,
     connector,
-    extension: { configured: true },
+    // First launch has not paired a side panel yet.
+    extension: { configured: state.mode !== "setup" && state.mode !== "empty" },
     attention: {
       pending,
       // An external workbench's grants cannot be read in-process.

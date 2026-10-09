@@ -86,7 +86,7 @@ test("status attention carries counts and grant metadata only, never approval de
     expect(initial.workbenchVersion).toBe(VERSION);
     expect(initial.versionMismatch).toBe(false);
     expect(initial.attention).toEqual({
-      pending: { total: 0, byWorkspace: [] },
+      pending: { total: 0, byWorkspace: [], byKind: [], earliestExpiresAt: null },
       grants: [],
       grantsKnown: true,
       lastMcpRequestAt: null,
@@ -135,10 +135,12 @@ test("status attention carries counts and grant metadata only, never approval de
     const grantId = enabled.body.accessGrants[0].id as string;
 
     const granted = await c.status();
-    expect(granted.attention.pending).toEqual({
+    expect(granted.attention.pending).toMatchObject({
       total: 1,
       byWorkspace: [{ workspace_id: f.workspace.id, count: 1 }],
+      byKind: [{ workspace_id: f.workspace.id, count: 1 }],
     });
+    expect(Date.parse(granted.attention.pending?.earliestExpiresAt ?? "")).toBeGreaterThan(before);
     expect(granted.attention.pairedPanels).toBe(1);
     expect(granted.attention.grantsKnown).toBe(true);
     expect(granted.attention.grants).toHaveLength(1);

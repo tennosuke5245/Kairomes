@@ -1,14 +1,29 @@
-import {
-  type FileChange,
-  type FileChangeResult,
-  fileChangeActive,
-  fileChangeLabels,
-} from "@kairomes/protocol";
-import { FileIcon, FilesIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { type FileChange, type FileChangeResult, fileChangeActive } from "@kairomes/protocol";
+import { toneFor } from "@kairomes/protocol/ui-state";
+import { PencilSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { useEffect, useMemo, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
+import { summarizeChanges } from "./change-summary.ts";
+import type { Fact } from "./command-model.ts";
+import {
+  FactsStrip,
+  InspectorHead,
+  PendingNotice,
+  StatusLine,
+  TechDetails,
+  WorkspaceTag,
+} from "./detail-parts.tsx";
+import { diffCounts, parseChangeDiff } from "./diff-model.ts";
+import { DiffView } from "./diff-view.tsx";
+import { friendlyError } from "./errors.ts";
+import { RecordList, type SubBack, SubBar, useListReturn } from "./record-list.tsx";
+import { changeReason } from "./record-model.ts";
 import { requireFileChangeResult } from "./result-identity.ts";
+import { clockTime, countdown, relativeTime } from "./time-format.ts";
+import { workspaceHue } from "./timeline-model.ts";
 import { ResultError } from "./tool-result.ts";
+import { iconProps } from "./ui-icons.tsx";
+import { useNow } from "./use-now.ts";
 
 function useFileChange(bridge: WorkbenchBridge, id: string, workspaceId: string) {
   const identity = `${workspaceId}:${id}`;
@@ -35,7 +50,7 @@ function useFileChange(bridge: WorkbenchBridge, id: string, workspaceId: string)
         setState((previous) => ({
           identity,
           result: previous.identity === identity ? previous.result : undefined,
-          error: cause instanceof Error ? cause.message : "無法讀取檔案變更狀態。",
+          error: friendlyError(cause, "無法讀取檔案變更狀態。"),
         }));
         if (cause instanceof ResultError && cause.code === "FILE_CHANGE_NOT_FOUND") return;
         timer = setTimeout(() => void poll(), backoff);
@@ -53,38 +68,6 @@ function useFileChange(bridge: WorkbenchBridge, id: string, workspaceId: string)
     : { result: undefined, error: "" };
 }
 
-function StyledDiff({ value }: { value: string }) {
-  const occurrences = new Map<string, number>();
-  const lines = value.split("\n").map((line) => {
-    const occurrence = (occurrences.get(line) ?? 0) + 1;
-    occurrences.set(line, occurrence);
-    return { key: `${line}:${occurrence}`, line };
-  });
-  return (
-    <section className="full-diff" aria-label="檔案差異">
-      {lines.map(({ key, line }, index) => (
-        <div
-          className={
-            line.startsWith("+") && !line.startsWith("+++")
-              ? "added"
-              : line.startsWith("-") && !line.startsWith("---")
-                ? "removed"
-                : line.startsWith("@@")
-                  ? "range"
-                  : "context"
-          }
-          key={key}
-        >
-          <span>{index + 1}</span>
-          <code>{line || " "}</code>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-const operationLabel = { edit: "修改", write: "寫入", delete: "刪除" } as const;
-
 export function currentFileChange(selected?: FileChange, result?: FileChangeResult) {
   if (!selected) return;
   // Terminal SSE is authoritative even while an older poll response is in flight.
@@ -92,24 +75,165 @@ export function currentFileChange(selected?: FileChange, result?: FileChangeResu
   return result?.change.id === selected.id ? result.change : selected;
 }
 
+const shortVersion = (version: string | null) => (version ? version.slice(0, 12) : "不存在");
+
+/**
+ * 檔案 N, +A −D once the diff is loaded (至少 +A −D when it was cut), then the review deadline
+ * or the applied time.
+ */
+export function changeFacts(
+  change: FileChange,
+  diff: { additions: number; deletions: number; truncated?: boolean } | undefined,
+  now: number,
+): Fact[] {
+  const facts: Fact[] = [{ label: "檔案", value: `${change.files.length} 個` }];
+  if (diff) facts.push({ label: "差異", value: diffCounts(diff), mono: true });
+  if (change.state === "pending") {
+    const left = countdown(change.expires_at, now);
+    facts.push({ label: "審核期限", value: left.text, tone: left.urgency ? "warning" : undefined });
+  } else if (change.applied_at !== null)
+    facts.push({ label: "套用時間", value: clockTime(change.applied_at) });
+  return facts;
+}
+
+function ChangeDetail({
+  change,
+  result,
+  error,
+  now,
+  workspaceName,
+  actionError,
+  cancelBusy,
+  onCancel,
+  focusPath,
+}: {
+  change: FileChange;
+  /** The file chosen in the 變更 list: the diff opens at its section. */
+  focusPath?: string;
+  result?: FileChangeResult;
+  error: string;
+  now: number;
+  workspaceName?: (id: string) => string | undefined;
+  actionError: string;
+  cancelBusy: boolean;
+  /** Cancel is the only negative action the workbench offers for a change. */
+  onCancel?(): void;
+}) {
+  const workspace = workspaceName?.(change.workspace_id);
+  const state = toneFor("file_change", change.state);
+  const reason = changeReason(change);
+  const parsed = useMemo(
+    () => (result?.diff ? parseChangeDiff(result.diff, result.diff_truncated) : undefined),
+    [result?.diff, result?.diff_truncated],
+  );
+  return (
+    <>
+      <InspectorHead
+        icon="change"
+        verb={change.summary || `修改 ${change.files.length} 個檔案`}
+        state={state}
+        meta={[
+          workspace && <WorkspaceTag name={workspace} hue={workspaceHue(change.workspace_id)} />,
+          relativeTime(change.applied_at ?? change.created_at, now),
+        ]}
+        actions={
+          onCancel && (
+            <button
+              type="button"
+              className="k-btn k-btn--danger-quiet k-btn--sm"
+              disabled={cancelBusy}
+              onClick={onCancel}
+            >
+              {cancelBusy ? "取消中…" : "取消變更"}
+            </button>
+          )
+        }
+      />
+      <div className="insp-body">
+        {(actionError || error) && (
+          <p className="k-notice" data-tone="danger" role="alert">
+            <WarningCircleIcon {...iconProps("lg")} />
+            <span className="k-notice__body">{actionError || error}</span>
+          </p>
+        )}
+        {change.state === "pending" && (
+          <>
+            <PendingNotice />
+            <p className="insp-note">套用前核對檔案版本；檔案已變動就停止，不會覆寫。</p>
+          </>
+        )}
+        {reason && (
+          <p className="insp-reason" data-tone={state.dataTone}>
+            {reason}
+          </p>
+        )}
+        <FactsStrip facts={changeFacts(change, parsed, now)} />
+        {result ? (
+          result.diff ? (
+            <DiffView
+              diff={result.diff}
+              truncated={result.diff_truncated}
+              totals={false}
+              focusPath={focusPath}
+            />
+          ) : (
+            <StatusLine>沒有可顯示的差異。</StatusLine>
+          )
+        ) : (
+          !error && <StatusLine>正在取得差異…</StatusLine>
+        )}
+        <TechDetails
+          rows={[
+            ["變更編號", change.id],
+            ...change.files.map((file): [string, string] => [
+              file.path,
+              `${shortVersion(file.before_version)} → ${shortVersion(file.after_version)}`,
+            ]),
+          ]}
+        />
+      </div>
+    </>
+  );
+}
+
 export function FileChangePanel({
   bridge,
   workspaceId,
   liveChanges,
   focus,
+  workspaceName,
+  onSubBack,
 }: {
   bridge: WorkbenchBridge;
-  workspaceId: string;
+  /** Scope of the 變更 list; null lists every project (rows then carry a workspace tag). */
+  workspaceId: string | null;
   liveChanges?: FileChange[];
+  /** An empty id opens the list (C2 summary); any other id opens that change. */
   focus?: { id: string; seq: number };
+  workspaceName?: (id: string) => string | undefined;
+  /** The workbench heading takes over the way back to 全部變更. */
+  onSubBack?(value: SubBack | undefined): void;
 }) {
   const [listed, setListed] = useState<FileChange[]>([]);
   const [selected, setSelected] = useState(focus?.id ?? "");
+  const [selectedPath, setSelectedPath] = useState<string>();
+  const [listMode, setListMode] = useState(!focus?.id);
+  const [fromList, setFromList] = useState(false);
+  const listReturn = useListReturn({
+    open: fromList && !listMode,
+    label: "返回全部變更",
+    back: () => setListMode(true),
+    onSubBack,
+  });
   const [listError, setListError] = useState("");
   const [actionError, setActionError] = useState({ id: "", message: "" });
   const [busyId, setBusyId] = useState("");
   useEffect(() => {
-    if (focus) setSelected(focus.id);
+    if (!focus) return;
+    setSelected(focus.id);
+    setSelectedPath(undefined);
+    setListMode(!focus.id);
+    setFromList(false);
   }, [focus]);
   const hasLive = liveChanges !== undefined;
   useEffect(() => {
@@ -123,8 +247,7 @@ export function FileChangePanel({
         if (data.kind === "file_changes") setListed(data.changes);
         setListError("");
       } catch (cause) {
-        if (!stopped)
-          setListError(cause instanceof Error ? cause.message : "無法讀取檔案變更清單。");
+        if (!stopped) setListError(friendlyError(cause, "無法讀取檔案變更清單。"));
       }
       if (!stopped) timer = setTimeout(() => void poll(), 2000);
     };
@@ -135,120 +258,111 @@ export function FileChangePanel({
     };
   }, [bridge, hasLive]);
 
-  const changes = (liveChanges ?? listed)
-    .filter((change) => change.workspace_id === workspaceId)
-    .sort((a, b) => b.created_at - a.created_at);
-  const selectedChange = selected ? changes.find((change) => change.id === selected) : changes[0];
-  const id = selectedChange?.id ?? "";
+  const all = liveChanges ?? listed;
+  const selectedChange = selected ? all.find((change) => change.id === selected) : undefined;
+  const id = listMode ? "" : (selectedChange?.id ?? "");
   const currentActionError = actionError.id === id ? actionError.message : "";
-  const { result, error } = useFileChange(bridge, id, workspaceId);
+  const { result, error } = useFileChange(bridge, id, selectedChange?.workspace_id ?? "");
   const current = currentFileChange(selectedChange, result);
+  const rows = summarizeChanges(all, workspaceId);
+  const now = useNow(!listMode && current?.state === "pending");
+  const cancel = async () => {
+    if (!current) return;
+    setBusyId(current.id);
+    setActionError({ id: current.id, message: "" });
+    try {
+      await bridge.call("file_change_cancel", { change_id: current.id });
+    } catch (cause) {
+      setActionError({
+        id: current.id,
+        message: friendlyError(cause, "取消結果尚未確認，請等待狀態更新。"),
+      });
+    } finally {
+      setBusyId("");
+    }
+  };
 
   return (
-    <section className="file-change-panel" aria-label="檔案變更">
-      <div className="file-change-toolbar">
-        <select
-          aria-label="選擇檔案變更"
-          value={id}
-          disabled={!changes.length}
-          onChange={(event) => {
-            setSelected(event.target.value);
-            setActionError({ id: event.target.value, message: "" });
-          }}
-        >
-          {!changes.length && <option value="">尚無檔案變更</option>}
-          {changes.map((change) => (
-            <option key={change.id} value={change.id}>
-              {change.summary} · {change.id.slice(0, 8)} · {fileChangeLabels[change.state]}
-            </option>
-          ))}
-        </select>
-        {current?.state === "pending" && (
-          <button
-            type="button"
-            className="file-change-cancel"
-            disabled={!!busyId}
-            onClick={async () => {
-              setBusyId(current.id);
-              setActionError({ id: current.id, message: "" });
-              try {
-                await bridge.call("file_change_cancel", { change_id: current.id });
-              } catch (cause) {
-                setActionError({
-                  id: current.id,
-                  message:
-                    cause instanceof Error ? cause.message : "取消結果尚未確認，請等待狀態更新。",
-                });
-              } finally {
-                setBusyId("");
-              }
-            }}
-          >
-            <TrashIcon /> {busyId === id ? "取消中…" : "取消"}
-          </button>
-        )}
-      </div>
-      <div className="file-change-content">
-        {(listError || currentActionError || error) && (
-          <div className="file-change-error" role="alert">
-            <WarningCircleIcon weight="fill" /> {listError || currentActionError || error}
-          </div>
-        )}
-        {!current ? (
-          <div className="file-change-empty">
-            <FilesIcon />
-            <h2>{selected ? "變更詳情已無法取得" : "尚無檔案變更"}</h2>
-          </div>
-        ) : (
-          <>
-            <div className="file-change-hero">
-              <span className={`change-status state-${current.state}`}>
-                {fileChangeLabels[current.state]}
+    <section ref={listReturn.container} className="wb-panel" aria-label="檔案變更">
+      {listError && (
+        <p className="k-notice wb-panel__notice" data-tone="danger" role="alert">
+          <WarningCircleIcon {...iconProps("lg")} />
+          <span className="k-notice__body">{listError}</span>
+        </p>
+      )}
+      {listMode ? (
+        <div className="insp-body">
+          {rows.length ? (
+            <RecordList
+              label="本次變更"
+              items={rows.map((row) => ({
+                id: row.key,
+                row: {
+                  icon: "change",
+                  verb: "",
+                  code: row.name,
+                  title: row.path,
+                  directory: row.directory || undefined,
+                  state: row.state,
+                  time: relativeTime(row.updatedAt, now),
+                  workspace:
+                    !workspaceId && workspaceName?.(row.workspaceId)
+                      ? {
+                          id: row.workspaceId,
+                          name: workspaceName(row.workspaceId) ?? "",
+                          hue: workspaceHue(row.workspaceId),
+                        }
+                      : undefined,
+                  meta: {
+                    kind: "files",
+                    text: row.changes > 1 ? `${row.operation} · ${row.changes} 次` : row.operation,
+                  },
+                },
+              }))}
+              currentId={rows.find((row) => row.changeId === selected)?.key}
+              onOpen={(key) => {
+                const row = rows.find((item) => item.key === key);
+                if (!row) return;
+                listReturn.opened(key);
+                setSelected(row.changeId);
+                setSelectedPath(row.path);
+                setListMode(false);
+                setFromList(true);
+                setActionError({ id: row.changeId, message: "" });
+              }}
+            />
+          ) : (
+            <div className="k-empty wb-empty">
+              <span className="k-empty__icon" aria-hidden="true">
+                <PencilSimpleIcon {...iconProps("xl")} />
               </span>
-              <h2>{current.summary}</h2>
-              <p>
-                {current.files.length} 個檔案
-                {current.applied_at
-                  ? ` · ${new Date(current.applied_at).toLocaleTimeString()} 套用`
-                  : ""}
-              </p>
+              <h3 className="k-empty__title">還沒有變更</h3>
+              <p className="k-empty__text">ChatGPT 要修改檔案時會列在這裡。</p>
             </div>
-            <section className="file-change-section">
-              <h3>檔案</h3>
-              <div className="file-change-files">
-                {current.files.map((file) => (
-                  <div key={file.path} className="change-file-evidence">
-                    <FileIcon />
-                    <span>{file.path}</span>
-                    <small>{operationLabel[file.operation]}</small>
-                    <span className="change-version">
-                      {current.state === "applied" ? "套用時版本 " : "預期版本 "}
-                      <code title={file.before_version ?? "原先不存在"}>
-                        {file.before_version?.slice(0, 12) ?? "不存在"}
-                      </code>
-                      {" → "}
-                      <code title={file.after_version ?? "不存在"}>
-                        {file.after_version?.slice(0, 12) ?? "不存在"}
-                      </code>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-            {current.message && <p className="file-change-error">{current.message}</p>}
-            <section className="file-change-section">
-              <h3>差異</h3>
-              <StyledDiff value={result?.diff || "正在取得差異…"} />
-              {result?.diff_truncated && <p role="status">差異僅顯示部分。</p>}
-            </section>
-            {current.state === "pending" && (
-              <p className="file-change-footnote">
-                核准時會再次比對版本；檔案若已改變，整批變更會停止。
-              </p>
-            )}
-          </>
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {listReturn.subBar && <SubBar {...listReturn.subBar} />}
+          {!current ? (
+            <div className="insp-body">
+              <StatusLine>變更詳情已無法取得。</StatusLine>
+            </div>
+          ) : (
+            <ChangeDetail
+              change={current}
+              result={result?.change.id === current.id ? result : undefined}
+              error={error}
+              now={now}
+              workspaceName={workspaceName}
+              actionError={currentActionError}
+              cancelBusy={!!busyId}
+              onCancel={current.state === "pending" ? () => void cancel() : undefined}
+              focusPath={selectedPath}
+            />
+          )}
+        </>
+      )}
     </section>
   );
 }

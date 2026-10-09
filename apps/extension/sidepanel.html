@@ -1,141 +1,144 @@
 <!doctype html>
-<html lang="zh-Hant" data-theme="light">
+<html lang="zh-Hant-TW">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark">
     <title>Kairomes 工作台</title>
     <link rel="stylesheet" href="tokens.css">
     <link rel="stylesheet" href="components.css">
     <link rel="stylesheet" href="sidepanel.css">
     <link rel="stylesheet" href="mcp-panel.css">
   </head>
-  <body>
-    <header class="native-bar">
-      <div class="native-brand">
-        <div class="native-logo">
-          <img src="assets/kairomes-k-128.png" alt="">
-          <span id="connection-status" role="img" aria-label="未配對" title="未配對"><i></i></span>
-        </div>
-        <span><strong>Kairomes</strong></span>
-        <select id="workspace-filter" aria-label="瀏覽專案" hidden><option value="">全部本機操作</option></select>
-      </div>
-      <div class="native-actions">
-        <section id="access" aria-label="操作權限設定" hidden></section>
-        <button type="button" id="settings-open" aria-controls="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-.5 2-2 1.2-2-.6-2 3.4L4 10.4v2.3l-1.5 1.4 2 3.4 2-.6 2 1.2.5 2h4l.5-2 2-1.2 2 .6 2-3.4-1.5-1.4v-2.3l1.5-1.4-2-3.4-2 .6-2-1.2L13 3Z"/><circle cx="11" cy="11.5" r="3"/></svg>設定</button>
-        <div class="connection-controls">
-          <button type="button" id="panel-recover" hidden>查詢狀態</button>
-        </div>
-        <button type="button" id="approval-count" aria-controls="approvals" aria-expanded="false" hidden>需確認 1</button>
-        <button type="button" id="active-count" aria-controls="active-work" aria-expanded="false" hidden><span class="active-count-label">執行中</span><span id="active-number">0</span></button>
-      </div>
+  <body class="k-app sp">
+    <!-- kairomes:icon-sprite -->
+    <header class="k-toolbar sp-toolbar">
+      <span id="connection-status" class="k-logo-status" role="img" aria-label="Kairomes：未配對" title="未配對">
+        <svg class="k-logo" viewBox="0 0 128 128" aria-hidden="true" focusable="false"><path d="M22 16c-6 0-10 4-10 10v76c0 6 4 10 10 10s10-4 10-10V26c0-6-4-10-10-10Z"/><path d="M106 16H84c-3 0-6 1-8 4L38 57c-4 4-4 10 0 14l39 37c2 3 5 4 8 4h21c4 0 7-2 8-5 1-3 0-6-2-8L73 64l38-35c3-2 4-6 2-9-1-2-4-4-7-4Z"/></svg>
+        <span class="k-dot" data-tone="neutral"></span>
+      </span>
+      <span id="brand" class="k-toolbar__title sp-brand">Kairomes</span>
+      <span id="workspace-switcher" class="k-switcher sp-switcher" hidden>
+        <svg class="k-icon sp-switcher__icon" aria-hidden="true" focusable="false"><use href="#ph-stack"/></svg>
+        <select id="workspace-filter" class="sp-switcher__select" aria-label="瀏覽專案"><option value="">全部專案</option></select>
+        <svg class="k-icon sp-switcher__caret" data-size="sm" aria-hidden="true" focusable="false"><use href="#ph-caret-up-down"/></svg>
+      </span>
+      <button type="button" id="access" aria-controls="access-popover" hidden></button>
+      <button type="button" id="active-count" class="k-btn k-btn--quiet sp-active" aria-controls="approvals" aria-pressed="false" hidden><svg class="k-icon k-spin" aria-hidden="true" focusable="false"><use href="#ph-circle-notch"/></svg><span class="k-sr-only">執行中</span><span id="active-number" class="k-badge" data-tone="running">0</span></button>
+      <button type="button" id="approval-count" class="k-need" aria-controls="approvals" aria-pressed="false" data-count="0" hidden><svg class="k-icon k-collapse-icon" aria-hidden="true" focusable="false"><use href="#ph-tray"/></svg><span class="k-collapse-label">需確認</span><span id="approval-number" class="k-badge" hidden></span></button>
+      <button type="button" id="settings-open" class="k-btn k-btn--quiet k-btn--icon" aria-label="設定" aria-pressed="false" aria-controls="settings"><svg class="k-icon" data-size="lg" aria-hidden="true" focusable="false"><use href="#ph-gear-six"/></svg></button>
     </header>
-    <section id="active-work" aria-label="執行中的工作" hidden>
-      <div class="active-work-heading">
-        <h2 tabindex="-1">執行中的工作</h2>
-        <button type="button" id="active-close" aria-label="關閉執行中的工作清單">×</button>
-      </div>
-      <div id="active-work-list"></div>
-    </section>
-    <div id="panel-notice" hidden>
-      <p id="panel-error" role="alert"></p>
+    <div id="panel-notice" class="k-notice sp-notice" data-tone="danger" hidden>
+      <svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-warning-circle"/></svg>
+      <p id="panel-error" class="k-notice__body" role="alert"></p>
+      <button type="button" id="panel-recover" class="k-btn k-btn--secondary k-btn--sm k-notice__action" hidden>查詢狀態</button>
+      <button type="button" id="notice-close" class="k-btn k-btn--quiet k-btn--icon k-btn--sm k-notice__close" aria-label="關閉通知" hidden><svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-x"/></svg></button>
     </div>
-    <p id="panel-status" class="visually-hidden" role="status" aria-live="polite"></p>
-    <p id="approval-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
+    <p id="panel-status" class="k-sr-only" role="status" aria-live="polite"></p>
+    <p id="approval-status" class="k-sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <p id="access-status" class="k-sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <div id="access-popover" hidden></div>
     <section id="approvals" aria-label="本機核准" hidden></section>
-    <main id="setup">
-      <div class="setup-shell">
-        <header class="setup-intro">
-          <h1>連接工作台</h1>
-        </header>
-        <section class="setup-identity" aria-label="此擴充功能的 ID">
-          <span>Extension ID</span>
-          <div class="command-row compact">
-            <code id="extension-id" class="extension-id"></code>
-            <button type="button" class="copy-button" data-copy-target="extension-id" data-copy-label="Extension ID" aria-label="複製 Extension ID">複製 ID</button>
-          </div>
-        </section>
-        <form id="pair" class="setup-step">
-          <label for="address">配對連結</label>
-          <input id="address" type="password" autocomplete="off" spellcheck="false" required placeholder="貼上 Desktop 產生的連結">
-          <button id="connect-button" type="submit">連接工作台</button>
-        </form>
-        <p id="error" role="alert"></p>
-        <details id="setup-advanced" class="setup-advanced">
-          <summary>如何取得配對連結</summary>
-          <div class="setup-advanced-content">
-            <p>在 Desktop「連線設定」貼上 Extension ID，再複製配對連結。請勿分享連結。</p>
-            <h2>命令列啟動</h2>
-            <p>未使用 Desktop 時，在專案目錄執行：</p>
-            <div class="command-row compact">
-              <code id="start-command"></code>
-              <button type="button" class="copy-button" data-copy-target="start-command" aria-label="複製啟動指令">複製</button>
-            </div>
-            <p>再啟動 ChatGPT Tunnel：</p>
-            <div class="command-row compact">
-              <code id="tunnel-command"></code>
-              <button type="button" class="copy-button" data-copy-target="tunnel-command" aria-label="複製 Tunnel 指令">複製</button>
-            </div>
-            <h2>重新配對</h2>
-            <p>若連結無法自動換新，保持 app 執行並產生新連結：</p>
-            <div class="command-row compact">
-              <code id="pair-command"></code>
-              <button type="button" class="copy-button" data-copy-target="pair-command" aria-label="複製重新配對指令">複製</button>
-            </div>
-            <p>重啟 app、瀏覽器或更新 Extension 後需重新配對。</p>
-          </div>
-        </details>
-        <p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
-        <a class="setup-chat-link" href="https://chatgpt.com/" target="_blank" rel="noreferrer">開啟 ChatGPT 網頁 ↗</a>
-      </div>
-    </main>
-    <section id="settings" class="settings-shell" aria-label="Kairomes 設定" hidden>
-      <aside class="settings-sidebar">
-        <button type="button" id="settings-back" class="settings-back">← 返回工作台</button>
-        <div class="settings-sidebar-heading">
-          <strong>設定</strong>
+    <main id="setup" class="sp-page sp-setup" aria-labelledby="setup-title">
+      <h1 id="setup-title" class="k-page-title">連接工作台</h1>
+      <section class="k-card sp-card" aria-labelledby="extension-id-label">
+        <h2 id="extension-id-label" class="k-label">Extension ID</h2>
+        <div class="sp-copy">
+          <code id="extension-id" class="k-codebox sp-copy__value"></code>
+          <button type="button" class="k-btn k-btn--secondary" data-copy-target="extension-id" data-copy-label="Extension ID"><svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-copy"/></svg><span data-copy-text>複製 ID</span></button>
         </div>
-        <nav aria-label="設定分類">
-          <button type="button" data-settings-page="general">一般</button>
-          <button type="button" data-settings-page="mcp" class="active">MCP 整合</button>
-        </nav>
-      </aside>
-      <main class="settings-content">
-        <section data-settings-panel="general" hidden>
-          <header class="settings-page-heading">
-            <div>
-              <h1 tabindex="-1">一般</h1>
+      </section>
+      <form id="pair" class="k-card sp-card">
+        <label class="k-label" for="address">配對連結</label>
+        <input id="address" class="k-input" type="password" autocomplete="off" spellcheck="false" required placeholder="貼上 Desktop 產生的連結">
+        <button id="connect-button" class="k-btn k-btn--primary k-btn--lg k-btn--block" type="submit">連接工作台</button>
+      </form>
+      <details id="setup-advanced" class="sp-disclosure">
+        <summary><svg class="k-icon sp-disclosure__caret" aria-hidden="true" focusable="false"><use href="#ph-caret-down"/></svg>如何取得配對連結</summary>
+        <div class="sp-disclosure__body">
+          <p>在 Desktop「連線設定」貼上 Extension ID，再複製配對連結。請勿分享連結。</p>
+          <h3>命令列啟動</h3>
+          <p>未使用 Desktop 時，在專案目錄執行：</p>
+          <div class="sp-copy sp-copy--inline">
+            <code id="start-command" class="k-codebox sp-copy__value"></code>
+            <button type="button" class="k-btn k-btn--secondary k-btn--icon k-btn--sm" data-copy-target="start-command" aria-label="複製啟動指令"><svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-copy"/></svg></button>
+          </div>
+          <p>再啟動 ChatGPT Tunnel：</p>
+          <div class="sp-copy sp-copy--inline">
+            <code id="tunnel-command" class="k-codebox sp-copy__value"></code>
+            <button type="button" class="k-btn k-btn--secondary k-btn--icon k-btn--sm" data-copy-target="tunnel-command" aria-label="複製 Tunnel 指令"><svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-copy"/></svg></button>
+          </div>
+          <h3>重新配對</h3>
+          <p>若連結無法自動換新，保持 app 執行並產生新連結：</p>
+          <div class="sp-copy sp-copy--inline">
+            <code id="pair-command" class="k-codebox sp-copy__value"></code>
+            <button type="button" class="k-btn k-btn--secondary k-btn--icon k-btn--sm" data-copy-target="pair-command" aria-label="複製重新配對指令"><svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-copy"/></svg></button>
+          </div>
+          <p>重啟 app、瀏覽器或更新 Extension 後需重新配對。</p>
+        </div>
+      </details>
+      <p id="copy-status" class="k-sr-only" role="status" aria-live="polite"></p>
+    </main>
+    <section id="settings" class="sp-settings" aria-label="Kairomes 設定" hidden>
+      <div class="sp-sub">
+        <button type="button" id="settings-back" class="k-btn k-btn--quiet k-btn--icon" aria-label="返回工作台"><svg class="k-icon" data-size="lg" aria-hidden="true" focusable="false"><use href="#ph-arrow-left"/></svg></button>
+        <div class="k-tabs" role="tablist" aria-label="設定分類">
+          <button type="button" class="k-tab" role="tab" id="settings-tab-general" aria-controls="settings-general" aria-selected="true" data-settings-page="general">一般</button>
+          <button type="button" class="k-tab" role="tab" id="settings-tab-mcp" aria-controls="settings-mcp" aria-selected="false" tabindex="-1" data-settings-page="mcp">MCP 整合</button>
+        </div>
+      </div>
+      <div class="sp-scroll">
+        <section id="settings-general" class="sp-general" role="tabpanel" aria-labelledby="settings-tab-general" data-settings-panel="general" tabindex="-1">
+          <ul class="k-card sp-rows">
+            <li class="sp-row">
+              <span class="k-kind"><svg class="k-icon" data-size="lg" aria-hidden="true" focusable="false"><use href="#ph-plug"/></svg></span>
+              <span class="sp-row__text"><span class="sp-row__title">本機工作台</span><span id="workbench-channel" class="sp-row__meta" hidden></span></span>
+              <span class="sp-row__trail">
+                <span id="approval-channel" class="k-pill" data-tone="neutral"><span class="k-dot" data-tone="neutral"></span><span>未配對</span></span>
+                <button type="button" id="settings-reconnect" class="k-btn k-btn--secondary k-btn--sm" hidden>重新連線</button>
+              </span>
+            </li>
+            <li class="sp-row">
+              <span class="k-kind"><svg class="k-icon" data-size="lg" aria-hidden="true" focusable="false"><use href="#ph-chat-circle-dots"/></svg></span>
+              <span class="sp-row__text"><span class="sp-row__title">ChatGPT／安全通道</span><span class="sp-row__meta">此側欄無法確認；請在 ChatGPT 問「列出我的專案」。</span><span id="import-hydration" class="sp-row__meta" hidden></span></span>
+            </li>
+            <li id="pairing-row" class="sp-row" hidden>
+              <span class="k-kind"><svg class="k-icon" data-size="lg" aria-hidden="true" focusable="false"><use href="#ph-sign-out"/></svg></span>
+              <span class="sp-row__text"><span class="sp-row__title">配對</span><span class="sp-row__meta">解除後要重新貼上 Desktop 的配對連結。</span></span>
+              <span class="sp-row__trail"><button type="button" id="disconnect" class="k-btn k-btn--danger-quiet k-btn--sm">解除配對</button></span>
+            </li>
+          </ul>
+          <details class="sp-disclosure">
+            <summary><svg class="k-icon sp-disclosure__caret" aria-hidden="true" focusable="false"><use href="#ph-caret-down"/></svg>安全通道說明</summary>
+            <div class="sp-disclosure__body">
+              <p>Desktop 會自動管理安全通道；只有命令列模式需要手動啟動：</p>
+              <div class="sp-copy sp-copy--inline">
+                <code id="tunnel-command-settings" class="k-codebox sp-copy__value"></code>
+                <button type="button" class="k-btn k-btn--secondary k-btn--icon k-btn--sm" data-copy-target="tunnel-command-settings" aria-label="複製 Tunnel 指令"><svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-copy"/></svg></button>
+              </div>
             </div>
-          </header>
-          <dl class="connection-details">
-            <dt>核准通道</dt><dd id="approval-channel">未配對</dd>
-            <dt>工作台資料</dt><dd id="workbench-channel">待確認</dd>
-            <dt>ChatGPT／Tunnel</dt><dd>此側欄無法確認；請在 ChatGPT 呼叫 workspace_list。</dd>
-          </dl>
-          <button type="button" id="disconnect" hidden>解除配對</button>
-          <details class="settings-tunnel-details">
-            <summary>從 Codex 接續</summary>
-            <p>在 Desktop「專案」選擇「從 Codex 接續」。先在此側欄核對該專案的操作權限。</p>
           </details>
-          <article class="settings-info-card settings-tunnel-card">
-            <div>
-              <strong>ChatGPT Tunnel</strong>
-              <p>Desktop 會自動管理連線；命令列模式才需手動啟動。</p>
-              <details class="settings-tunnel-details">
-                <summary>顯示手動指令</summary>
-                <div class="command-row compact">
-                  <code id="tunnel-command-settings"></code>
-                  <button type="button" class="copy-button" data-copy-target="tunnel-command-settings" aria-label="複製 Tunnel 指令">複製</button>
-                </div>
-              </details>
-            </div>
-          </article>
+          <p class="k-meta sp-version">版本 <span id="extension-version"></span></p>
         </section>
-        <section data-settings-panel="mcp">
+        <section id="settings-mcp" role="tabpanel" aria-labelledby="settings-tab-mcp" data-settings-panel="mcp" tabindex="-1" hidden>
           <section id="integrations" aria-label="MCP 工具整合" hidden></section>
         </section>
-      </main>
+      </div>
     </section>
-    <iframe id="workbench" title="Kairomes 本機工作台" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin" allow="fullscreen" hidden></iframe>
+    <div id="workbench-empty" class="k-empty sp-empty" hidden>
+      <span class="k-empty__icon"><svg class="k-icon" data-size="xl" aria-hidden="true" focusable="false"><use href="#ph-desktop"/></svg></span>
+      <p class="k-empty__title">工作台尚未載入</p>
+      <button type="button" id="workbench-reload" class="k-btn k-btn--secondary"><svg class="k-icon" aria-hidden="true" focusable="false"><use href="#ph-arrow-clockwise"/></svg>重新載入</button>
+    </div>
+    <iframe id="workbench" title="Kairomes 本機工作台" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin" allow="fullscreen; clipboard-write" hidden></iframe>
+    <dialog id="disconnect-dialog" class="k-dialog" aria-labelledby="disconnect-title" aria-describedby="disconnect-text">
+      <div class="k-dialog__head"><h2 id="disconnect-title" class="k-dialog__title">解除配對？</h2></div>
+      <div class="k-dialog__body"><p id="disconnect-text">側欄會停止核准並收回自主授權；已核准的工作仍會繼續。</p></div>
+      <div class="k-dialog__actions">
+        <button type="button" id="disconnect-cancel" class="k-btn k-btn--secondary" autofocus>取消</button>
+        <button type="button" id="disconnect-confirm" class="k-btn k-btn--danger">解除配對</button>
+      </div>
+    </dialog>
     <script type="module" src="sidepanel.js"></script>
   </body>
 </html>

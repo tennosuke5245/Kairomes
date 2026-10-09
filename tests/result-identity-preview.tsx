@@ -13,8 +13,9 @@ import {
   CommandPanel,
   useCommandOutput,
 } from "../apps/widget/src/command-panel.tsx";
+import { DiffPreview } from "../apps/widget/src/diff-view.tsx";
 import { FileChangePanel } from "../apps/widget/src/file-change-panel.tsx";
-import { DiffPreview, McpImagePreview } from "../apps/widget/src/overview-panel.tsx";
+import { McpImagePreview } from "../apps/widget/src/overview-panel.tsx";
 import "../apps/widget/src/styles.css";
 
 // Fixed memory-only fixture. It never creates a bridge, fetches or runs a command.

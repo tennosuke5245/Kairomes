@@ -1,20 +1,44 @@
-import type { ActivityEntry, ActivitySnapshot } from "@kairomes/protocol";
 import {
-  CaretRightIcon,
+  type ActivityEntry,
+  type ActivitySnapshot,
+  artifactImportAwaitingDecision,
+} from "@kairomes/protocol";
+import {
+  ArrowUpIcon,
   ChatCircleDotsIcon,
-  CircleNotchIcon,
-  FileTextIcon,
   FolderIcon,
-  ImageIcon,
+  FunnelSimpleIcon,
   MagnifyingGlassIcon,
+  PauseIcon,
   PencilSimpleIcon,
-  PlugsConnectedIcon,
-  TerminalWindowIcon,
+  TrayIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
-import { activityLabel, activityTitle, visibleActivity } from "./activity-model.ts";
+import { useEffect, useId, useRef, useState } from "react";
+import {
+  ACTIVITY_FILTERS,
+  type ActivityFilter,
+  activityFilterCounts,
+  filterActivity,
+  visibleActivity,
+} from "./activity-model.ts";
 import type { WorkbenchBridge } from "./bridge.ts";
+import {
+  isEditableTarget,
+  liveStatus,
+  timelineScrollPauses,
+  workbenchShortcut,
+} from "./follow-model.ts";
+import { RowBody, useRovingList } from "./record-list.tsx";
+import { groupByTime } from "./time-format.ts";
+import {
+  newActivityLabel,
+  TIMELINE_PAGE,
+  ticksEverySecond,
+  timelineRow,
+} from "./timeline-model.ts";
+import { iconProps } from "./ui-icons.tsx";
+import { useNow } from "./use-now.ts";
 
 export function latestFocus(
   snapshot?: ActivitySnapshot,
@@ -79,177 +103,305 @@ export function useActivity(bridge: WorkbenchBridge) {
   return { snapshot, error };
 }
 
-function entryState(entry: ActivityEntry) {
-  if (["pending"].includes(entry.state)) return "pending";
-  if (["working", "starting", "running", "applying"].includes(entry.state)) return "working";
-  if (["failed", "denied", "expired", "cancelled", "timed_out", "conflict"].includes(entry.state))
-    return "failed";
-  return "done";
-}
-
-function EntryIcon({ entry }: { entry: ActivityEntry }) {
-  const state = entryState(entry);
-  if (state === "working") return <CircleNotchIcon weight="bold" className="spinning" />;
-  if (state === "failed") return <WarningCircleIcon weight="fill" />;
-  if (entry.kind === "terminal" || entry.kind === "command") return <TerminalWindowIcon />;
-  if (entry.kind === "file_change") return <PencilSimpleIcon />;
-  if (entry.kind === "artifact_import" || entry.tool === "artifact_preview") return <ImageIcon />;
-  if (entry.tool === "mcp_tool_call" || entry.tool === "mcp_read_call")
-    return <PlugsConnectedIcon />;
-  if (entry.tool === "file_search") return <MagnifyingGlassIcon />;
-  return <FileTextIcon />;
-}
-
 export function ActivityPanel({
   snapshot,
   error,
   emptyWorkspace,
   following,
-  onFollow,
+  unread = 0,
+  onResume,
   onSelect,
+  onFiles,
+  onSearch,
+  onChanges,
+  changeCount = 0,
+  onReadingScroll,
+  onToggleFollow,
   workspaceName,
   workspaceId,
-  unread = 0,
   nativeControls = false,
-  onFiles,
+  currentId,
+  now: fixedNow,
+  defaultFilter = "all",
 }: {
   snapshot?: ActivitySnapshot;
   error: string;
   emptyWorkspace: boolean;
   following: boolean;
-  onFollow(): void;
+  /** New focus-worthy entries since following paused (unfiltered list). */
+  unread?: number;
+  onResume(): void;
   onSelect(entry: ActivityEntry): void;
+  onFiles?(): void;
+  onSearch?(): void;
+  /** 變更 N (C2): opens the session change summary; hidden while nothing changed. */
+  onChanges?(): void;
+  changeCount?: number;
+  /** Scrolling the timeline away from the top is reading; the workbench pauses following. */
+  onReadingScroll?(): void;
+  /** `f` inside the timeline pauses following (resuming goes through onResume). */
+  onToggleFollow?(): void;
   workspaceName(id?: string): string;
   workspaceId?: string | null;
-  unread?: number;
   nativeControls?: boolean;
-  onFiles?(): void;
+  /** The entry shown in the inspector, marked with aria-current. */
+  currentId?: string;
+  /** Fixed clock for static rendering in tests. */
+  now?: number;
+  defaultFilter?: ActivityFilter;
 }) {
-  const current = latestFocus(snapshot, workspaceId);
-  const entries = visibleActivity(snapshot, workspaceId).slice(0, 30);
+  const [filter, setFilter] = useState<ActivityFilter>(defaultFilter);
+  const scope = `${filter}:${workspaceId ?? ""}`;
+  const [paging, setPaging] = useState({ scope, limit: TIMELINE_PAGE });
+  const limit = paging.scope === scope ? paging.limit : TIMELINE_PAGE;
+  const list = useRef<HTMLDivElement>(null);
+  const visible = visibleActivity(snapshot, workspaceId);
+  const counts = activityFilterCounts(visible);
+  const matching = filterActivity(visible, filter);
+  const page = matching.slice(0, limit);
+  const now = useNow(ticksEverySecond(page, snapshot), fixedNow);
+  const rows = page.map((entry) =>
+    timelineRow(entry, {
+      snapshot,
+      now,
+      workspaceName: workspaceId ? undefined : (id) => workspaceName(id),
+    }),
+  );
+  const groups = groupByTime(rows, (row) => row.entry.updatedAt, now);
   const pending = [
     ...(snapshot?.imports ?? []),
     ...(snapshot?.changes ?? []),
     ...(snapshot?.sessions ?? []),
     ...(snapshot?.commands ?? []),
-  ].filter((item) => item.state === "pending").length;
+  ].filter(
+    (item) =>
+      // Same 需確認 as the side panel: an image import waiting for its image counts too.
+      (item.state === "pending" ||
+        ("source_file_id" in item && artifactImportAwaitingDecision(item))) &&
+      (!workspaceId || item.workspace_id === workspaceId),
+  ).length;
+  const live = liveStatus(following);
+  const titleId = useId();
+  const rovingKeys = useRovingList(list);
+
+  function chooseFilter(next: ActivityFilter) {
+    setFilter(next);
+    list.current?.scrollTo?.({ top: 0 });
+  }
+
+  function resume() {
+    onResume();
+    list.current?.scrollTo?.({ top: 0 });
+    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(".k-row")?.focus());
+  }
+
   return (
-    <section className="activity-panel signal-stream" aria-label="本機操作">
-      <header className="stream-heading">
-        <h1>動態</h1>
-        <div className="stream-actions">
-          {onFiles && (
-            <button type="button" onClick={onFiles}>
-              檔案
+    <section
+      className="wb-timeline"
+      aria-labelledby={titleId}
+      onKeyDown={(event) => {
+        rovingKeys(event);
+        if (event.defaultPrevented) return;
+        const shortcut = workbenchShortcut(
+          {
+            key: event.key,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            altKey: event.altKey,
+            editable: isEditableTarget(event.target as Element | null),
+          },
+          { detailOpen: false },
+        );
+        if (shortcut !== "toggle-follow" || !onToggleFollow) return;
+        event.preventDefault();
+        // Resuming takes the same path as the 回到最新 pill: back to the top of the list, so
+        // the next small scroll does not read as reading again.
+        if (following) onToggleFollow();
+        else resume();
+      }}
+    >
+      <div className="wb-bar">
+        <h1 id={titleId} className="k-toolbar__title wb-title">
+          動態
+        </h1>
+        <span className="k-live" data-state={live.state} role="status">
+          {following ? (
+            <span className="k-dot" data-pulse="" />
+          ) : (
+            <PauseIcon {...iconProps("sm")} weight="fill" />
+          )}
+          {live.label}
+        </span>
+        <div className="wb-bar__actions">
+          {onChanges && changeCount > 0 && (
+            // Changed files, not change entries: the 變更 chip below counts those.
+            <button
+              type="button"
+              className="k-btn k-btn--quiet k-btn--sm wb-changes"
+              aria-label={`本次變更的 ${changeCount} 個檔案`}
+              title="本次變更的檔案"
+              onClick={onChanges}
+            >
+              <PencilSimpleIcon {...iconProps("md")} />
+              {changeCount} 個檔案
             </button>
           )}
+          {onSearch && (
+            <button
+              type="button"
+              className="k-btn k-btn--quiet k-btn--icon"
+              aria-label="搜尋專案內容"
+              title="搜尋專案內容"
+              onClick={onSearch}
+            >
+              <MagnifyingGlassIcon {...iconProps("lg")} />
+            </button>
+          )}
+          {onFiles && (
+            <button
+              type="button"
+              className="k-btn k-btn--quiet k-btn--icon"
+              aria-label="檔案"
+              title="檔案"
+              onClick={onFiles}
+            >
+              <FolderIcon {...iconProps("lg")} />
+            </button>
+          )}
+        </div>
+      </div>
+      {visible.length > 0 && (
+        <fieldset className="wb-chips k-chips">
+          <legend className="k-sr-only">篩選動態</legend>
+          {ACTIVITY_FILTERS.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              className="k-chip"
+              aria-pressed={filter === id}
+              data-tone={id === "failed" ? "danger" : undefined}
+              onClick={() => chooseFilter(id)}
+            >
+              {label}
+              {id !== "all" && counts[id] > 0 && (
+                <span className="k-chip__count">{counts[id]}</span>
+              )}
+            </button>
+          ))}
+        </fieldset>
+      )}
+      <span className="k-sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {!following && unread > 0 ? `有 ${unread} 則新動態` : ""}
+      </span>
+      <div
+        ref={list}
+        className="wb-list"
+        onScroll={(event) => {
+          if (timelineScrollPauses(event.currentTarget.scrollTop)) onReadingScroll?.();
+        }}
+      >
+        {!following && unread > 0 && (
+          <button type="button" className="k-newpill" onClick={resume}>
+            <ArrowUpIcon {...iconProps("md")} />
+            {newActivityLabel(unread)}
+          </button>
+        )}
+        {error && (
+          <div className="k-notice wb-notice" data-tone="danger" role="alert">
+            <WarningCircleIcon {...iconProps("lg")} />
+            <span className="k-notice__body">{error}</span>
+          </div>
+        )}
+        {pending > 0 && !nativeControls && (
+          <div className="k-notice wb-notice" data-tone="brand" role="status">
+            <TrayIcon {...iconProps("lg")} />
+            <span className="k-notice__body">
+              <span className="k-notice__title">{pending} 件需確認</span> · 請在側欄審核
+            </span>
+          </div>
+        )}
+        {emptyWorkspace && visible.length > 0 && (
+          <p className="k-notice wb-notice" role="status">
+            <FolderIcon {...iconProps("lg")} />
+            <span className="k-notice__body">尚未加入專案，請在 Kairomes Desktop 加入資料夾。</span>
+          </p>
+        )}
+        {!visible.length ? (
+          <div className="k-empty wb-empty">
+            <span className="k-empty__icon" aria-hidden="true">
+              {emptyWorkspace ? (
+                <FolderIcon {...iconProps("xl")} />
+              ) : (
+                <ChatCircleDotsIcon {...iconProps("xl")} />
+              )}
+            </span>
+            <h2 className="k-empty__title">
+              {emptyWorkspace ? "還沒有專案" : workspaceId ? "這個專案還沒有動態" : "還沒有動態"}
+            </h2>
+            <p className="k-empty__text">
+              {emptyWorkspace
+                ? "在 Kairomes Desktop 加入一個資料夾，ChatGPT 才能讀取。"
+                : "ChatGPT 讀取或修改專案時會列在這裡。"}
+            </p>
+          </div>
+        ) : !matching.length ? (
+          <div className="k-empty wb-empty">
+            <span className="k-empty__icon" aria-hidden="true">
+              <FunnelSimpleIcon {...iconProps("xl")} />
+            </span>
+            <h2 className="k-empty__title">沒有符合的動態</h2>
+            <button
+              type="button"
+              className="k-btn k-btn--secondary"
+              onClick={() => chooseFilter("all")}
+            >
+              顯示全部
+            </button>
+          </div>
+        ) : (
+          groups.map((group) => (
+            <section key={group.group} className="wb-group" aria-label={group.label}>
+              <h2 className="k-group-label">{group.label}</h2>
+              <ul className="k-list k-card">
+                {group.items.map((item) => {
+                  // Under 剛剛 a row's own 剛剛 would only repeat the label.
+                  const row = item.time === group.label ? { ...item, time: "" } : item;
+                  return (
+                    <li key={row.entry.id}>
+                      {row.actionable ? (
+                        <button
+                          type="button"
+                          className="k-row"
+                          aria-current={row.entry.id === currentId ? "true" : undefined}
+                          data-activity-id={row.entry.id}
+                          data-roving-item=""
+                          onClick={() => onSelect(row.entry)}
+                        >
+                          <RowBody row={row} />
+                        </button>
+                      ) : (
+                        <div className="k-row" data-static="">
+                          <RowBody row={row} />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))
+        )}
+        {matching.length > page.length && (
           <button
             type="button"
-            className={`follow-button ${following ? "active" : ""}`}
-            onClick={onFollow}
-            aria-pressed={following}
-            aria-label={following ? "暫停即時跟隨" : "回到最新動態"}
+            className="k-btn k-btn--secondary wb-more"
+            onClick={() =>
+              setPaging({ scope, limit: Math.min(matching.length, limit + TIMELINE_PAGE) })
+            }
           >
-            {following ? "即時" : unread ? `最新 ${unread}` : "最新"}
+            顯示更早
           </button>
-        </div>
-      </header>
-      <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-        {!following && unread > 0 ? `${unread} 筆新操作` : ""}
-      </span>
-      {error && (
-        <div className="stream-alert" role="alert">
-          <WarningCircleIcon weight="fill" />
-          <span>{error}</span>
-        </div>
-      )}
-      {pending > 0 && !nativeControls && (
-        <div className="stream-notice" role="status">
-          <span>{pending}</span>
-          <strong>件需確認 · 請開啟原生側欄</strong>
-        </div>
-      )}
-      {emptyWorkspace && entries.length > 0 && (
-        <p className="stream-project-hint" role="status">
-          尚未掛載專案，請在 Kairomes Desktop 新增資料夾。
-        </p>
-      )}
-      {!entries.length && (
-        <div className="stream-empty">
-          {emptyWorkspace ? (
-            <FolderIcon className="stream-empty-icon" weight="duotone" aria-hidden="true" />
-          ) : (
-            <ChatCircleDotsIcon className="stream-empty-icon" weight="duotone" aria-hidden="true" />
-          )}
-          <h2>
-            {emptyWorkspace
-              ? "請在 Desktop 新增專案"
-              : workspaceId
-                ? "此專案尚無操作"
-                : "尚無本機操作"}
-          </h2>
-        </div>
-      )}
-      <div className="stream-list">
-        {entries.map((entry) => {
-          const state = entryState(entry);
-          const command = snapshot?.commands?.find((item) => item.id === entry.commandId);
-          const isCurrent = entry.id === current?.id;
-          const title = activityTitle(entry);
-          const actionable = !!(
-            entry.resultId ||
-            entry.sessionId ||
-            entry.commandId ||
-            entry.changeId ||
-            entry.importId
-          );
-          return (
-            <article
-              className={`stream-entry state-${state} ${isCurrent ? "current" : ""} ${actionable ? "actionable" : ""}`}
-              key={entry.id}
-            >
-              <div className="stream-node" aria-hidden="true">
-                <EntryIcon entry={entry} />
-              </div>
-              <div className="stream-card">
-                <div className="stream-meta">
-                  <span className={`stream-state state-${state}`}>{activityLabel(entry)}</span>
-                  <span>
-                    {command?.exit_code !== null && command?.exit_code !== undefined
-                      ? `Exit ${command.exit_code} · `
-                      : ""}
-                    {new Date(entry.updatedAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </div>
-                <h2>{title}</h2>
-                {entry.path && !title.includes(entry.path) && (
-                  <p className="stream-path">{entry.path}</p>
-                )}
-                <div className="stream-card-footer">
-                  <small>
-                    {entry.tool === "mcp_tool_call" || entry.tool === "mcp_read_call"
-                      ? "MCP 工具"
-                      : workspaceName(entry.workspaceId)}
-                  </small>
-                  {actionable && (
-                    <button
-                      type="button"
-                      aria-label={`查看「${title}」詳情`}
-                      data-activity-id={entry.id}
-                      onClick={() => onSelect(entry)}
-                    >
-                      查看
-                      <CaretRightIcon weight="bold" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </article>
-          );
-        })}
+        )}
       </div>
     </section>
   );

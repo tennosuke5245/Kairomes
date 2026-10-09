@@ -14,6 +14,7 @@ import {
   GitDiffSchema,
   GitLogSchema,
   GitStatusSchema,
+  ImageImportResultSchema,
   Inputs,
   KairomesError,
   LIMITS,
@@ -80,7 +81,31 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.artifact_preview,
     output: ArtifactSchema,
     description:
-      "Inspect an existing image inside a mounted workspace and publish a preview to the paired Kairomes workbench. Supports verified PNG, JPEG and WebP up to 25 MiB; the actual file signature, dimensions, workspace path and immutable version are checked instead of trusting the extension. Use workspace_snapshot to find a relative path. This is read-only and does not import remote ChatGPT files or URLs.",
+      "Inspect an existing image inside a mounted workspace and publish a preview to the paired Kairomes workbench. Supports verified PNG, JPEG and WebP up to 25 MiB; the actual file signature, dimensions, workspace path and immutable version are checked instead of trusting the extension. Use workspace_snapshot to find a relative path. This is read-only and never imports remote files or URLs; use image_import_request to save a conversation image.",
+  },
+  {
+    name: "image_import_request",
+    title: "匯入對話圖片",
+    input: Inputs.image_import_request,
+    output: ImageImportResultSchema,
+    description:
+      "Save an image from this ChatGPT conversation (for example one ChatGPT just generated) as a NEW file inside a mounted workspace. Pass workspace_id, a new UUID request_id, the relative target path (.png, .jpg, .jpeg or .webp matching the image; the parent folder must already exist; existing files are never overwritten) and a short summary. When ChatGPT attaches the conversation image, it arrives as the top-level file parameter; Kairomes downloads it from OpenAI's file service and verifies the real bytes (still PNG, JPEG or WebP, up to 25 MiB and 16 megapixels, at most 16,384 px per side). If the image cannot be attached, omit file: the import then waits as awaiting_file until the user drops, pastes or chooses the image in the Kairomes side panel. Never fill file yourself and never pass /mnt/data or sandbox paths, Base64, shell copies or other URLs; such input fails with IMPORT_SOURCE_REJECTED, so call again without file instead. Every import needs the local user's individual approval in the side panel, even under files or full autonomy. Request acceptance is not success: follow guidance and call image_import_poll with import_id until applied, denied, cancelled, expired, conflict or failed. Reuse the same request_id only to retry the identical request after an uncertain response; PARENT_NOT_FOUND means the folder must be created or another folder chosen first.",
+  },
+  {
+    name: "image_import_poll",
+    title: "讀取圖片匯入狀態",
+    input: Inputs.image_import_poll,
+    output: ImageImportResultSchema,
+    description:
+      "Read one image import by import_id: state, write_outcome, the verified format, byte size, dimensions and SHA-256 version, and guidance for the next step. awaiting_file waits for the user to provide the image in the Kairomes side panel; preparing means the image is being received and verified; pending waits for the user's approval; applied with write_outcome=written_verified means the new file was written and read back. write_outcome=unknown means a file may exist at path, so check it before anything else. Denied means the local user declined; the user may include a reason, returned as denial_reason. Avoid rapid polling while waiting for the user.",
+  },
+  {
+    name: "image_import_cancel",
+    title: "取消圖片匯入",
+    input: Inputs.image_import_cancel,
+    output: ImageImportResultSchema,
+    description:
+      "Cancel an image import that is still awaiting_file, preparing or pending; any download stops and held image bytes are discarded. An import that is applying or finished is returned unchanged, and a written file is never removed. Idempotent; needs no approval.",
   },
   {
     name: "file_change_request",
@@ -246,7 +271,7 @@ export const toolDefinitions: ToolDefinition[] = [
     name: "workspace_list",
     title: "列出工作區",
     description:
-      "List workspace IDs and display names explicitly mounted by the local user, each with its current approval mode. approval.mode=per_request means every file change, command and terminal waits for a human to approve it in the Kairomes side panel, so batch related edits into one file_change_request and avoid many small requests or commands. files means file changes apply without per-request review while commands and terminals still wait. full means file changes, commands and terminals start without per-request approval. approval.expires_at is the ISO 8601 time the user's grant ends, or null for per_request or a grant kept until the user revokes it. Only the local user can change the mode, and it can change at any time, so call again before relying on it. Absolute local paths are not exposed.",
+      "List workspace IDs and display names explicitly mounted by the local user, each with its current approval mode. approval.mode=per_request means every file change, command and terminal waits for a human to approve it in the Kairomes side panel, so batch related edits into one file_change_request and avoid many small requests or commands. files means file changes apply without per-request review while commands and terminals still wait. full means file changes, commands and terminals start without per-request approval. Image imports (image_import_request) always wait for individual approval in every mode. approval.expires_at is the ISO 8601 time the user's grant ends, or null for per_request or a grant kept until the user revokes it. Only the local user can change the mode, and it can change at any time, so call again before relying on it. Absolute local paths are not exposed.",
     input: Inputs.workspace_list,
     output: WorkspaceListSchema,
   },
@@ -360,10 +385,13 @@ export class ToolService {
       (id) => this.terminals.access().find((grant) => grant.workspace_id === id),
       (change, source) => this.activity.fileChange(change, source),
     );
+    // Imports never consult autonomy grants: each one needs its own approval in the panel.
     this.imports = new ArtifactImportManager(
       registry,
       (value, source, artifact) => this.activity.artifactImport(value, source, artifact),
       options.artifactDownload,
+      Date.now,
+      () => this.activity.changed(),
     );
   }
 
@@ -378,6 +406,12 @@ export class ToolService {
         const input = Inputs.artifact_preview.parse(args);
         return this.artifacts.inspect(input.workspace_id, input.path);
       }
+      case "image_import_request":
+        return this.imports.request(args, source);
+      case "image_import_poll":
+        return this.imports.poll(Inputs.image_import_poll.parse(args).import_id);
+      case "image_import_cancel":
+        return this.imports.cancel(Inputs.image_import_cancel.parse(args).import_id);
       case "file_change_request":
         return this.changes.request(Inputs.file_change_request.parse(args), source);
       case "file_change_list":
@@ -499,6 +533,7 @@ export class ToolService {
       name !== "terminal_stop" &&
       name !== "command_cancel" &&
       name !== "file_change_cancel" &&
+      name !== "image_import_cancel" &&
       this.activeCalls >= LIMITS.concurrentCalls
     ) {
       return {
@@ -586,13 +621,15 @@ export class ToolService {
   /**
    * Trusted local decision from the paired Extension or the admin channel. Never reachable
    * from MCP, /api/tools or the widget. Only a denial carries the user's optional reason.
+   * `reviewer` is the paired panel token of the request; approving an image import needs the
+   * same panel to have read the pending bytes first (see ArtifactImportManager.content).
    */
-  async decideApproval(input: ApprovalDecision) {
+  async decideApproval(input: ApprovalDecision, reviewer?: string) {
     const approve = input.action === "approve";
     const reason = input.action === "deny" ? input.reason : undefined;
     if (input.import_id) {
       if (input.action === "stop") this.imports.cancel(input.import_id);
-      else await this.imports.decide(input.import_id, input.fingerprint, approve, reason);
+      else await this.imports.decide(input.import_id, input.fingerprint, approve, reason, reviewer);
     } else if (input.change_id) {
       if (input.action === "stop") this.changes.cancel(input.change_id);
       else await this.changes.decide(input.change_id, input.fingerprint, approve, reason);

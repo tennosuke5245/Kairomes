@@ -13,6 +13,7 @@ import {
 } from "@kairomes/protocol";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { startPreviewServer } from "../../../scripts/preview-sidebar.ts";
 import { fixture } from "../../../tests/fixtures.ts";
 import { McpHostManager } from "./mcp-host.ts";
 import { startWorkbench } from "./preview.ts";
@@ -43,81 +44,12 @@ await client.connect(
     requestInit: { headers: { Authorization: `Bearer ${connection.mcpToken}` } },
   }),
 );
-const bundle = await Bun.build({
-  entrypoints: [fileURLToPath(new URL("../../../tests/approval-preview.ts", import.meta.url))],
-  target: "browser",
-});
-if (!bundle.success) throw new Error("Preview build failed");
-const previewJs = await bundle.outputs[0]?.text();
-const settingsBundle = await Bun.build({
-  entrypoints: [fileURLToPath(new URL("../../../tests/settings-preview.ts", import.meta.url))],
-  target: "browser",
-});
-if (!settingsBundle.success) throw new Error("Settings preview build failed");
-const settingsPreviewJs = await settingsBundle.outputs[0]?.text();
-const css = await Bun.file(new URL("../../extension/sidepanel.css", import.meta.url)).text();
-const tokensCss = await Bun.file(
-  new URL("../../../packages/ui-tokens/tokens.css", import.meta.url),
-).text();
-const componentsCss = await Bun.file(
-  new URL("../../../packages/ui-tokens/components.css", import.meta.url),
-).text();
-const previewLogo = Buffer.from(
-  await Bun.file(
-    new URL("../../extension/assets/kairomes-k-128.png", import.meta.url),
-  ).arrayBuffer(),
-).toString("base64");
-const setupPreviewHtml = (
-  await Bun.file(new URL("../../extension/sidepanel.html", import.meta.url)).text()
-)
-  .replace('<link rel="stylesheet" href="tokens.css">', () => `<style>${tokensCss}</style>`)
-  .replace('<link rel="stylesheet" href="components.css">', () => `<style>${componentsCss}</style>`)
-  .replace('<link rel="stylesheet" href="sidepanel.css">', `<style>${css}</style>`)
-  .replaceAll("assets/kairomes-k-128.png", `data:image/png;base64,${previewLogo}`)
-  .replace(
-    '<code id="start-command"></code>',
-    '<code id="start-command">bun.cmd run app --port 0 --extension-id abcdefghijklmnopabcdefghijklmnop</code>',
-  )
-  .replace(
-    '<code id="pair-command"></code>',
-    '<code id="pair-command">bun.cmd run kairomes pair --extension-id abcdefghijklmnopabcdefghijklmnop</code>',
-  )
-  .replace(
-    '<code id="tunnel-command"></code>',
-    '<code id="tunnel-command">tunnel-client run --profile kairomes</code>',
-  )
-  .replace(
-    '<code id="tunnel-command-settings"></code>',
-    '<code id="tunnel-command-settings">tunnel-client run --profile kairomes</code>',
-  )
-  .replace(
-    '<code id="extension-id" class="extension-id"></code>',
-    '<code id="extension-id" class="extension-id">abcdefghijklmnopabcdefghijklmnop</code>',
-  )
-  .replace('<script type="module" src="sidepanel.js"></script>', "");
-const preview = Bun.serve({
-  hostname: "127.0.0.1",
-  port: 0,
-  fetch(request, server) {
-    if (request.headers.get("host") !== `127.0.0.1:${server.port}` || request.method !== "GET")
-      return new Response("Not found", { status: 404 });
-    if (new URL(request.url).pathname === "/setup")
-      return new Response(setupPreviewHtml, {
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-      });
-    if (new URL(request.url).pathname === "/settings")
-      return new Response(
-        `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kairomes 設定視覺測試 · 無執行能力</title><style>${css}</style><body><header class="native-bar"><div class="native-brand"><img src="data:image/png;base64,${previewLogo}" alt=""><span><strong>Kairomes</strong><small>VISUAL FIXTURE · NO EXECUTION</small></span></div><div class="native-actions"><span id="connection-status" class="connected"><i></i>測試連線</span><button id="disconnect">解除配對</button></div></header><p id="panel-error"></p><section class="settings-shell"><aside class="settings-sidebar"><button class="settings-back">← 返回工作台</button><div class="settings-sidebar-heading"><span>LOCAL COMPANION</span><strong>設定</strong></div><nav><button>一般</button><button class="active">MCP 整合</button></nav><p>設定只留在這台電腦，不會顯示給 ChatGPT。</p></aside><main class="settings-content"><section><section id="integrations"></section></section></main></section><script type="module">${settingsPreviewJs}</script></body></html>`,
-        { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
-      );
-    return new Response(
-      `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>Kairomes 整合視覺測試 · 無執行能力</title><style>${css}</style><body><header class="native-bar"><div class="native-brand"><img src="data:image/png;base64,${previewLogo}" alt=""><span><strong>Kairomes</strong><small>VISUAL FIXTURE · NO EXECUTION</small></span></div><div class="native-actions"><span id="connection-status" class="connected"><i></i>測試連線</span><section id="access"></section><button id="approval-count">3 件需要你</button></div></header><p id="panel-error"></p><section id="approvals"></section><iframe src="${app.url}" title="Kairomes 本機工作台"></iframe><script type="module">${previewJs}</script></body></html>`,
-      { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
-    );
-  },
-});
+// The side panel pages are the maintained synthetic ones (scripts/preview-sidebar.ts: tokens,
+// components, icon sprite and a swap that fails on markup drift). The live workbench sends
+// frame-ancestors, so it is opened directly at its own URL instead of inside a page here.
+const preview = await startPreviewServer();
 console.log(
-  `Isolated workbench: ${app.url}\nVisual approval fixture: http://127.0.0.1:${preview.port}/\nVisual setup fixture: http://127.0.0.1:${preview.port}/setup\nVisual settings fixture: http://127.0.0.1:${preview.port}/settings\nCommands: read, search, artifact, mcp, change, change-applied, terminal, terminal-output, command, command-output, quit (fixture approvals stay in this test runner)`,
+  `Isolated workbench: ${app.url}\nSynthetic side panel: ${preview.origin}/setup, ${preview.origin}/approvals, ${preview.origin}/settings (fixture data, not this workbench)\nCommands: read, search, artifact, mcp, change, change-applied, terminal, terminal-output, command, command-output, quit (fixture approvals stay in this test runner)`,
 );
 const lines = createInterface({ input: process.stdin });
 try {
@@ -316,7 +248,7 @@ try {
 } finally {
   lines.close();
   await client.close();
-  preview.stop(true);
+  await preview.stop();
   await app.close();
   await f.dispose();
 }

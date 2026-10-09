@@ -2,10 +2,11 @@ import {
   MCP_AUTH_LIMITS,
   type McpAuthInput,
   type McpAuthResult,
-  type McpCatalogTool,
   type McpPanelState,
+  mcpStdioCwdProblem,
 } from "@kairomes/protocol";
-import { mcpAuthDiagnostic } from "./mcp-auth-diagnostic.ts";
+import { argvList, el } from "./approval-dom.ts";
+import { icon } from "./icons.ts";
 import {
   type McpAuthIdentity,
   McpAuthStorageConflict,
@@ -13,7 +14,8 @@ import {
   mcpAuthPresentation,
   type SavedMcpAuth,
 } from "./mcp-auth-tracker.ts";
-import { filterMcpCatalog, type McpToolFilter } from "./mcp-filter.ts";
+import { type McpCardHandlers, McpServerCard, setText, syncChildren } from "./mcp-card.ts";
+import { filterMcpServers, type McpServerChip } from "./mcp-filter.ts";
 import {
   type McpMutationBody,
   type McpMutationScope,
@@ -23,16 +25,23 @@ import {
   readMcpMutationState,
   settleMcpMutation,
 } from "./mcp-mutation.ts";
-import { mcpStdioLaunchInput } from "./mcp-stdio-input.ts";
-
-const stateLabels = {
-  disconnected: "尚未連線",
-  connecting: "連線中",
-  ready: "已連線",
-  unavailable: "無法連線",
-} as const;
+import {
+  isSearchShortcut,
+  MCP_ADD_CONSEQUENCE,
+  MCP_TEMPLATES,
+  type McpNoticeAction,
+  type McpTemplate,
+  mcpArgPlaceholder,
+  mcpChipCounts,
+  mcpPathInput,
+  mcpServerView,
+  mcpStdioRiskLine,
+  mcpSummary,
+  parseMcpArgs,
+} from "./mcp-view.ts";
 
 type Server = McpPanelState["servers"][number];
+type Transport = "stdio" | "http";
 export interface McpAuthPanelOptions {
   context(): { source: string; instanceId: string } | undefined;
   request(body: McpAuthInput): Promise<McpAuthResult>;
@@ -41,53 +50,82 @@ export interface McpAuthPanelOptions {
   refresh(): void;
 }
 
-function switchButton(checked: boolean, label: string) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "mcp-switch";
-  button.setAttribute("role", "switch");
-  button.setAttribute("aria-checked", String(checked));
-  button.setAttribute("aria-label", label);
-  const text = document.createElement("span");
-  text.textContent = checked ? "開啟" : "關閉";
-  const track = document.createElement("i");
-  track.append(document.createElement("i"));
-  button.append(text, track);
-  return button;
+const chipLabels: Record<McpServerChip, string> = {
+  all: "全部",
+  on: "已開啟",
+  attention: "需處理",
+};
+
+function button(className: string, label: string, focus?: string) {
+  const element = el("button", className);
+  element.type = "button";
+  element.append(el("span", undefined, label));
+  if (focus) element.dataset.mcpFocus = focus;
+  return element;
 }
 
-function riskLabels(tool: McpCatalogTool) {
-  const values: Array<[string, string]> = [];
-  if (tool.destructive_hint === true) values.push(["warn", "可能修改資料"]);
-  else if (tool.read_only_hint === true) values.push(["safe", "唯讀"]);
-  else values.push(["neutral", "可執行動作"]);
-  if (tool.open_world_hint === true) values.push(["network", "可連外"]);
-  return values;
+/** `<label class="k-label">` above its control. */
+function field(label: string | HTMLLabelElement, control: HTMLElement, id: string) {
+  const wrapper = el("div", "mcp-add__field");
+  const text = typeof label === "string" ? el("label", "k-label", label) : label;
+  control.id = id;
+  text.htmlFor = id;
+  wrapper.append(text, control);
+  return wrapper;
 }
 
 export class McpPanel {
-  private readonly root = document.createElement("div");
-  private readonly status = document.createElement("span");
-  private readonly servers = document.createElement("div");
-  private readonly addButton = document.createElement("button");
-  private readonly addDialog = document.createElement("dialog");
-  private readonly form = document.createElement("form");
-  private readonly transport = document.createElement("select");
-  private readonly name = document.createElement("input");
-  private readonly target = document.createElement("input");
-  private readonly targetLabel = document.createElement("span");
-  private readonly args = document.createElement("textarea");
-  private readonly cwd = document.createElement("input");
-  private readonly cwdError = document.createElement("p");
-  private readonly submit = document.createElement("button");
-  private readonly dialogResult = document.createElement("p");
-  private readonly formNote = document.createElement("p");
-  private readonly reconcileButton = document.createElement("button");
-  private readonly search = document.createElement("input");
-  private readonly serverFilter = document.createElement("select");
-  private readonly toolFilter = document.createElement("select");
-  private readonly matchStatus = document.createElement("span");
-  private readonly clearFilters = document.createElement("button");
+  private readonly root = el("div", "mcp");
+  private readonly heading = el("h1", "k-sr-only", "MCP 整合");
+  private readonly top = el("div", "mcp-top");
+  private readonly summary = el("p", "mcp-summary");
+  private readonly addButton = button("k-btn k-btn--secondary", "加入 MCP", "add");
+  private readonly searchField = el("label", "k-field mcp-search");
+  private readonly search = el("input", "k-input");
+  private readonly chips = el("div", "k-chips mcp-filters");
+  private readonly chipButtons = new Map<McpServerChip, HTMLButtonElement>();
+  private readonly chipCounts = new Map<McpServerChip, HTMLElement>();
+  private readonly matchStatus = el("p", "k-sr-only");
+  private readonly list = el("div", "mcp-list");
+  private readonly cards = new Map<string, McpServerCard>();
+  private readonly noMatch = el("div", "mcp-nomatch");
+  private readonly noMatchText = el("p");
+  private readonly noMatchClear = button("k-btn k-btn--secondary k-btn--sm", "清除搜尋");
+  private readonly empty = el("div", "k-empty mcp-empty");
+  private readonly emptyAdd = button("k-btn k-btn--primary", "加入 MCP", "add-empty");
+  private readonly hint = el("p", "k-meta mcp-hint", "風險標示由伺服器提供，僅供參考。");
+  private chip: McpServerChip = "all";
+  private readonly expanded = new Set<string>();
+  private readonly statusLabels = new Map<string, string>();
+
+  // Add dialog (native <dialog>: modal focus trap, inert background, Escape).
+  private readonly addDialog = el("dialog", "k-dialog mcp-add");
+  private readonly form = el("form", "mcp-add__form");
+  private readonly transportButtons = new Map<Transport, HTMLButtonElement>();
+  private transport: Transport = "stdio";
+  private readonly templateButtons: HTMLButtonElement[] = [];
+  private readonly name = el("input", "k-input");
+  private readonly target = el("input", "k-input k-input--mono");
+  private readonly targetLabel = el("label", "k-label", "啟動程式");
+  private readonly args = el("textarea", "k-textarea k-input--mono");
+  private readonly argsError = el("p", "k-error");
+  private readonly cwd = el("input", "k-input k-input--mono");
+  private readonly cwdError = el("p", "k-error");
+  private readonly preview = el("div", "mcp-add__preview");
+  private readonly previewList = el("div", "mcp-add__argv");
+  private readonly previewRisk = el("p", "mcp-add__risk");
+  private readonly submit = el("button", "k-btn k-btn--primary");
+  private readonly cancel = button("k-btn k-btn--secondary", "取消");
+  private readonly dialogResult = el("p", "k-error mcp-add__result");
+  private readonly reconcileButton = el("button", "k-btn k-btn--secondary");
+
+  // Remove confirmation (native <dialog>, never window.confirm).
+  private readonly removeDialog = el("dialog", "k-dialog");
+  private readonly removeTitle = el("h2", "k-dialog__title");
+  private readonly removeText = el("p");
+  private readonly removeConfirm = button("k-btn k-btn--danger", "移除");
+  private removeTarget?: { id: string; fingerprint?: string };
+
   private state?: McpPanelState;
   private available = false;
   private busy = false;
@@ -104,8 +142,7 @@ export class McpPanel {
   private readonly authLoaded = new Set<string>();
   private readonly authBaseline = new Map<string, unknown>();
   private readonly authLoadFailed = new Set<string>();
-  private readonly authAnnouncement = document.createElement("p");
-  private readonly authLabels = new Map<string, string>();
+  private readonly authAnnouncement = el("p", "k-sr-only");
 
   constructor(
     container: HTMLElement,
@@ -114,160 +151,102 @@ export class McpPanel {
     private readonly source: () => string | undefined = () => undefined,
     private readonly authOptions?: McpAuthPanelOptions,
   ) {
-    this.root.className = "mcp-settings";
-    const heading = document.createElement("header");
-    heading.className = "settings-page-heading";
-    const headingCopy = document.createElement("div");
-    const title = document.createElement("h1");
-    title.textContent = "MCP 整合";
-    title.tabIndex = -1;
-    headingCopy.append(title);
-    const headingActions = document.createElement("div");
-    headingActions.className = "settings-page-actions";
-    this.status.className = "settings-status";
-    this.status.setAttribute("role", "status");
-    this.addButton.type = "button";
-    this.addButton.className = "settings-add-button";
-    this.addButton.textContent = "＋ 加入 MCP";
-    headingActions.append(this.status, this.addButton);
-    heading.append(headingCopy, headingActions);
+    this.heading.tabIndex = -1;
+    this.addButton.prepend(icon("Plus"));
+    this.top.append(this.summary, this.addButton);
 
-    const filters = document.createElement("div");
-    filters.className = "mcp-filters";
+    // Search: `/` focuses it, Escape clears it before Escape can leave settings.
     this.search.type = "search";
-    this.search.placeholder = "搜尋工具";
-    this.search.setAttribute("aria-label", "搜尋工具名稱或描述");
-    this.serverFilter.setAttribute("aria-label", "篩選 MCP 伺服器");
-    this.toolFilter.setAttribute("aria-label", "篩選工具設定");
-    for (const [value, label] of [
-      ["all", "全部工具"],
-      ["enabled", "已開啟"],
-      ["disabled", "已關閉"],
-      ["read_only", "唯讀標示"],
-    ] as const) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      this.toolFilter.append(option);
-    }
-    this.clearFilters.type = "button";
-    this.clearFilters.textContent = "清除篩選";
-    this.clearFilters.onclick = () => {
+    this.search.placeholder = "搜尋伺服器或工具";
+    this.search.setAttribute("aria-label", "搜尋伺服器或工具");
+    this.search.setAttribute("aria-keyshortcuts", "/");
+    this.search.autocomplete = "off";
+    this.search.spellcheck = false;
+    this.search.dataset.mcpFocus = "search";
+    const kbd = el("kbd", "k-kbd", "/");
+    kbd.setAttribute("aria-hidden", "true");
+    this.searchField.append(icon("MagnifyingGlass"), this.search, kbd);
+    this.search.addEventListener("input", () => this.render());
+    this.search.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !this.search.value) return;
+      event.preventDefault();
       this.search.value = "";
-      this.serverFilter.value = "";
-      this.toolFilter.value = "all";
       this.render();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (
+        !this.root.getClientRects().length ||
+        this.search.closest("[hidden]") ||
+        document.querySelector("dialog[open]") ||
+        !isSearchShortcut(event, event.target instanceof HTMLElement ? event.target : null)
+      )
+        return;
+      event.preventDefault();
       this.search.focus();
-    };
+    });
+
+    this.chips.setAttribute("role", "group");
+    this.chips.setAttribute("aria-label", "篩選伺服器");
+    for (const chip of ["all", "on", "attention"] as const) {
+      const item = button("k-chip", chipLabels[chip], `chip:${chip}`);
+      item.setAttribute("aria-pressed", String(chip === this.chip));
+      if (chip === "attention") item.dataset.tone = "danger";
+      const count = el("span", "k-chip__count");
+      item.append(count);
+      this.chipCounts.set(chip, count);
+      item.addEventListener("click", () => {
+        this.chip = chip;
+        this.render();
+      });
+      this.chipButtons.set(chip, item);
+      this.chips.append(item);
+    }
     this.matchStatus.setAttribute("role", "status");
     this.matchStatus.setAttribute("aria-live", "polite");
-    const filterResult = document.createElement("div");
-    filterResult.className = "mcp-filter-result";
-    filterResult.append(this.matchStatus, this.clearFilters);
-    filters.append(this.search, this.serverFilter, this.toolFilter, filterResult);
-    this.search.oninput = () => this.render();
-    this.serverFilter.onchange = this.toolFilter.onchange = () => this.render();
-    const help = document.createElement("details");
-    help.className = "mcp-filter-help";
-    const helpTitle = document.createElement("summary");
-    helpTitle.textContent = "工具權限";
-    const helpCopy = document.createElement("p");
-    helpCopy.textContent = "風險標示由伺服器提供，僅供參考。伺服器停用時保留個別工具設定。";
-    help.append(helpTitle, helpCopy);
 
-    this.servers.className = "mcp-servers";
+    this.noMatch.append(this.noMatchText, this.noMatchClear);
+    this.noMatch.hidden = true;
+    this.noMatchClear.addEventListener("click", () => {
+      this.search.value = "";
+      this.chip = "all";
+      this.render();
+      this.search.focus();
+    });
 
-    this.addDialog.className = "mcp-add-dialog";
-    this.addDialog.setAttribute("aria-labelledby", "mcp-add-title");
-    const dialogHeader = document.createElement("header");
-    const dialogHeading = document.createElement("div");
-    const dialogTitle = document.createElement("h2");
-    dialogTitle.id = "mcp-add-title";
-    dialogTitle.textContent = "加入 MCP";
-    dialogTitle.tabIndex = -1;
-    dialogHeading.append(dialogTitle);
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "mcp-dialog-close";
-    close.setAttribute("aria-label", "關閉加入 MCP 視窗");
-    close.textContent = "×";
-    dialogHeader.append(dialogHeading, close);
-    this.form.className = "mcp-add-form";
-    const formIntro = document.createElement("div");
-    formIntro.className = "mcp-form-intro";
-    formIntro.append(this.formNote);
-    for (const [value, label] of [
-      ["stdio", "本機程式（stdio）"],
-      ["http", "遠端網址（Streamable HTTP）"],
-    ] as const) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      this.transport.append(option);
-    }
-    this.name.placeholder = "例如 Chrome DevTools";
-    this.name.required = true;
-    this.name.maxLength = 80;
-    this.target.required = true;
-    this.args.placeholder = "每行一個參數（可留空）";
-    // Left empty, the program starts in Kairomes' own MCP folder, not wherever the Host started.
-    this.cwd.placeholder = "可留空；指定時填絕對路徑";
-    this.cwd.setAttribute("aria-describedby", "mcp-add-cwd-error");
-    this.cwdError.id = "mcp-add-cwd-error";
-    this.cwdError.className = "mcp-field-error";
-    this.cwdError.hidden = true;
-    this.submit.type = "submit";
-    this.submit.textContent = "加入並開啟工具";
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "secondary";
-    cancel.textContent = "取消";
-    const formActions = document.createElement("div");
-    formActions.className = "mcp-form-actions";
-    formActions.append(cancel, this.submit);
-    this.dialogResult.className = "mcp-dialog-result";
-    this.dialogResult.setAttribute("role", "alert");
-    this.dialogResult.hidden = true;
-    this.reconcileButton.type = "button";
-    this.reconcileButton.className = "secondary";
-    this.reconcileButton.hidden = true;
-    this.reconcileButton.onclick = (event) => {
-      if (!event.isTrusted || this.busy) return;
-      if (this.uncertain) void this.reconcile();
-      else this.addDialog.close();
-    };
-    formActions.append(this.reconcileButton);
-    const transportLabel = this.field("連線方式", this.transport);
-    const nameLabel = this.field("名稱", this.name);
-    const targetField = this.field("啟動程式", this.target);
-    this.targetLabel = targetField.querySelector("span") as HTMLSpanElement;
-    const argsField = this.field("啟動參數", this.args);
-    argsField.classList.add("mcp-stdio-field");
-    // The message sits beside the label, not inside it, so it never becomes the field's name.
-    const cwdField = document.createElement("div");
-    cwdField.className = "mcp-stdio-field mcp-cwd-field";
-    cwdField.append(this.field("工作目錄", this.cwd), this.cwdError);
-    this.form.append(
-      formIntro,
-      transportLabel,
-      nameLabel,
-      targetField,
-      argsField,
-      cwdField,
-      this.dialogResult,
-      formActions,
+    const emptyIcon = el("span", "k-empty__icon");
+    emptyIcon.append(icon("HardDrives", { size: "xl" }));
+    this.emptyAdd.prepend(icon("Plus"));
+    this.empty.append(
+      emptyIcon,
+      el("p", "k-empty__title", "還沒有 MCP 伺服器"),
+      el("p", "k-empty__text", "加入本機程式或遠端網址後，ChatGPT 就能使用它的工具。"),
+      this.emptyAdd,
     );
-    this.addDialog.append(dialogHeader, this.form);
+    this.empty.hidden = true;
 
-    this.root.append(heading, filters, this.servers, help, this.addDialog);
-    this.authAnnouncement.className = "visually-hidden";
+    this.buildAddDialog();
+    this.buildRemoveDialog();
+
     this.authAnnouncement.setAttribute("role", "status");
     this.authAnnouncement.setAttribute("aria-live", "polite");
     this.authAnnouncement.setAttribute("aria-atomic", "true");
-    this.root.append(this.authAnnouncement);
+    this.root.append(
+      this.heading,
+      this.top,
+      this.searchField,
+      this.chips,
+      this.matchStatus,
+      this.list,
+      this.noMatch,
+      this.empty,
+      this.hint,
+      this.addDialog,
+      this.removeDialog,
+      this.authAnnouncement,
+    );
     container.append(this.root);
 
-    this.addButton.onclick = (event) => {
+    const openAdd = (event: MouseEvent) => {
       if (!event.isTrusted || !this.available || this.busy || this.uncertain) return;
       this.reviewRequired = false;
       this.dialogResult.textContent = "";
@@ -279,11 +258,8 @@ export class McpPanel {
         if (this.isMutationCurrent(scope) && this.addDialog.open) this.name.focus();
       });
     };
-    close.onclick = () => this.addDialog.close();
-    cancel.onclick = () => this.addDialog.close();
-    this.addDialog.onclick = (event) => {
-      if (event.target === this.addDialog) this.addDialog.close();
-    };
+    this.addButton.addEventListener("click", openAdd);
+    this.emptyAdd.addEventListener("click", openAdd);
     this.addDialog.addEventListener("close", () => {
       if (this.addDialog.open) return;
       const scope = this.dialogScope;
@@ -293,20 +269,17 @@ export class McpPanel {
       this.reviewRequired = false;
       this.dialogResult.hidden = this.reconcileButton.hidden = true;
       this.render();
-      if (!this.addButton.disabled) this.addButton.focus();
-      else title.focus({ preventScroll: true });
+      const opener = [this.addButton, this.emptyAdd].find(
+        (item) => !item.disabled && item.getClientRects().length,
+      );
+      if (opener) opener.focus();
+      else this.heading.focus({ preventScroll: true });
     });
-    this.transport.onchange = () => this.updateTransport();
-    // The field's message clears as soon as either the folder or the command no longer needs it.
-    for (const input of [this.cwd, this.target])
-      input.addEventListener("input", () => {
-        if (!this.cwdError.hidden && !this.stdioInput().problem) this.showCwdError(undefined);
-      });
-    this.form.onsubmit = (event) => {
+    this.form.addEventListener("submit", (event) => {
       event.preventDefault();
       if (event.isTrusted) void this.add();
-    };
-    this.updateTransport();
+    });
+    this.setTransport("stdio");
     this.render();
     const authTimer = setInterval(() => {
       if (!this.available) return;
@@ -320,12 +293,278 @@ export class McpPanel {
     window.addEventListener("pagehide", () => clearInterval(authTimer), { once: true });
   }
 
-  private field(label: string, control: HTMLElement) {
-    const field = document.createElement("label");
-    const text = document.createElement("span");
-    text.textContent = label;
-    field.append(text, control);
-    return field;
+  private buildAddDialog() {
+    const dialog = this.addDialog;
+    dialog.setAttribute("aria-labelledby", "mcp-add-title");
+    const head = el("div", "k-dialog__head");
+    const title = el("h2", "k-dialog__title", "加入 MCP");
+    title.id = "mcp-add-title";
+    const close = el("button", "k-btn k-btn--quiet k-btn--icon k-btn--sm");
+    close.type = "button";
+    close.setAttribute("aria-label", "關閉");
+    close.append(icon("X"));
+    close.addEventListener("click", () => dialog.close());
+    head.append(title, close);
+
+    const body = el("div", "k-dialog__body mcp-add__body");
+    const templates = el("div", "mcp-add__templates");
+    const templateLabel = el("p", "k-label", "從範本開始");
+    templateLabel.id = "mcp-add-templates";
+    const templateList = el("div", "k-chips");
+    templateList.setAttribute("role", "group");
+    templateList.setAttribute("aria-labelledby", templateLabel.id);
+    for (const template of MCP_TEMPLATES) {
+      const item = button("k-chip", template.label);
+      item.addEventListener("click", () => this.applyTemplate(template));
+      this.templateButtons.push(item);
+      templateList.append(item);
+    }
+    templates.append(templateLabel, templateList);
+
+    const transport = el("div", "mcp-add__field");
+    const transportLabel = el("p", "k-label", "連線方式");
+    transportLabel.id = "mcp-add-transport";
+    const seg = el("div", "k-seg mcp-add__seg");
+    seg.setAttribute("role", "group");
+    seg.setAttribute("aria-labelledby", transportLabel.id);
+    for (const [value, label] of [
+      ["stdio", "本機程式（stdio）"],
+      ["http", "遠端網址（HTTP）"],
+    ] as const) {
+      const item = button("", label);
+      item.addEventListener("click", () => this.setTransport(value));
+      this.transportButtons.set(value, item);
+      seg.append(item);
+    }
+    transport.append(transportLabel, seg);
+
+    this.name.required = true;
+    this.name.maxLength = 80;
+    this.name.autocomplete = "off";
+    this.name.placeholder = "例如 Chrome DevTools";
+    this.target.required = true;
+    this.target.autocomplete = "off";
+    this.target.spellcheck = false;
+    this.args.rows = 4;
+    this.args.spellcheck = false;
+    this.args.placeholder = "每行一個參數（可留空）";
+    this.args.setAttribute("aria-describedby", "mcp-add-args-error");
+    this.argsError.id = "mcp-add-args-error";
+    this.argsError.hidden = true;
+    this.cwd.autocomplete = "off";
+    this.cwd.spellcheck = false;
+    // Left empty, the program starts in Kairomes' own MCP folder, not wherever the Host started.
+    this.cwd.placeholder = "可留空；指定時填絕對路徑";
+    this.cwd.setAttribute("aria-describedby", "mcp-add-cwd-error");
+    this.cwdError.id = "mcp-add-cwd-error";
+    this.cwdError.hidden = true;
+    const nameField = field("名稱", this.name, "mcp-add-name");
+    const targetField = field(this.targetLabel, this.target, "mcp-add-target");
+    const argsField = field("參數", this.args, "mcp-add-args");
+    argsField.append(this.argsError);
+    argsField.classList.add("mcp-add__stdio");
+    const cwdField = field("工作目錄", this.cwd, "mcp-add-cwd");
+    cwdField.append(this.cwdError);
+    cwdField.classList.add("mcp-add__stdio");
+
+    // The exact argv is shown before saving, with one host-privilege line.
+    const previewLabel = el("p", "k-label", "將執行");
+    this.preview.classList.add("mcp-add__stdio");
+    this.preview.append(previewLabel, this.previewList, this.previewRisk);
+    const consequence = el("p", "k-hint mcp-add__consequence");
+    consequence.append(icon("Info"), el("span", undefined, MCP_ADD_CONSEQUENCE));
+    this.dialogResult.setAttribute("role", "alert");
+    this.dialogResult.hidden = true;
+    body.append(
+      templates,
+      transport,
+      nameField,
+      targetField,
+      argsField,
+      this.preview,
+      cwdField,
+      consequence,
+      this.dialogResult,
+    );
+    for (const input of [this.target, this.args])
+      input.addEventListener("input", this.updatePreview);
+    // The field's message clears as soon as either the folder or the command no longer needs it.
+    for (const input of [this.cwd, this.target])
+      input.addEventListener("input", () => {
+        if (!this.cwdError.hidden && !this.stdioCwdProblem()) this.showCwdError(undefined);
+      });
+
+    const actions = el("div", "k-dialog__actions");
+    this.submit.type = "submit";
+    this.cancel.addEventListener("click", () => dialog.close());
+    this.reconcileButton.type = "button";
+    this.reconcileButton.hidden = true;
+    this.reconcileButton.addEventListener("click", (event) => {
+      if (!event.isTrusted || this.busy) return;
+      if (this.uncertain) void this.reconcile();
+      else dialog.close();
+    });
+    actions.append(this.reconcileButton, this.cancel, this.submit);
+    this.form.append(head, body, actions);
+    dialog.append(this.form);
+  }
+
+  private buildRemoveDialog() {
+    const dialog = this.removeDialog;
+    this.removeTitle.id = "mcp-remove-title";
+    this.removeText.id = "mcp-remove-text";
+    dialog.setAttribute("aria-labelledby", this.removeTitle.id);
+    dialog.setAttribute("aria-describedby", this.removeText.id);
+    const head = el("div", "k-dialog__head");
+    head.append(this.removeTitle);
+    const body = el("div", "k-dialog__body");
+    body.append(this.removeText);
+    const actions = el("div", "k-dialog__actions");
+    const cancel = button("k-btn k-btn--secondary", "取消");
+    // Destructive confirmations start on the safe button.
+    cancel.autofocus = true;
+    cancel.addEventListener("click", () => dialog.close());
+    this.removeConfirm.addEventListener("click", (event) => {
+      if (!event.isTrusted) return;
+      const target = this.removeTarget;
+      dialog.close("confirm");
+      const server = this.state?.servers.find((item) => item.id === target?.id);
+      // The card the user confirmed must still be the same configuration.
+      if (target && server && server.config_fingerprint === target.fingerprint)
+        void this.act({ action: "remove", server_id: target.id });
+    });
+    actions.append(cancel, this.removeConfirm);
+    dialog.append(head, body, actions);
+    dialog.addEventListener("close", () => {
+      const target = this.removeTarget;
+      this.removeTarget = undefined;
+      const confirmed = dialog.returnValue === "confirm";
+      dialog.returnValue = "";
+      if (confirmed || !target) return;
+      const remove = this.root.querySelector<HTMLElement>(
+        `[data-mcp-focus="remove:${CSS.escape(target.id)}"]`,
+      );
+      if (remove && !remove.closest("[hidden]")) remove.focus();
+    });
+  }
+
+  /** The working-directory field's problem for the stdio values as they will be sent. */
+  private stdioCwdProblem() {
+    return mcpStdioCwdProblem(
+      mcpPathInput(this.target.value),
+      mcpPathInput(this.cwd.value) || undefined,
+    );
+  }
+
+  private showCwdError(message: string | undefined) {
+    this.cwdError.textContent = message ?? "";
+    this.cwdError.hidden = !message;
+    if (message) this.cwd.setAttribute("aria-invalid", "true");
+    else this.cwd.removeAttribute("aria-invalid");
+  }
+
+  private openRemove(server: Server) {
+    if (this.removeDialog.open) return;
+    this.removeTarget = { id: server.id, fingerprint: server.config_fingerprint };
+    setText(this.removeTitle, `移除「${server.name}」？`);
+    setText(
+      this.removeText,
+      server.auth
+        ? "ChatGPT 將無法再使用它的工具，本機登入也會清除。要再使用需重新加入。"
+        : "ChatGPT 將無法再使用它的工具。要再使用需重新加入。",
+    );
+    this.removeDialog.showModal();
+  }
+
+  private setTransport(value: Transport) {
+    this.transport = value;
+    const stdio = value === "stdio";
+    for (const [key, item] of this.transportButtons)
+      item.setAttribute("aria-pressed", String(key === value));
+    setText(this.targetLabel, stdio ? "啟動程式" : "MCP 網址");
+    this.target.placeholder = stdio ? "例如 npx.cmd" : "https://…/mcp";
+    this.target.inputMode = stdio ? "text" : "url";
+    for (const item of this.form.querySelectorAll<HTMLElement>(".mcp-add__stdio"))
+      item.hidden = !stdio;
+    this.updatePreview();
+    this.render();
+  }
+
+  private applyTemplate(template: McpTemplate) {
+    this.setTransport(template.transport);
+    if (template.name) this.name.value = template.name;
+    this.target.value = template.target;
+    this.args.value = template.args.join("\n");
+    this.updatePreview();
+    const placeholder = mcpArgPlaceholder(template.args);
+    if (placeholder) {
+      const start = this.args.value.indexOf(placeholder);
+      this.args.focus();
+      this.args.setSelectionRange(start, start + placeholder.length);
+    } else if (!this.name.value.trim()) this.name.focus();
+    else this.target.focus();
+  }
+
+  private readonly updatePreview = () => {
+    const command = mcpPathInput(this.target.value);
+    const args = parseMcpArgs(this.args.value);
+    // The textarea grows with its lines so a template's argv is visible without scrolling.
+    this.args.rows = Math.min(8, Math.max(3, this.args.value.split("\n").length));
+    this.preview.hidden = this.transport !== "stdio" || !command;
+    if (!this.argsError.hidden && !mcpArgPlaceholder(args)) {
+      this.argsError.hidden = true;
+      this.args.removeAttribute("aria-invalid");
+    }
+    if (this.preview.hidden) return;
+    this.previewList.replaceChildren(argvList([command, ...args]));
+    this.previewRisk.replaceChildren(
+      icon("Desktop"),
+      el("span", undefined, mcpStdioRiskLine(command, args)),
+    );
+  };
+
+  private handlers: McpCardHandlers = {
+    toggleServer: (id) => {
+      const server = this.server(id);
+      if (server)
+        void this.act({ action: "set_server_enabled", server_id: id, enabled: !server.enabled });
+    },
+    toggleTool: (id, name) => {
+      const tool = this.server(id)?.tools.find((item) => item.name === name);
+      if (tool)
+        void this.act({
+          action: "set_tool_enabled",
+          server_id: id,
+          tool_name: name,
+          enabled: !tool.enabled,
+        });
+    },
+    notice: (id, action: McpNoticeAction) => {
+      const server = this.server(id);
+      if (!server) return;
+      if (action === "refresh") void this.act({ action: "refresh", server_id: id });
+      else void this.authAction(server, action);
+    },
+    refresh: (id) => {
+      if (this.server(id)) void this.act({ action: "refresh", server_id: id });
+    },
+    forget: (id) => {
+      const server = this.server(id);
+      if (server) void this.authAction(server, "forget");
+    },
+    remove: (id) => {
+      const server = this.server(id);
+      if (server) this.openRemove(server);
+    },
+    expand: (id) => {
+      if (this.expanded.has(id)) this.expanded.delete(id);
+      else this.expanded.add(id);
+      this.render();
+    },
+  };
+
+  private server(id: string) {
+    return this.state?.servers.find((server) => server.id === id);
   }
 
   private authIdentity(server: Server): McpAuthIdentity | undefined {
@@ -351,7 +590,7 @@ export class McpPanel {
     this.authLoaded.clear();
     this.authBaseline.clear();
     this.authLoadFailed.clear();
-    this.authLabels.clear();
+    this.statusLabels.clear();
     this.authAnnouncement.textContent = "";
   }
   private prepareAuth(server: Server, identity: McpAuthIdentity) {
@@ -497,30 +736,6 @@ export class McpPanel {
     }
   }
 
-  private updateTransport() {
-    const stdio = this.transport.value === "stdio";
-    this.formNote.textContent = stdio
-      ? "加入後會開啟所有工具。只使用信任的程式；金鑰請放在環境變數。"
-      : "只加入信任的服務。";
-    this.submit.textContent = stdio ? "加入並開啟工具" : "儲存";
-    this.targetLabel.textContent = stdio ? "啟動程式" : "MCP URL";
-    this.target.placeholder = stdio ? "例如 npx.cmd" : "https://…/mcp 或 http://127.0.0.1:…";
-    for (const field of this.form.querySelectorAll<HTMLElement>(".mcp-stdio-field"))
-      field.hidden = !stdio;
-  }
-
-  /** The stdio command and working directory as they will be sent, and the field's problem. */
-  private stdioInput() {
-    return mcpStdioLaunchInput(this.target.value, this.cwd.value);
-  }
-
-  private showCwdError(message: string | undefined) {
-    this.cwdError.textContent = message ?? "";
-    this.cwdError.hidden = !message;
-    if (message) this.cwd.setAttribute("aria-invalid", "true");
-    else this.cwd.removeAttribute("aria-invalid");
-  }
-
   private get uncertain() {
     return this.mutation.isLocked(this.source());
   }
@@ -537,9 +752,13 @@ export class McpPanel {
     this.dialogResult.textContent = "";
     this.dialogResult.hidden = this.reconcileButton.hidden = true;
     if (this.addDialog.open) this.addDialog.close();
-    this.search.value = this.serverFilter.value = "";
-    this.toolFilter.value = "all";
-    this.servers.replaceChildren();
+    if (this.removeDialog.open) this.removeDialog.close();
+    this.search.value = "";
+    this.chip = "all";
+    this.expanded.clear();
+    this.cards.clear();
+    this.statusLabels.clear();
+    this.list.replaceChildren();
   }
 
   get hasUncertainMutation() {
@@ -673,29 +892,30 @@ export class McpPanel {
     this.syncMutation();
     const scope = this.mutation.capture();
     const name = this.name.value.trim();
-    const stdio = this.transport.value === "stdio";
-    // A path pasted with Windows' 複製為路徑 keeps its quotes; they are not part of the path.
-    const launch = this.stdioInput();
-    const target = stdio ? launch.command : this.target.value.trim();
+    const stdio = this.transport === "stdio";
+    const target = stdio ? mcpPathInput(this.target.value) : this.target.value.trim();
     if (!name || !target) return;
-    if (stdio && launch.problem) {
-      this.showCwdError(launch.problem);
+    const args = parseMcpArgs(this.args.value);
+    const placeholder = stdio ? mcpArgPlaceholder(args) : undefined;
+    if (placeholder) {
+      // A template placeholder never reaches the Host as a literal argument.
+      this.argsError.textContent = `請把 ${placeholder} 換成實際值。`;
+      this.argsError.hidden = false;
+      this.args.setAttribute("aria-invalid", "true");
+      this.args.focus();
+      return;
+    }
+    const cwd = stdio ? mcpPathInput(this.cwd.value) : "";
+    const cwdProblem = stdio ? mcpStdioCwdProblem(target, cwd || undefined) : undefined;
+    if (cwdProblem) {
+      this.showCwdError(cwdProblem);
       this.cwd.focus();
       return;
     }
     const previousIds = new Set(this.state?.servers.map((server) => server.id));
     const outcome = await this.act(
       stdio
-        ? {
-            action: "add_stdio",
-            name,
-            command: target,
-            args: this.args.value
-              .split(/\r?\n/)
-              .map((value) => value.trim())
-              .filter(Boolean),
-            ...(launch.cwd ? { cwd: launch.cwd } : {}),
-          }
+        ? { action: "add_stdio", name, command: target, args, ...(cwd ? { cwd } : {}) }
         : { action: "add_http", name, url: target, header_env: {} },
     );
     if (typeof outcome === "object" && this.isMutationCurrent(scope) && this.addDialog.open) {
@@ -713,8 +933,25 @@ export class McpPanel {
       this.args.value = "";
       this.cwd.value = "";
       this.showCwdError(undefined);
+      this.updatePreview();
       this.addDialog.close();
     }
+  }
+
+  private serverView(server: Server) {
+    const identity = this.authIdentity(server);
+    if (identity) this.prepareAuth(server, identity);
+    const summary = identity ? (this.auth.summary(identity) ?? server.auth) : undefined;
+    const pending = identity ? this.auth.current(identity) : undefined;
+    const presentation = summary
+      ? mcpAuthPresentation(summary, pending, this.authStarting.has(server.id))
+      : undefined;
+    const loadFailed = Boolean(identity && this.authLoadFailed.has(this.authKey(identity)));
+    const view = mcpServerView(
+      server,
+      summary && presentation ? { summary, view: presentation, loadFailed } : undefined,
+    );
+    return { identity, pending, presentation, view };
   }
 
   render(next?: McpPanelState, available = this.available) {
@@ -726,360 +963,153 @@ export class McpPanel {
     this.available = available;
     this.syncAuth();
     const canChange = available && Boolean(this.state) && !this.uncertain;
-    const openServers = new Set(
-      [...this.servers.querySelectorAll<HTMLDetailsElement>(".mcp-tool-details[open]")]
-        .map((details) => details.dataset.serverId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    const openTools = new Set(
-      [...this.servers.querySelectorAll<HTMLDetailsElement>(".mcp-tool-info[open]")].map(
-        (details) => details.dataset.toolKey,
-      ),
-    );
-    const openManagement = new Set(
-      [...this.servers.querySelectorAll<HTMLDetailsElement>(".mcp-management[open]")].map(
-        (details) => details.dataset.serverId,
-      ),
-    );
-    const openDiagnostics = new Set(
-      [...this.servers.querySelectorAll<HTMLDetailsElement>(".mcp-diagnostic[open]")].map(
-        (details) => details.dataset.serverId,
-      ),
-    );
-    const activeKey =
-      (document.activeElement as HTMLElement | null)?.dataset.mcpFocus ??
-      (document.activeElement === document.body ? this.pendingFocus : undefined);
+    const active = document.activeElement as HTMLElement | null;
+    const lostFocus = !active || active === document.body;
+    const focusKey = active?.dataset.mcpFocus ?? (lostFocus ? this.pendingFocus : undefined);
+
     const servers = this.state?.servers ?? [];
-    const selectedServer = this.serverFilter.value;
-    const options = [{ id: "", name: "全部伺服器" }, ...servers];
-    // Keep the same select node (and keyboard focus) across fresh catalogs.
-    this.serverFilter.replaceChildren(
-      ...options.map((server) => {
-        const option = document.createElement("option");
-        option.value = server.id;
-        option.textContent = server.name;
-        return option;
-      }),
+    const details = new Map(servers.map((server) => [server.id, this.serverView(server)]));
+    const views = [...details.values()].map((item) => item.view);
+    const hasServers = servers.length > 0;
+
+    // Summary row, search and chips only exist while there is something to filter.
+    setText(
+      this.summary,
+      !this.state
+        ? available
+          ? "正在讀取伺服器…"
+          : "伺服器狀態待確認"
+        : hasServers
+          ? mcpSummary(views)
+          : "",
     );
-    this.serverFilter.value = options.some((server) => server.id === selectedServer)
-      ? selectedServer
-      : "";
-    const filtering = Boolean(
-      this.search.value.trim() || this.serverFilter.value || this.toolFilter.value !== "all",
+    this.addButton.hidden = Boolean(this.state) && !hasServers;
+    setText(
+      this.addButton.querySelector("span") ?? this.addButton,
+      this.adding ? "正在加入…" : "加入 MCP",
     );
-    const filtered = this.state
-      ? filterMcpCatalog(this.state, {
-          query: this.search.value,
-          serverId: this.serverFilter.value,
-          tools: this.toolFilter.value as McpToolFilter,
-        })
-      : [];
-    this.clearFilters.hidden = this.matchStatus.hidden = !filtering;
-    const matches = filtering
-      ? `${filtered.reduce((count, item) => count + item.tools.length, 0)} 個符合`
-      : "";
-    if (this.matchStatus.textContent !== matches) this.matchStatus.textContent = matches;
-    const enabledServers = servers.filter((server) => server.enabled).length;
-    const enabledTools = servers
-      .filter((server) => server.enabled)
-      .flatMap((server) => server.tools)
-      .filter((tool) => tool.enabled).length;
-    const status = !available
-      ? "目錄待確認"
-      : servers.length
-        ? `${enabledServers}/${servers.length} 台開啟 · ${enabledTools} 個工具開啟`
-        : "";
-    if (this.status.textContent !== status) this.status.textContent = status;
-    this.status.hidden = this.uncertain || !status;
-    this.status.classList.toggle("offline", !available);
-    this.addButton.textContent = this.adding ? "正在加入…" : "＋ 加入 MCP";
-    this.submit.textContent =
-      this.transport.value === "http"
-        ? this.adding
-          ? "儲存中…"
-          : "儲存"
-        : this.adding
-          ? "正在加入…"
-          : "加入並開啟工具";
-    this.addButton.disabled = this.busy || !canChange;
+    this.top.hidden = Boolean(this.state) && !hasServers;
+    this.addButton.disabled = this.emptyAdd.disabled = this.busy || !canChange;
+    setText(this.submit, this.adding ? "正在加入…" : "加入");
+    this.submit.setAttribute("aria-busy", String(this.adding));
     this.submit.disabled = this.busy || !canChange || this.reviewRequired;
     this.reconcileButton.disabled = this.busy || !available;
-    this.transport.disabled =
-      this.name.disabled =
-      this.target.disabled =
-      this.args.disabled =
-      this.cwd.disabled =
-        this.busy || !canChange || this.reviewRequired;
-    this.servers.replaceChildren();
-    if (!servers.length) {
-      const empty = document.createElement("div");
-      empty.className = "mcp-empty";
-      const copy = document.createElement("p");
-      copy.textContent = "尚未加入 MCP";
-      empty.append(copy);
-      this.servers.append(empty);
-      return;
+    const locked = this.busy || !canChange || this.reviewRequired;
+    for (const control of [
+      this.name,
+      this.target,
+      this.args,
+      this.cwd,
+      ...this.transportButtons.values(),
+      ...this.templateButtons,
+    ])
+      control.disabled = locked;
+    this.searchField.hidden = this.chips.hidden = !hasServers;
+    const counts = mcpChipCounts(views);
+    for (const [chip, count] of this.chipCounts) {
+      setText(count, String(counts[chip]));
+      // 需處理 shows only while something needs the user; 全部 and 已開啟 always count.
+      count.hidden = chip === "attention" && !counts.attention;
     }
-    if (!filtered.length) {
-      const empty = document.createElement("p");
-      empty.className = "mcp-tools-empty";
-      empty.textContent = "沒有符合的工具";
-      this.servers.append(empty);
-    }
+    for (const [chip, item] of this.chipButtons)
+      item.setAttribute("aria-pressed", String(chip === this.chip));
 
-    const authAnnouncements: string[] = [];
-    for (const { server, tools: visibleTools } of filtered) {
-      const authIdentity = this.authIdentity(server);
-      if (authIdentity) this.prepareAuth(server, authIdentity);
-      const authSummary = authIdentity
-        ? (this.auth.summary(authIdentity) ?? server.auth)
-        : undefined;
-      const authPending = authIdentity ? this.auth.current(authIdentity) : undefined;
-      const authView = authSummary
-        ? mcpAuthPresentation(authSummary, authPending, this.authStarting.has(server.id))
-        : undefined;
-      if (authIdentity && authView) {
-        const key = this.authKey(authIdentity);
-        const previousLabel = this.authLabels.get(key);
-        if (previousLabel !== undefined && previousLabel !== authView.label)
-          authAnnouncements.push(`${server.name}：${authView.label}`);
-        this.authLabels.set(key, authView.label);
+    const query = this.search.value.trim();
+    const matches = this.state
+      ? filterMcpServers(this.state, { query, chip: this.chip }, (server) => {
+          const view = details.get(server.id)?.view;
+          return { on: Boolean(view?.on), attention: Boolean(view?.attention) };
+        })
+      : [];
+    setText(
+      this.matchStatus,
+      query && hasServers ? (matches.length ? `${matches.length} 個伺服器符合` : "") : "",
+    );
+
+    const cards = matches.map(({ server, tools }) => {
+      const detail = details.get(server.id);
+      if (!detail) throw new Error("Missing MCP server view");
+      const { identity, pending, view } = detail;
+      let card = this.cards.get(server.id);
+      if (!card) {
+        card = new McpServerCard(server.id, this.handlers);
+        this.cards.set(server.id, card);
       }
-      const authLoadingFailed = authIdentity && this.authLoadFailed.has(this.authKey(authIdentity));
-      const toolsCurrent =
-        !server.auth ||
-        Boolean(
-          authSummary?.tools_status === "current" &&
-            server.auth.tools_status === "current" &&
-            server.auth.phase_version >= authSummary.phase_version,
-        );
-      const serverCanChange = canChange && !authPending?.unknown && !this.authBusy.has(server.id);
-      const card = document.createElement("article");
-      card.className = `mcp-server${server.enabled ? "" : " disabled"}`;
-      card.tabIndex = -1;
-      card.dataset.mcpFocus = `card:${server.id}`;
-      card.setAttribute("aria-label", server.name);
-      const heading = document.createElement("header");
-      const identity = document.createElement("div");
-      identity.className = "mcp-server-identity";
-      const stateDot = document.createElement("i");
-      stateDot.dataset.state = !server.enabled
-        ? "disabled"
-        : !authSummary
-          ? server.state
-          : authSummary.auth_phase === "authenticated" && authSummary.tools_status === "current"
-            ? "ready"
-            : ["starting", "waiting", "verifying"].includes(authSummary.auth_phase) ||
-                authSummary.tools_status === "loading"
-              ? "connecting"
-              : "unavailable";
-      const copy = document.createElement("div");
-      const name = document.createElement("strong");
-      name.textContent = server.name;
-      const meta = document.createElement("span");
-      const enabled = server.tools.filter((tool) => tool.enabled).length;
-      meta.textContent = server.enabled
-        ? `${server.transport.toUpperCase()} · ${authLoadingFailed ? "登入狀態待確認" : (authView?.label ?? stateLabels[server.state])}${!server.auth ? ` · ${enabled}/${server.tools.length} 開啟` : ""}`
-        : `${server.transport.toUpperCase()} · 已停用`;
-      copy.append(name, meta);
-      identity.append(stateDot, copy);
-      const master = switchButton(
-        server.enabled,
-        `${server.name} ${server.enabled ? "已開啟" : "已關閉"}`,
+      const serverCanChange = canChange && !pending?.unknown && !this.authBusy.has(server.id);
+      const kind = view.notice?.action?.kind;
+      card.update({
+        server,
+        view,
+        tools: tools ?? server.tools,
+        narrowed: Boolean(tools),
+        expanded: this.expanded.has(server.id),
+        disabled: {
+          server: this.busy || !serverCanChange,
+          tools: this.busy || !serverCanChange || !view.toolsCurrent,
+          notice:
+            (kind === "query" ? !available : this.busy || !canChange) ||
+            this.authBusy.has(server.id) ||
+            (kind !== "refresh" && !identity) ||
+            (kind === "cancel" && !pending),
+          refresh: this.busy || !canChange,
+          forget:
+            this.busy ||
+            !canChange ||
+            this.authBusy.has(server.id) ||
+            !identity ||
+            pending?.request.action === "forget",
+          remove: this.busy || !serverCanChange,
+        },
+      });
+      return card.element;
+    });
+    syncChildren(this.list, cards);
+    for (const id of this.cards.keys()) if (!details.has(id)) this.cards.delete(id);
+    for (const id of this.expanded) if (!details.has(id)) this.expanded.delete(id);
+
+    this.empty.hidden = !this.state || hasServers;
+    this.noMatch.hidden = !hasServers || matches.length > 0;
+    setText(
+      this.noMatchText,
+      query
+        ? `沒有符合「${query}」的結果`
+        : this.chip === "attention"
+          ? "沒有需要處理的伺服器"
+          : "沒有已開啟的伺服器",
+    );
+    setText(this.noMatchClear, query ? "清除搜尋" : "顯示全部");
+    this.hint.hidden = !matches.some(({ server }) => server.tools.length);
+
+    // Announce status changes (not first sight) without making every card a live region.
+    const announcements: string[] = [];
+    for (const server of servers) {
+      const label = details.get(server.id)?.view.status.label ?? "";
+      const previous = this.statusLabels.get(server.id);
+      if (previous !== undefined && previous !== label)
+        announcements.push(`${server.name}：${label}`);
+      this.statusLabels.set(server.id, label);
+    }
+    for (const id of this.statusLabels.keys()) if (!details.has(id)) this.statusLabels.delete(id);
+    if (announcements.length) this.authAnnouncement.textContent = announcements.join("；");
+
+    // Nodes are patched in place, so focus survives a refresh. Only a control that was
+    // disabled mid-request (or a removed card) loses focus; put it back once usable.
+    if (focusKey && (lostFocus || document.activeElement === document.body)) {
+      const replacement = [...this.root.querySelectorAll<HTMLElement>("[data-mcp-focus]")].find(
+        (element) => element.dataset.mcpFocus === focusKey,
       );
-      master.disabled = this.busy || !serverCanChange;
-      master.dataset.mcpFocus = `server:${server.id}`;
-      master.onclick = (event) => {
-        if (!event.isTrusted) return;
-        void this.act({
-          action: "set_server_enabled",
-          server_id: server.id,
-          enabled: !server.enabled,
-        });
-      };
-      heading.append(identity, master);
-      card.append(heading);
-
-      if ((server.message && !server.auth) || server.auth) {
-        const diagnostic = document.createElement("details");
-        diagnostic.className = `mcp-diagnostic${server.auth ? " mcp-auth-diagnostic" : ""}`;
-        diagnostic.dataset.serverId = server.id;
-        diagnostic.open = openDiagnostics.has(server.id);
-        const label = document.createElement("summary");
-        label.textContent = server.auth ? "連線詳情" : "連線原因";
-        label.dataset.mcpFocus = `diagnostic:${server.id}`;
-        const message = document.createElement("div");
-        message.className = "mcp-server-message";
-        if (server.auth) {
-          const summary = authSummary ?? server.auth;
-          const reason = mcpAuthDiagnostic(summary.error_code);
-          if (reason) {
-            const explanation = document.createElement("p");
-            explanation.textContent = reason.message;
-            message.append(explanation);
-          }
-          if (summary.login_domain) {
-            const domain = document.createElement("p");
-            domain.textContent = `登入網站：${summary.login_domain}`;
-            message.append(domain);
-          }
-          const note = document.createElement("p");
-          note.textContent = "重啟後需再登入。";
-          message.append(note);
-        } else message.textContent = server.message ?? "";
-        diagnostic.append(label, message);
-        card.append(diagnostic);
-      }
-
-      const details = document.createElement("details");
-      details.className = "mcp-tool-details";
-      details.dataset.serverId = server.id;
-      details.open = filtering || openServers.has(server.id);
-      const summary = document.createElement("summary");
-      summary.dataset.mcpFocus = `tools:${server.id}`;
-      summary.textContent =
-        server.auth && !toolsCurrent
-          ? server.tools.length
-            ? `上次工具 ${visibleTools.length}`
-            : "工具"
-          : `工具 ${visibleTools.length}`;
-      const tools = document.createElement("div");
-      tools.className = "mcp-tools";
-      tools.dataset.serverId = server.id;
-      for (const tool of visibleTools) {
-        const row = document.createElement("div");
-        row.className = "mcp-tool";
-        const toolCopy = document.createElement("details");
-        toolCopy.className = "mcp-tool-info";
-        const key = `${server.id}:${tool.name}`;
-        toolCopy.dataset.toolKey = key;
-        toolCopy.open = openTools.has(key);
-        const toolName = document.createElement("summary");
-        toolName.textContent = tool.name;
-        toolName.dataset.mcpFocus = `info:${key}`;
-        const description = document.createElement("p");
-        description.textContent = tool.description ?? tool.title ?? "無描述";
-        const risks = document.createElement("div");
-        risks.className = "mcp-risk-labels";
-        for (const [kind, label] of riskLabels(tool)) {
-          const risk = document.createElement("small");
-          risk.className = kind;
-          risk.textContent = label;
-          risks.append(risk);
-        }
-        toolCopy.append(toolName, description, risks);
-        if (tool.availability === "unavailable" || tool.availability === "schema_changed") {
-          const availability = document.createElement("small");
-          availability.className = "mcp-tool-availability";
-          availability.textContent = {
-            unavailable: "無法使用",
-            schema_changed: "定義已變更",
-          }[tool.availability];
-          toolName.append(availability);
-        }
-        const toggle = switchButton(
-          tool.enabled,
-          `${tool.title ?? tool.name} ${tool.enabled ? "已開啟" : "已關閉"}`,
-        );
-        toggle.disabled = this.busy || !serverCanChange || !toolsCurrent;
-        toggle.dataset.mcpFocus = `toggle:${key}`;
-        toggle.onclick = (event) => {
-          if (!event.isTrusted) return;
-          void this.act({
-            action: "set_tool_enabled",
-            server_id: server.id,
-            tool_name: tool.name,
-            enabled: !tool.enabled,
-          });
-        };
-        row.append(toolCopy, toggle);
-        tools.append(row);
-      }
-      if (!server.tools.length && (!server.auth || toolsCurrent)) {
-        const empty = document.createElement("p");
-        empty.className = "mcp-tools-empty";
-        empty.textContent =
-          server.state === "ready" ? "這台伺服器沒有公開工具。" : "重新探索後顯示工具。";
-        tools.append(empty);
-      }
-      details.append(summary, tools);
-      card.append(details);
-
-      const actions = document.createElement("footer");
-      const refresh = document.createElement("button");
-      refresh.type = "button";
-      refresh.dataset.mcpFocus = `refresh:${server.id}`;
-      refresh.textContent = "重新探索";
-      if (authView) refresh.textContent = authView.button;
-      refresh.onclick = (event) => {
-        if (!event.isTrusted) return;
-        if (authView && authView.action !== "refresh" && authView.action !== "none")
-          void this.authAction(server, authView.action);
-        else if (!authView || authView.action === "refresh")
-          void this.act({ action: "refresh", server_id: server.id });
-      };
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.dataset.mcpFocus = `remove:${server.id}`;
-      remove.className = "danger";
-      remove.textContent = "解除掛載";
-      remove.onclick = (event) => {
-        if (!event.isTrusted || !window.confirm(`解除「${server.name}」的 MCP 掛載？`)) return;
-        void this.act({ action: "remove", server_id: server.id });
-      };
-      refresh.hidden = authView?.action === "none";
-      refresh.disabled =
-        (authView?.action === "query" ? !available : this.busy || !canChange) ||
-        this.authBusy.has(server.id) ||
-        Boolean(authLoadingFailed) ||
-        Boolean(authView && !authIdentity) ||
-        Boolean(authView?.action === "cancel" && !authPending);
-      remove.disabled = this.busy || !serverCanChange;
-      if (server.auth) {
-        const management = document.createElement("details");
-        management.className = "mcp-management";
-        management.dataset.serverId = server.id;
-        management.open = openManagement.has(server.id);
-        const label = document.createElement("summary");
-        label.textContent = "管理";
-        label.dataset.mcpFocus = `manage:${server.id}`;
-        const forget = document.createElement("button");
-        forget.type = "button";
-        forget.textContent = "清除登入";
-        forget.dataset.mcpFocus = `forget:${server.id}`;
-        forget.disabled =
-          this.busy ||
-          !canChange ||
-          this.authBusy.has(server.id) ||
-          !authIdentity ||
-          authPending?.request.action === "forget";
-        forget.onclick = (event) => {
-          if (event.isTrusted) void this.authAction(server, "forget");
-        };
-        const managementActions = document.createElement("div");
-        managementActions.className = "mcp-management-actions";
-        managementActions.append(forget, remove);
-        management.append(label, managementActions);
-        actions.append(refresh, management);
-      } else actions.append(refresh, remove);
-      card.append(actions);
-      this.servers.append(card);
-    }
-    if (authAnnouncements.length) this.authAnnouncement.textContent = authAnnouncements.join("；");
-    if (activeKey) {
-      const replacement = [...this.servers.querySelectorAll<HTMLElement>("[data-mcp-focus]")].find(
-        (element) => element.dataset.mcpFocus === activeKey,
-      );
-      if (replacement && !(replacement as HTMLButtonElement).disabled)
+      if (
+        replacement &&
+        !(replacement as HTMLButtonElement).disabled &&
+        !replacement.closest("[hidden]")
+      )
         replacement.focus({ preventScroll: true });
       else if (!this.busy) {
-        const server = this.state?.servers.find((item) => activeKey.endsWith(`:${item.id}`));
-        const card =
-          server && this.authBusy.has(server.id)
-            ? this.servers.querySelector<HTMLElement>(`[data-mcp-focus="card:${server.id}"]`)
-            : undefined;
-        if (card) card.focus({ preventScroll: true });
-        else this.search.focus({ preventScroll: true });
+        const id = focusKey.slice(focusKey.indexOf(":") + 1).split(":")[0] ?? "";
+        const card = this.cards.get(id)?.element;
+        if (card?.isConnected) card.focus({ preventScroll: true });
+        else if (!this.searchField.hidden) this.search.focus({ preventScroll: true });
+        else if (!this.addButton.hidden && !this.addButton.disabled) this.addButton.focus();
       }
     }
   }

@@ -1,6 +1,11 @@
 // Only the trusted extension page receives local pairing capabilities.
 declare const chrome: {
-  runtime: { id: string };
+  runtime: { id: string; getManifest(): { version: string } };
+  /** Toolbar button badge (B8 P1); needs no permission beyond the manifest `action` key. */
+  action?: {
+    setBadgeText(details: { text: string }): Promise<void>;
+    setBadgeBackgroundColor(details: { color: string }): Promise<void>;
+  };
   sidePanel: { setPanelBehavior(options: { openPanelOnActionClick: boolean }): Promise<void> };
   permissions: {
     request(options: { origins: string[] }): Promise<boolean>;

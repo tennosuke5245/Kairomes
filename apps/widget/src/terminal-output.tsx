@@ -1,18 +1,20 @@
 import type { TerminalResult, TerminalSession } from "@kairomes/protocol";
 import { useEffect, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
+import { tailText } from "./command-model.ts";
+import { StatusLine } from "./detail-parts.tsx";
+import { friendlyError } from "./errors.ts";
+import { DONE_TAIL, LIVE_TAIL, OutputView } from "./output-view.tsx";
 import { terminalActive } from "./terminal-state.ts";
 
+/** Keeps the newest output, cut at a line start; clipped once anything was dropped. */
 export function appendTerminalText(
   previous: { text: string; clipped: boolean },
   next: TerminalResult,
   limit = 4000,
 ) {
-  const text = (next.truncated ? "" : previous.text) + next.text;
-  let cut = Math.max(0, text.length - limit);
-  const first = text.charCodeAt(cut);
-  if (first >= 0xdc00 && first <= 0xdfff) cut++;
-  return { text: text.slice(cut), clipped: previous.clipped || next.truncated || cut > 0 };
+  const tail = tailText((next.truncated ? "" : previous.text) + next.text, limit);
+  return { text: tail.text, clipped: previous.clipped || next.truncated || tail.cut };
 }
 
 export function terminalOutputEvidence(result?: TerminalResult, clipped = false, failed = false) {
@@ -33,19 +35,26 @@ export function TerminalOutput({
   error?: string;
   clipped?: boolean;
 }) {
+  const running = !!result && terminalActive(result.session);
   return (
     <>
-      {result?.session.state !== "pending" && (
-        <p className="result-evidence" role="status">
-          {terminalOutputEvidence(result, clipped, !!error)}
-        </p>
-      )}
       {error && (
-        <p className="inspector-error" role="alert">
-          {error}
+        <p className="k-notice" data-tone="danger" role="alert">
+          <span className="k-notice__body">{error}</span>
         </p>
       )}
-      <pre className="output-preview">{result?.text || (result ? "尚無輸出。" : " ")}</pre>
+      {!result ? (
+        !error && <StatusLine>正在讀取輸出…</StatusLine>
+      ) : result.session.state === "pending" ? null : (
+        <OutputView
+          stdout={result.text}
+          stderr=""
+          tail={running ? LIVE_TAIL : DONE_TAIL}
+          status={terminalOutputEvidence(result, clipped, !!error)}
+          numbered={!clipped && !result.truncated}
+          empty="尚無輸出。"
+        />
+      )}
     </>
   );
 }
@@ -82,7 +91,7 @@ export function TerminalOutputPreview({
         if (!stopped)
           setFailure({
             id: session.id,
-            message: cause instanceof Error ? cause.message : "無法取得輸出。",
+            message: friendlyError(cause, "無法取得輸出。"),
           });
       }
     };

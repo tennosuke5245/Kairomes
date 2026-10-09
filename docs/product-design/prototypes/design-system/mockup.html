@@ -1,0 +1,1233 @@
+<!-- biome-ignore-all lint: design review canvas with static screenshots, not product UI -->
+<!doctype html>
+<html lang="zh-Hant-TW" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kairomes 最終設計</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="components.css">
+<style>
+/* ===== Review canvas (not product UI) ===== */
+html, body { margin: 0; }
+body.canvas { background: #d9d4cb; color: #1f1b1c; font-family: var(--k-font-sans); padding: 48px 48px 96px; }
+.canvas-head { max-width: 1100px; margin-bottom: 40px; }
+.canvas-head h1 { margin: 0 0 6px; font-size: 28px; line-height: 1.3; }
+.canvas-head p { margin: 0; font-size: 15px; line-height: 1.6; color: #4a4440; }
+.screen { margin: 0 0 64px; }
+.screen > h2 { margin: 0 0 4px; font-size: 18px; }
+.screen > p { margin: 0 0 16px; font-size: 14px; color: #4a4440; max-width: 1100px; }
+.pair { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+.frame-wrap { margin: 0; }
+.frame-wrap > figcaption { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: #4a4440; }
+.frame { position: relative; overflow: hidden; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.12), 0 24px 60px -20px rgb(0 0 0 / 0.35); }
+.frame--auto { height: auto !important; }
+/* Screenshots are static: the popover is drawn inside its frame instead of the real viewport. */
+.frame .k-popover { position: absolute; }
+
+/* ===== Desktop shell (apps/desktop) ===== */
+.desk { display: grid; grid-template-columns: var(--k-sidebar) minmax(0, 1fr); height: 100%; background: var(--k-bg); }
+.desk-side { display: flex; flex-direction: column; padding: 14px 10px 12px; min-height: 0; }
+.desk-brand { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px; margin-bottom: 12px; font-size: 16px; font-weight: 700; }
+.desk-nav { display: grid; gap: 2px; }
+.desk-nav a { position: relative; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: var(--k-ink-2); font-weight: 500; text-decoration: none; }
+.desk-nav a .k-icon { width: 18px; height: 18px; }
+.desk-nav a:hover { background: var(--k-surface-2); color: var(--k-ink-1); }
+.desk-nav a[aria-current="page"] { background: var(--k-surface); color: var(--k-ink-1); font-weight: 600; box-shadow: var(--k-shadow-1), inset 0 0 0 1px var(--k-line); }
+.desk-nav a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--k-brand); }
+.nav-count { margin-left: auto; font-size: 13px; color: var(--k-ink-3); font-variant-numeric: tabular-nums; }
+.desk-foot { margin-top: auto; display: grid; gap: 6px; }
+.status-chip { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px; border: 1px solid var(--k-line); border-radius: 8px; background: var(--k-surface); font-weight: 600; text-align: left; cursor: pointer; }
+.status-chip[data-tone="danger"] { border-color: var(--k-danger-line); background: var(--k-danger-soft); color: var(--k-danger-on); }
+.status-chip .k-icon:last-child { margin-left: auto; color: var(--k-ink-3); }
+.desk-ver { padding: 0 10px; font-size: 13px; color: var(--k-ink-3); }
+.desk-main { display: flex; flex-direction: column; min-width: 0; margin: 8px 8px 8px 0; background: var(--k-surface); border: 1px solid var(--k-line); border-radius: var(--k-radius-lg); box-shadow: var(--k-shadow-1); overflow: hidden; }
+.desk-body { display: grid; gap: 24px; align-content: start; padding: 24px 32px 32px; }
+.section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.section-head .k-btn { margin-left: auto; }
+.attn-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.attn { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; min-height: 176px; }
+.attn__label { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--k-ink-2); }
+.attn__label .k-kind { width: 28px; height: 28px; border-radius: 7px; }
+.attn__value { margin-top: 2px; font-size: 22px; font-weight: 650; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.attn__value[data-tone] { color: var(--tone-on); }
+.attn__value .k-countdown { margin-left: 8px; vertical-align: 3px; }
+.attn__list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.attn__list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.attn__list .k-tag { margin-left: auto; }
+.attn__text { color: var(--k-ink-2); }
+.attn__facts { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--k-warning-on); font-weight: 600; }
+.attn__facts span { display: inline-flex; align-items: center; gap: 5px; }
+.attn__foot { margin-top: auto; padding-top: 6px; display: flex; align-items: center; gap: 6px; }
+.proj-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.proj { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 12px; }
+.proj__head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.proj__id { min-width: 0; flex: 1; }
+.proj__name { font-weight: 600; font-size: 15px; line-height: 1.3; }
+.proj__path { font-family: var(--k-font-mono); font-size: 13px; color: var(--k-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj__pills { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.proj__caps { font-size: 13px; color: var(--k-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj__foot { display: flex; align-items: center; gap: 6px; min-height: 30px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--k-line); font-size: 13px; color: var(--k-ink-3); }
+.proj__foot .need { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--k-brand-on); font-weight: 600; font-size: 14px; }
+.statusline__progress { width: 168px; display: grid; gap: 6px; justify-items: end; font-size: 13px; color: var(--k-ink-3); }
+.statusline__progress .k-progress { width: 100%; }
+.health { display: grid; grid-template-columns: 32px minmax(0, 168px) auto minmax(0, 1fr) auto; column-gap: 14px; align-items: center; padding: 12px 16px; }
+.health + .health { border-top: 1px solid var(--k-line); }
+.health__name { font-weight: 600; }
+.health__detail { color: var(--k-ink-2); min-width: 0; }
+.health[data-state="fail"] .health__detail { color: var(--k-ink-1); }
+.privacy { display: flex; align-items: center; gap: 12px; color: var(--k-ink-2); }
+.privacy .k-btn { margin-left: auto; }
+.pathline { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+
+/* ===== Side panel shell (apps/extension, trusted native DOM) ===== */
+.sp { position: relative; display: flex; flex-direction: column; height: 100%; background: var(--k-bg); }
+.sp-switch { flex: 1; }
+.sp-sub { display: flex; align-items: center; gap: 6px; height: var(--k-toolbar); padding: 0 12px 0 6px; flex: none; border-bottom: 1px solid var(--k-line); background: var(--k-bg); }
+.sp-sub__title { font-size: 16px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-sub__pos { font-size: 13px; color: var(--k-ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sp-sub .k-countdown--pill { margin-left: auto; }
+.sp-sub .k-tabs { border-bottom: 0; align-self: stretch; }
+.sp-sub .k-tab { height: 47px; }
+.sp-scroll { flex: 1; min-height: 0; overflow: hidden; display: grid; grid-auto-rows: max-content; gap: 14px; align-content: start; padding: 12px; }
+.sp-scroll--pad { padding: 16px; gap: 16px; }
+.req-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--k-line); font-size: 13px; color: var(--k-ink-3); }
+.diff-bar { display: flex; align-items: center; gap: 8px; }
+.diff-bar__title { font-weight: 600; }
+.diff-bar .k-btn { margin-left: auto; }
+.mode-dur { display: grid; gap: 6px; padding: 8px 8px 4px 36px; }
+.mode-dur .k-chips { gap: 6px; }
+.scope-note { padding: 6px 8px 2px 36px; color: var(--k-ink-2); }
+
+/* ===== Workbench (apps/widget) ===== */
+.wb { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--k-bg); }
+.wb-bar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 8px 0 14px; flex: none; }
+.wb-chips { padding: 0 12px 8px; flex: none; }
+.wb-list { flex: 1; min-height: 0; overflow: hidden; padding: 4px 12px 12px; display: grid; grid-auto-rows: max-content; gap: 4px; align-content: start; }
+.host { display: flex; flex-direction: column; height: 100%; background: var(--k-bg); }
+.host-top { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; background: var(--k-surface); border-bottom: 1px solid var(--k-line); flex: none; }
+.host-top .k-logo { width: 18px; height: 18px; margin: 0 4px 0 2px; }
+.host-top .k-tabs { border-bottom: 0; align-self: stretch; margin-left: 8px; }
+.host-top .k-tab { height: 52px; }
+.host-top .k-field { width: 260px; margin-left: auto; }
+.host-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 460px minmax(0, 1fr); }
+.host-tl { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--k-line); }
+.host-tl .wb-bar { height: 56px; padding: 0 12px; }
+.insp { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--k-surface); }
+.insp-head { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; align-items: center; padding: 16px 20px 14px; border-bottom: 1px solid var(--k-line); }
+.insp-head .k-kind { grid-row: span 2; }
+.insp-title { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 18px; font-weight: 600; line-height: 1.3; }
+.insp-meta { grid-column: 2; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--k-ink-3); }
+.insp-actions { grid-row: span 2; grid-column: 3; display: flex; gap: 6px; }
+.insp-body { flex: 1; min-height: 0; overflow: hidden; padding: 16px 20px 20px; display: grid; gap: 16px; align-content: start; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.k-output__head .k-meta { margin-right: auto; }
+.srch-sum { display: flex; align-items: center; gap: 8px; padding: 0 2px; font-size: 13px; color: var(--k-ink-3); }
+.hit-file { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--k-line); }
+.hit-file__name { flex: 1; min-width: 0; display: grid; line-height: 1.35; }
+.hit-file__name .k-mono { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.hit-file__dir { font-family: var(--k-font-mono); font-size: 13px; color: var(--k-ink-3); overflow-wrap: anywhere; }
+.hit { display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 8px; width: 100%; padding: 7px 12px 7px 8px; border: 0; border-bottom: 1px solid var(--k-line); background: transparent; text-align: left; cursor: pointer; }
+.hit:hover { background: var(--k-surface-2); }
+.hit__ln { padding-top: 1px; text-align: right; font-family: var(--k-font-mono); font-size: 13px; color: var(--k-ink-3); }
+.hit-more { padding: 8px 12px; }
+.crumb-bar { display: flex; align-items: center; gap: 4px; padding: 0 12px 8px; flex: none; }
+.fb-row { grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; padding: 9px 12px; }
+.fb-row .k-row__lead { grid-row: auto; margin: 0; color: var(--k-ink-2); }
+.fb-row .k-row__title { font-family: var(--k-font-mono); font-weight: 500; font-size: 14px; }
+.fb-row .k-row__trail { font-size: 13px; color: var(--k-ink-3); }
+
+/* ===== MCP settings (apps/extension mcp-panel) ===== */
+.mcp-top { display: flex; align-items: center; gap: 8px; }
+.mcp-top .k-field { flex: 1; }
+.srv { overflow: hidden; }
+.srv-head { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; column-gap: 10px; align-items: center; padding: 12px 12px 10px; }
+.srv-name { font-weight: 600; line-height: 1.35; }
+.srv-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0 6px; font-size: 13px; color: var(--k-ink-3); }
+.srv-meta .st { font-weight: 600; color: var(--tone-on); }
+.srv-risk { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px 54px; }
+.srv-note { margin: 0 12px 12px; }
+.tool-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--k-line); }
+.tool { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; min-height: 40px; padding: 0 12px 0 54px; border-bottom: 1px solid var(--k-line); }
+.tool-name { font-family: var(--k-font-mono); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-risk { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--k-ink-3); white-space: nowrap; }
+.tool-risk[data-tone="warning"] { color: var(--k-warning-on); font-weight: 600; }
+.srv-foot { display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 46px; }
+.srv-foot .k-btn--danger-quiet { margin-left: auto; }
+
+/* ===== MCP result card (apps/widget mcp-result, inside ChatGPT) ===== */
+.mr { padding: 12px; background: var(--k-bg); }
+.mr-card { display: grid; gap: 12px; padding: 14px 16px 12px; border-radius: var(--k-radius-lg); }
+.mr-head { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; }
+.mr-head .k-logo { width: 18px; height: 18px; }
+.mr-eyebrow { font-size: 13px; color: var(--k-ink-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-title { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
+.mr-title .k-meta { font-weight: 400; margin-left: 6px; }
+.mr-img { margin: 0; border: 1px solid var(--k-line); border-radius: var(--k-radius-md); overflow: hidden; }
+.mr-img__stage { display: grid; place-items: center; padding: 10px; background-color: var(--k-surface-2); background-image: linear-gradient(45deg, var(--k-surface-3) 25%, transparent 25%, transparent 75%, var(--k-surface-3) 75%), linear-gradient(45deg, var(--k-surface-3) 25%, transparent 25%, transparent 75%, var(--k-surface-3) 75%); background-size: 16px 16px; background-position: 0 0, 8px 8px; }
+.mr-shot { width: 100%; aspect-ratio: 16 / 9; border-radius: 4px; background: linear-gradient(180deg, #2d3a52 0 14%, #f4f1ec 14% 100%); box-shadow: 0 1px 3px rgb(0 0 0 / 0.25); position: relative; }
+.mr-shot::before { content: ""; position: absolute; left: 8%; top: 26%; width: 46%; height: 8%; border-radius: 3px; background: #c9c2b6; box-shadow: 0 18px 0 #ddd6cb, 0 36px 0 #ddd6cb; }
+.mr-shot::after { content: ""; position: absolute; right: 8%; top: 26%; width: 28%; height: 44%; border-radius: 4px; background: #a8b9d8; }
+.mr-img figcaption { display: flex; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--k-line); font-size: 13px; color: var(--k-ink-3); background: var(--k-surface); }
+.mr-text { position: relative; max-height: 96px; overflow: hidden; padding: 8px 10px; border-radius: var(--k-radius-sm); background: var(--k-surface-2); }
+.mr-text::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(transparent, var(--k-surface-2)); }
+.mr-actions { display: flex; gap: 6px; }
+.mr-details { border-top: 1px solid var(--k-line); }
+.mr-details summary { display: flex; align-items: center; gap: 6px; height: 36px; list-style: none; color: var(--k-ink-2); font-weight: 600; cursor: pointer; }
+.mr-details summary::-webkit-details-marker { display: none; }
+.mr-details + .mr-details { border-top: 1px solid var(--k-line); }
+
+/* ===== Component sheet ===== */
+.sheet { padding: 28px 32px 32px; display: grid; gap: 28px; background: var(--k-surface); }
+.sheet h3 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--k-ink-3); }
+.sheet-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.sheet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 40px; }
+.roles { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+.role { border: 1px solid var(--k-line); border-radius: 10px; overflow: hidden; background: var(--k-surface); }
+.role__solid { height: 44px; display: flex; align-items: flex-end; padding: 6px 8px; font-size: 13px; font-weight: 600; }
+.role__soft { display: flex; align-items: center; gap: 4px; padding: 6px 8px; font-size: 13px; font-weight: 600; }
+.role__name { padding: 6px 8px 8px; font-size: 13px; color: var(--k-ink-2); border-top: 1px solid var(--k-line); }
+.role__name b { display: block; color: var(--k-ink-1); font-size: 14px; }
+.type-sample { display: grid; gap: 4px; }
+.type-sample span { color: var(--k-ink-3); font-size: 13px; margin-left: 8px; font-weight: 400; }
+</style>
+</head>
+<body class="canvas">
+<!--ICONS:START-->
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<symbol id="ph-house" viewBox="0 0 256 256"><path d="M219.31,108.68l-80-80a16,16,0,0,0-22.62,0l-80,80A15.87,15.87,0,0,0,32,120v96a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V160h32v56a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V120A15.87,15.87,0,0,0,219.31,108.68ZM208,208H160V152a8,8,0,0,0-8-8H104a8,8,0,0,0-8,8v56H48V120l80-80,80,80Z"></path></symbol>
+<symbol id="ph-house-fill" viewBox="0 0 256 256"><path d="M224,120v96a8,8,0,0,1-8,8H160a8,8,0,0,1-8-8V164a4,4,0,0,0-4-4H108a4,4,0,0,0-4,4v52a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V120a16,16,0,0,1,4.69-11.31l80-80a16,16,0,0,1,22.62,0l80,80A16,16,0,0,1,224,120Z"></path></symbol>
+<symbol id="ph-folder" viewBox="0 0 256 256"><path d="M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72ZM40,56H92.69l16,16H40ZM216,200H40V88H216Z"></path></symbol>
+<symbol id="ph-folder-fill" viewBox="0 0 256 256"><path d="M216,72H131.31L104,44.69A15.88,15.88,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.41,15.41,0,0,0,39.39,216h177.5A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72ZM40,56H92.69l16,16H40Z"></path></symbol>
+<symbol id="ph-folder-open" viewBox="0 0 256 256"><path d="M245,110.64A16,16,0,0,0,232,104H216V88a16,16,0,0,0-16-16H130.67L102.94,51.2a16.14,16.14,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V208h0a8,8,0,0,0,8,8H211.1a8,8,0,0,0,7.59-5.47l28.49-85.47A16.05,16.05,0,0,0,245,110.64ZM93.34,64,123.2,86.4A8,8,0,0,0,128,88h72v16H69.77a16,16,0,0,0-15.18,10.94L40,158.7V64Zm112,136H43.1l26.67-80H232Z"></path></symbol>
+<symbol id="ph-stack" viewBox="0 0 256 256"><path d="M230.91,172A8,8,0,0,1,228,182.91l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,36,169.09l92,53.65,92-53.65A8,8,0,0,1,230.91,172ZM220,121.09l-92,53.65L36,121.09A8,8,0,0,0,28,134.91l96,56a8,8,0,0,0,8.06,0l96-56A8,8,0,1,0,220,121.09ZM24,80a8,8,0,0,1,4-6.91l96-56a8,8,0,0,1,8.06,0l96,56a8,8,0,0,1,0,13.82l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,24,80Zm23.88,0L128,126.74,208.12,80,128,33.26Z"></path></symbol>
+<symbol id="ph-plug" viewBox="0 0 256 256"><path d="M237.66,66.34a8,8,0,0,0-11.32,0L192,100.69,155.31,64l34.35-34.34a8,8,0,1,0-11.32-11.32L144,52.69,117.66,26.34a8,8,0,0,0-11.32,11.32L112.69,44l-53,53a40,40,0,0,0,0,56.57l15.71,15.71L26.34,218.34a8,8,0,0,0,11.32,11.32l49.09-49.09,15.71,15.71a40,40,0,0,0,56.57,0l53-53,6.34,6.35a8,8,0,0,0,11.32-11.32L203.31,112l34.35-34.34A8,8,0,0,0,237.66,66.34ZM147.72,185a24,24,0,0,1-33.95,0L71,142.23a24,24,0,0,1,0-33.95l53-53L200.69,132Z"></path></symbol>
+<symbol id="ph-plug-fill" viewBox="0 0 256 256"><path d="M237.66,77.66,203.31,112l26.35,26.34a8,8,0,0,1-11.32,11.32L212,143.31l-53,53a40,40,0,0,1-56.57,0L86.75,180.57,37.66,229.66a8,8,0,0,1-11.32-11.32l49.09-49.09L59.72,153.54a40,40,0,0,1,0-56.57l53-53-6.35-6.34a8,8,0,0,1,11.32-11.32L144,52.69l34.34-34.35a8,8,0,1,1,11.32,11.32L155.31,64,192,100.69l34.34-34.35a8,8,0,0,1,11.32,11.32Z"></path></symbol>
+<symbol id="ph-lifebuoy" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm39.1,131.79a47.84,47.84,0,0,0,0-55.58l28.5-28.49a87.83,87.83,0,0,1,0,112.56ZM96,128a32,32,0,1,1,32,32A32,32,0,0,1,96,128Zm88.28-67.6L155.79,88.9a47.84,47.84,0,0,0-55.58,0L71.72,60.4a87.83,87.83,0,0,1,112.56,0ZM60.4,71.72l28.5,28.49a47.84,47.84,0,0,0,0,55.58L60.4,184.28a87.83,87.83,0,0,1,0-112.56ZM71.72,195.6l28.49-28.5a47.84,47.84,0,0,0,55.58,0l28.49,28.5a87.83,87.83,0,0,1-112.56,0Z"></path></symbol>
+<symbol id="ph-lifebuoy-fill" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24ZM96,128a32,32,0,1,1,32,32A32,32,0,0,1,96,128Zm88.28-67.6L155.79,88.9a47.84,47.84,0,0,0-55.58,0L71.72,60.4a87.83,87.83,0,0,1,112.56,0ZM71.72,195.6l28.49-28.5a47.84,47.84,0,0,0,55.58,0l28.49,28.5a87.83,87.83,0,0,1-112.56,0Z"></path></symbol>
+<symbol id="ph-gear" viewBox="0 0 256 256"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z"></path></symbol>
+<symbol id="ph-gear-fill" viewBox="0 0 256 256"><path d="M237.94,107.21a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A111.92,111.92,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.63a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21ZM128,168a40,40,0,1,1,40-40A40,40,0,0,1,128,168Z"></path></symbol>
+<symbol id="ph-command" viewBox="0 0 256 256"><path d="M117.31,134l-72,64a8,8,0,1,1-10.63-12L100,128,34.69,70A8,8,0,1,1,45.32,58l72,64a8,8,0,0,1,0,12ZM216,184H120a8,8,0,0,0,0,16h96a8,8,0,0,0,0-16Z"></path></symbol>
+<symbol id="ph-terminal" viewBox="0 0 256 256"><path d="M128,128a8,8,0,0,1-3,6.25l-40,32a8,8,0,1,1-10-12.5L107.19,128,75,102.25a8,8,0,1,1,10-12.5l40,32A8,8,0,0,1,128,128Zm48,24H136a8,8,0,0,0,0,16h40a8,8,0,0,0,0-16Zm56-96V200a16,16,0,0,1-16,16H40a16,16,0,0,1-16-16V56A16,16,0,0,1,40,40H216A16,16,0,0,1,232,56ZM216,200V56H40V200H216Z"></path></symbol>
+<symbol id="ph-file" viewBox="0 0 256 256"><path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-32-80a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,136Zm0,32a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,168Z"></path></symbol>
+<symbol id="ph-file-code" viewBox="0 0 256 256"><path d="M181.66,146.34a8,8,0,0,1,0,11.32l-24,24a8,8,0,0,1-11.32-11.32L164.69,152l-18.35-18.34a8,8,0,0,1,11.32-11.32Zm-72-24a8,8,0,0,0-11.32,0l-24,24a8,8,0,0,0,0,11.32l24,24a8,8,0,0,0,11.32-11.32L91.31,152l18.35-18.34A8,8,0,0,0,109.66,122.34ZM216,88V216a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V40A16,16,0,0,1,56,24h96a8,8,0,0,1,5.66,2.34l56,56A8,8,0,0,1,216,88Zm-56-8h28.69L160,51.31Zm40,136V96H152a8,8,0,0,1-8-8V40H56V216H200Z"></path></symbol>
+<symbol id="ph-pencil" viewBox="0 0 256 256"><path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152A15.86,15.86,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z"></path></symbol>
+<symbol id="ph-search" viewBox="0 0 256 256"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"></path></symbol>
+<symbol id="ph-shield-check" viewBox="0 0 256 256"><path d="M208,40H48A16,16,0,0,0,32,56v56c0,52.72,25.52,84.67,46.93,102.19,23.06,18.86,46,25.26,47,25.53a8,8,0,0,0,4.2,0c1-.27,23.91-6.67,47-25.53C198.48,196.67,224,164.72,224,112V56A16,16,0,0,0,208,40Zm0,72c0,37.07-13.66,67.16-40.6,89.42A129.3,129.3,0,0,1,128,223.62a128.25,128.25,0,0,1-38.92-21.81C61.82,179.51,48,149.3,48,112l0-56,160,0ZM82.34,141.66a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32l-56,56a8,8,0,0,1-11.32,0Z"></path></symbol>
+<symbol id="ph-shield-warning" viewBox="0 0 256 256"><path d="M120,136V96a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm8,48a12,12,0,1,0-12-12A12,12,0,0,0,128,184ZM224,56v56c0,52.72-25.52,84.67-46.93,102.19-23.06,18.86-46,25.27-47,25.53a8,8,0,0,1-4.2,0c-1-.26-23.91-6.67-47-25.53C57.52,196.67,32,164.72,32,112V56A16,16,0,0,1,48,40H208A16,16,0,0,1,224,56Zm-16,0L48,56l0,56c0,37.3,13.82,67.51,41.07,89.81A128.25,128.25,0,0,0,128,223.62a129.3,129.3,0,0,0,39.41-22.2C194.34,179.16,208,149.07,208,112Z"></path></symbol>
+<symbol id="ph-shield-warning-fill" viewBox="0 0 256 256"><path d="M208,40H48A16,16,0,0,0,32,56v56c0,52.72,25.52,84.67,46.93,102.19,23.06,18.86,46,25.27,47,25.53a8,8,0,0,0,4.2,0c1-.26,23.91-6.67,47-25.53C198.48,196.67,224,164.72,224,112V56A16,16,0,0,0,208,40ZM120,96a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm8,88a12,12,0,1,1,12-12A12,12,0,0,1,128,184Z"></path></symbol>
+<symbol id="ph-lightning" viewBox="0 0 256 256"><path d="M215.79,118.17a8,8,0,0,0-5-5.66L153.18,90.9l14.66-73.33a8,8,0,0,0-13.69-7l-112,120a8,8,0,0,0,3,13l57.63,21.61L88.16,238.43a8,8,0,0,0,13.69,7l112-120A8,8,0,0,0,215.79,118.17ZM109.37,214l10.47-52.38a8,8,0,0,0-5-9.06L62,132.71l84.62-90.66L136.16,94.43a8,8,0,0,0,5,9.06l52.8,19.8Z"></path></symbol>
+<symbol id="ph-lightning-fill" viewBox="0 0 256 256"><path d="M213.85,125.46l-112,120a8,8,0,0,1-13.69-7l14.66-73.33L45.19,143.49a8,8,0,0,1-3-13l112-120a8,8,0,0,1,13.69,7L153.18,90.9l57.63,21.61a8,8,0,0,1,3,12.95Z"></path></symbol>
+<symbol id="ph-globe" viewBox="0 0 256 256"><path d="M128,24h0A104,104,0,1,0,232,128,104.12,104.12,0,0,0,128,24Zm88,104a87.61,87.61,0,0,1-3.33,24H174.16a157.44,157.44,0,0,0,0-48h38.51A87.61,87.61,0,0,1,216,128ZM102,168H154a115.11,115.11,0,0,1-26,45A115.27,115.27,0,0,1,102,168Zm-3.9-16a140.84,140.84,0,0,1,0-48h59.88a140.84,140.84,0,0,1,0,48ZM40,128a87.61,87.61,0,0,1,3.33-24H81.84a157.44,157.44,0,0,0,0,48H43.33A87.61,87.61,0,0,1,40,128ZM154,88H102a115.11,115.11,0,0,1,26-45A115.27,115.27,0,0,1,154,88Zm52.33,0H170.71a135.28,135.28,0,0,0-22.3-45.6A88.29,88.29,0,0,1,206.37,88ZM107.59,42.4A135.28,135.28,0,0,0,85.29,88H49.63A88.29,88.29,0,0,1,107.59,42.4ZM49.63,168H85.29a135.28,135.28,0,0,0,22.3,45.6A88.29,88.29,0,0,1,49.63,168Zm98.78,45.6a135.28,135.28,0,0,0,22.3-45.6h35.66A88.29,88.29,0,0,1,148.41,213.6Z"></path></symbol>
+<symbol id="ph-out" viewBox="0 0 256 256"><path d="M224,104a8,8,0,0,1-16,0V59.32l-66.33,66.34a8,8,0,0,1-11.32-11.32L196.68,48H152a8,8,0,0,1,0-16h64a8,8,0,0,1,8,8Zm-40,24a8,8,0,0,0-8,8v72H48V80h72a8,8,0,0,0,0-16H48A16,16,0,0,0,32,80V208a16,16,0,0,0,16,16H176a16,16,0,0,0,16-16V136A8,8,0,0,0,184,128Z"></path></symbol>
+<symbol id="ph-desktop" viewBox="0 0 256 256"><path d="M208,40H48A24,24,0,0,0,24,64V176a24,24,0,0,0,24,24h72v16H96a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16H136V200h72a24,24,0,0,0,24-24V64A24,24,0,0,0,208,40ZM48,56H208a8,8,0,0,1,8,8v80H40V64A8,8,0,0,1,48,56ZM208,184H48a8,8,0,0,1-8-8V160H216v16A8,8,0,0,1,208,184Z"></path></symbol>
+<symbol id="ph-timer" viewBox="0 0 256 256"><path d="M128,40a96,96,0,1,0,96,96A96.11,96.11,0,0,0,128,40Zm0,176a80,80,0,1,1,80-80A80.09,80.09,0,0,1,128,216ZM173.66,90.34a8,8,0,0,1,0,11.32l-40,40a8,8,0,0,1-11.32-11.32l40-40A8,8,0,0,1,173.66,90.34ZM96,16a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,16Z"></path></symbol>
+<symbol id="ph-check" viewBox="0 0 256 256"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"></path></symbol>
+<symbol id="ph-check-circle" viewBox="0 0 256 256"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"></path></symbol>
+<symbol id="ph-check-circle-fill" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm45.66,85.66-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32Z"></path></symbol>
+<symbol id="ph-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"></path></symbol>
+<symbol id="ph-x-circle" viewBox="0 0 256 256"><path d="M165.66,101.66,139.31,128l26.35,26.34a8,8,0,0,1-11.32,11.32L128,139.31l-26.34,26.35a8,8,0,0,1-11.32-11.32L116.69,128,90.34,101.66a8,8,0,0,1,11.32-11.32L128,116.69l26.34-26.35a8,8,0,0,1,11.32,11.32ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"></path></symbol>
+<symbol id="ph-x-circle-fill" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm37.66,130.34a8,8,0,0,1-11.32,11.32L128,139.31l-26.34,26.35a8,8,0,0,1-11.32-11.32L116.69,128,90.34,101.66a8,8,0,0,1,11.32-11.32L128,116.69l26.34-26.35a8,8,0,0,1,11.32,11.32L139.31,128Z"></path></symbol>
+<symbol id="ph-warning" viewBox="0 0 256 256"><path d="M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,144V104a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,180Z"></path></symbol>
+<symbol id="ph-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"></path></symbol>
+<symbol id="ph-warning-circle-fill" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm-8,56a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm8,104a12,12,0,1,1,12-12A12,12,0,0,1,128,184Z"></path></symbol>
+<symbol id="ph-question" viewBox="0 0 256 256"><path d="M140,180a12,12,0,1,1-12-12A12,12,0,0,1,140,180ZM128,72c-22.06,0-40,16.15-40,36v4a8,8,0,0,0,16,0v-4c0-11,10.77-20,24-20s24,9,24,20-10.77,20-24,20a8,8,0,0,0-8,8v8a8,8,0,0,0,16,0v-.72c18.24-3.35,32-17.9,32-35.28C168,88.15,150.06,72,128,72Zm104,56A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"></path></symbol>
+<symbol id="ph-info" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"></path></symbol>
+<symbol id="ph-caret-down" viewBox="0 0 256 256"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"></path></symbol>
+<symbol id="ph-caret-right" viewBox="0 0 256 256"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"></path></symbol>
+<symbol id="ph-caret-left" viewBox="0 0 256 256"><path d="M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z"></path></symbol>
+<symbol id="ph-caret-updown" viewBox="0 0 256 256"><path d="M181.66,170.34a8,8,0,0,1,0,11.32l-48,48a8,8,0,0,1-11.32,0l-48-48a8,8,0,0,1,11.32-11.32L128,212.69l42.34-42.35A8,8,0,0,1,181.66,170.34Zm-96-84.68L128,43.31l42.34,42.35a8,8,0,0,0,11.32-11.32l-48-48a8,8,0,0,0-11.32,0l-48,48A8,8,0,0,0,85.66,85.66Z"></path></symbol>
+<symbol id="ph-arrow-left" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z"></path></symbol>
+<symbol id="ph-arrow-up" viewBox="0 0 256 256"><path d="M205.66,117.66a8,8,0,0,1-11.32,0L136,59.31V216a8,8,0,0,1-16,0V59.31L61.66,117.66a8,8,0,0,1-11.32-11.32l72-72a8,8,0,0,1,11.32,0l72,72A8,8,0,0,1,205.66,117.66Z"></path></symbol>
+<symbol id="ph-arrow-up-right" viewBox="0 0 256 256"><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"></path></symbol>
+<symbol id="ph-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"></path></symbol>
+<symbol id="ph-copy" viewBox="0 0 256 256"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"></path></symbol>
+<symbol id="ph-eye" viewBox="0 0 256 256"><path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"></path></symbol>
+<symbol id="ph-key" viewBox="0 0 256 256"><path d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43ZM224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"></path></symbol>
+<symbol id="ph-chat" viewBox="0 0 256 256"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128ZM84,116a12,12,0,1,0,12,12A12,12,0,0,0,84,116Zm88,0a12,12,0,1,0,12,12A12,12,0,0,0,172,116Zm60,12A104,104,0,0,1,79.12,219.82L45.07,231.17a16,16,0,0,1-20.24-20.24l11.35-34.05A104,104,0,1,1,232,128Zm-16,0A88,88,0,1,0,51.81,172.06a8,8,0,0,1,.66,6.54L40,216,77.4,203.53a7.85,7.85,0,0,1,2.53-.42,8,8,0,0,1,4,1.08A88,88,0,0,0,216,128Z"></path></symbol>
+<symbol id="ph-refresh" viewBox="0 0 256 256"><path d="M240,56v48a8,8,0,0,1-8,8H184a8,8,0,0,1,0-16H211.4L184.81,71.64l-.25-.24a80,80,0,1,0-1.67,114.78,8,8,0,0,1,11,11.63A95.44,95.44,0,0,1,128,224h-1.32A96,96,0,1,1,195.75,60L224,85.8V56a8,8,0,1,1,16,0Z"></path></symbol>
+<symbol id="ph-retry" viewBox="0 0 256 256"><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"></path></symbol>
+<symbol id="ph-trash" viewBox="0 0 256 256"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"></path></symbol>
+<symbol id="ph-spinner" viewBox="0 0 256 256"><path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"></path></symbol>
+<symbol id="ph-pause" viewBox="0 0 256 256"><path d="M200,32H160a16,16,0,0,0-16,16V208a16,16,0,0,0,16,16h40a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm0,176H160V48h40ZM96,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H96a16,16,0,0,0,16-16V48A16,16,0,0,0,96,32Zm0,176H56V48H96Z"></path></symbol>
+<symbol id="ph-broadcast" viewBox="0 0 256 256"><path d="M128,88a40,40,0,1,0,40,40A40,40,0,0,0,128,88Zm0,64a24,24,0,1,1,24-24A24,24,0,0,1,128,152Zm73.71,7.14a80,80,0,0,1-14.08,22.2,8,8,0,0,1-11.92-10.67,63.95,63.95,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67,80.08,80.08,0,0,1,14.08,84.47ZM69,103.09a64,64,0,0,0,11.26,67.58,8,8,0,0,1-11.92,10.67,79.93,79.93,0,0,1,0-106.67A8,8,0,1,1,80.29,85.34,63.77,63.77,0,0,0,69,103.09ZM248,128a119.58,119.58,0,0,1-34.29,84,8,8,0,1,1-11.42-11.2,103.9,103.9,0,0,0,0-145.56A8,8,0,1,1,213.71,44,119.58,119.58,0,0,1,248,128ZM53.71,200.78A8,8,0,1,1,42.29,212a119.87,119.87,0,0,1,0-168,8,8,0,1,1,11.42,11.2,103.9,103.9,0,0,0,0,145.56Z"></path></symbol>
+<symbol id="ph-inbox" viewBox="0 0 256 256"><path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,16V152h-28.7A15.86,15.86,0,0,0,168,156.69L148.69,176H107.31L88,156.69A15.86,15.86,0,0,0,76.69,152H48V48Zm0,160H48V168H76.69L96,187.31A15.86,15.86,0,0,0,107.31,192h41.38A15.86,15.86,0,0,0,160,187.31L179.31,168H208v40Z"></path></symbol>
+<symbol id="ph-inbox-fill" viewBox="0 0 256 256"><path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,176H48V168H76.69L96,187.32A15.89,15.89,0,0,0,107.31,192h41.38A15.86,15.86,0,0,0,160,187.31L179.31,168H208v40Z"></path></symbol>
+<symbol id="ph-server" viewBox="0 0 256 256"><path d="M208,136H48a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V152A16,16,0,0,0,208,136Zm0,64H48V152H208v48Zm0-160H48A16,16,0,0,0,32,56v48a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V56A16,16,0,0,0,208,40Zm0,64H48V56H208v48ZM192,80a12,12,0,1,1-12-12A12,12,0,0,1,192,80Zm0,96a12,12,0,1,1-12-12A12,12,0,0,1,192,176Z"></path></symbol>
+<symbol id="ph-signin" viewBox="0 0 256 256"><path d="M141.66,133.66l-40,40a8,8,0,0,1-11.32-11.32L116.69,136H24a8,8,0,0,1,0-16h92.69L90.34,93.66a8,8,0,0,1,11.32-11.32l40,40A8,8,0,0,1,141.66,133.66ZM200,32H136a8,8,0,0,0,0,16h56V208H136a8,8,0,0,0,0,16h64a8,8,0,0,0,8-8V40A8,8,0,0,0,200,32Z"></path></symbol>
+<symbol id="ph-wrap" viewBox="0 0 256 256"><path d="M232,112a64.07,64.07,0,0,1-64,64H51.31l34.35,34.34a8,8,0,0,1-11.32,11.32l-48-48a8,8,0,0,1,0-11.32l48-48a8,8,0,0,1,11.32,11.32L51.31,160H168a48,48,0,0,0,0-96H80a8,8,0,0,1,0-16h88A64.07,64.07,0,0,1,232,112Z"></path></symbol>
+<symbol id="ph-list-checks" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H128a8,8,0,0,1,0-16h88A8,8,0,0,1,224,128ZM128,72h88a8,8,0,0,0,0-16H128a8,8,0,0,0,0,16Zm88,112H128a8,8,0,0,0,0,16h88a8,8,0,0,0,0-16ZM82.34,42.34,56,68.69,45.66,58.34A8,8,0,0,0,34.34,69.66l16,16a8,8,0,0,0,11.32,0l32-32A8,8,0,0,0,82.34,42.34Zm0,64L56,132.69,45.66,122.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Zm0,64L56,196.69,45.66,186.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32,0l32-32a8,8,0,0,0-11.32-11.32Z"></path></symbol>
+<symbol id="ph-stop" viewBox="0 0 256 256"><path d="M200,40H56A16,16,0,0,0,40,56V200a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,160H56V56H200V200Z"></path></symbol>
+<symbol id="ph-dots" viewBox="0 0 256 256"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z"></path></symbol>
+<symbol id="ph-prohibit" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm88,104a87.56,87.56,0,0,1-20.41,56.28L71.72,60.4A88,88,0,0,1,216,128ZM40,128A87.56,87.56,0,0,1,60.41,71.72L184.28,195.6A88,88,0,0,1,40,128Z"></path></symbol>
+<symbol id="ph-minus-circle" viewBox="0 0 256 256"><path d="M176,128a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h80A8,8,0,0,1,176,128Zm56,0A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"></path></symbol>
+<symbol id="ph-expired" viewBox="0 0 256 256"><path d="M232,136.66A104.12,104.12,0,1,1,119.34,24,8,8,0,0,1,120.66,40,88.12,88.12,0,1,0,216,135.34,8,8,0,0,1,232,136.66ZM120,72v56a8,8,0,0,0,8,8h56a8,8,0,0,0,0-16H136V72a8,8,0,0,0-16,0Zm40-24a12,12,0,1,0-12-12A12,12,0,0,0,160,48Zm36,24a12,12,0,1,0-12-12A12,12,0,0,0,196,72Zm24,36a12,12,0,1,0-12-12A12,12,0,0,0,220,108Z"></path></symbol>
+<symbol id="ph-stale" viewBox="0 0 256 256"><path d="M224,48V96a8,8,0,0,1-8,8H168a8,8,0,0,1,0-16h28.69L182.06,73.37a79.56,79.56,0,0,0-56.13-23.43h-.45A79.52,79.52,0,0,0,69.59,72.71,8,8,0,0,1,58.41,61.27a96,96,0,0,1,135,.79L208,76.69V48a8,8,0,0,1,16,0ZM186.41,183.29a80,80,0,0,1-112.47-.66L59.31,168H88a8,8,0,0,0,0-16H40a8,8,0,0,0-8,8v48a8,8,0,0,0,16,0V179.31l14.63,14.63A95.43,95.43,0,0,0,130,222.06h.53a95.36,95.36,0,0,0,67.07-27.33,8,8,0,0,0-11.18-11.44Z"></path></symbol>
+<symbol id="ph-lock" viewBox="0 0 256 256"><path d="M128,112a28,28,0,0,0-8,54.83V184a8,8,0,0,0,16,0V166.83A28,28,0,0,0,128,112Zm0,40a12,12,0,1,1,12-12A12,12,0,0,1,128,152Zm80-72H176V56a48,48,0,0,0-96,0V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80ZM96,56a32,32,0,0,1,64,0V80H96ZM208,208H48V96H208V208Z"></path></symbol>
+<symbol id="ph-sidebar" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"></path></symbol>
+<symbol id="ph-puzzle" viewBox="0 0 256 256"><path d="M220.27,158.54a8,8,0,0,0-7.7-.46,20,20,0,1,1,0-36.16A8,8,0,0,0,224,114.69V72a16,16,0,0,0-16-16H171.78a35.36,35.36,0,0,0,.22-4,36.11,36.11,0,0,0-11.36-26.24,36,36,0,0,0-60.55,23.62,36.56,36.56,0,0,0,.14,6.62H64A16,16,0,0,0,48,72v32.22a35.36,35.36,0,0,0-4-.22,36.12,36.12,0,0,0-26.24,11.36,35.7,35.7,0,0,0-9.69,27,36.08,36.08,0,0,0,33.31,33.6,35.68,35.68,0,0,0,6.62-.14V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V165.31A8,8,0,0,0,220.27,158.54ZM208,208H64V165.31a8,8,0,0,0-11.43-7.23,20,20,0,1,1,0-36.16A8,8,0,0,0,64,114.69V72h46.69a8,8,0,0,0,7.23-11.43,20,20,0,1,1,36.16,0A8,8,0,0,0,161.31,72H208v32.23a35.68,35.68,0,0,0-6.62-.14A36,36,0,0,0,204,176a35.36,35.36,0,0,0,4-.22Z"></path></symbol>
+<symbol id="ph-image" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,16V158.75l-26.07-26.06a16,16,0,0,0-22.63,0l-20,20-44-44a16,16,0,0,0-22.62,0L40,149.37V56ZM40,172l52-52,80,80H40Zm176,28H194.63l-36-36,20-20L216,181.38V200ZM144,100a12,12,0,1,1,12,12A12,12,0,0,1,144,100Z"></path></symbol>
+<symbol id="ph-braces" viewBox="0 0 256 256"><path d="M43.18,128a29.78,29.78,0,0,1,8,10.26c4.8,9.9,4.8,22,4.8,33.74,0,24.31,1,36,24,36a8,8,0,0,1,0,16c-17.48,0-29.32-6.14-35.2-18.26-4.8-9.9-4.8-22-4.8-33.74,0-24.31-1-36-24-36a8,8,0,0,1,0-16c23,0,24-11.69,24-36,0-11.72,0-23.84,4.8-33.74C50.68,38.14,62.52,32,80,32a8,8,0,0,1,0,16C57,48,56,59.69,56,84c0,11.72,0,23.84-4.8,33.74A29.78,29.78,0,0,1,43.18,128ZM240,120c-23,0-24-11.69-24-36,0-11.72,0-23.84-4.8-33.74C205.32,38.14,193.48,32,176,32a8,8,0,0,0,0,16c23,0,24,11.69,24,36,0,11.72,0,23.84,4.8,33.74a29.78,29.78,0,0,0,8,10.26,29.78,29.78,0,0,0-8,10.26c-4.8,9.9-4.8,22-4.8,33.74,0,24.31-1,36-24,36a8,8,0,0,0,0,16c17.48,0,29.32-6.14,35.2-18.26,4.8-9.9,4.8-22,4.8-33.74,0-24.31,1-36,24-36a8,8,0,0,0,0-16Z"></path></symbol>
+<symbol id="ph-funnel" viewBox="0 0 256 256"><path d="M200,136a8,8,0,0,1-8,8H64a8,8,0,0,1,0-16H192A8,8,0,0,1,200,136Zm32-56H24a8,8,0,0,0,0,16H232a8,8,0,0,0,0-16Zm-80,96H104a8,8,0,0,0,0,16h48a8,8,0,0,0,0-16Z"></path></symbol>
+<symbol id="ph-download" viewBox="0 0 256 256"><path d="M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z"></path></symbol>
+<symbol id="ph-clock" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm64-88a8,8,0,0,1-8,8H128a8,8,0,0,1-8-8V72a8,8,0,0,1,16,0v48h48A8,8,0,0,1,192,128Z"></path></symbol>
+<symbol id="ph-user" viewBox="0 0 256 256"><path d="M230.92,212c-15.23-26.33-38.7-45.21-66.09-54.16a72,72,0,1,0-73.66,0C63.78,166.78,40.31,185.66,25.08,212a8,8,0,1,0,13.85,8c18.84-32.56,52.14-52,89.07-52s70.23,19.44,89.07,52a8,8,0,1,0,13.85-8ZM72,96a56,56,0,1,1,56,56A56.06,56.06,0,0,1,72,96Z"></path></symbol>
+<symbol id="ph-git-diff" viewBox="0 0 256 256"><path d="M112,152a8,8,0,0,0-8,8v28.69L66.34,151A8,8,0,0,1,64,145.37V95a32,32,0,1,0-16,0v50.38a23.85,23.85,0,0,0,7,17L92.69,200H64a8,8,0,0,0,0,16h48a8,8,0,0,0,8-8V160A8,8,0,0,0,112,152ZM40,64A16,16,0,1,1,56,80,16,16,0,0,1,40,64Zm168,97V110.63a23.85,23.85,0,0,0-7-17L163.31,56H192a8,8,0,0,0,0-16H144a8,8,0,0,0-8,8V96a8,8,0,0,0,16,0V67.31L189.66,105a8,8,0,0,1,2.34,5.66V161a32,32,0,1,0,16,0Zm-8,47a16,16,0,1,1,16-16A16,16,0,0,1,200,208Z"></path></symbol>
+<symbol id="ph-hash" viewBox="0 0 256 256"><path d="M224,88H175.4l8.47-46.57a8,8,0,0,0-15.74-2.86l-9,49.43H111.4l8.47-46.57a8,8,0,0,0-15.74-2.86L95.14,88H48a8,8,0,0,0,0,16H92.23L83.5,152H32a8,8,0,0,0,0,16H80.6l-8.47,46.57a8,8,0,0,0,6.44,9.3A7.79,7.79,0,0,0,80,224a8,8,0,0,0,7.86-6.57l9-49.43H144.6l-8.47,46.57a8,8,0,0,0,6.44,9.3A7.79,7.79,0,0,0,144,224a8,8,0,0,0,7.86-6.57l9-49.43H208a8,8,0,0,0,0-16H163.77l8.73-48H224a8,8,0,0,0,0-16Zm-76.5,64H99.77l8.73-48h47.73Z"></path></symbol>
+</svg>
+<!--ICONS:END-->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="k-mark" viewBox="0 0 128 128"><path d="M22 16c-6 0-10 4-10 10v76c0 6 4 10 10 10s10-4 10-10V26c0-6-4-10-10-10Z"/><path d="M106 16H84c-3 0-6 1-8 4L38 57c-4 4-4 10 0 14l39 37c2 3 5 4 8 4h21c4 0 7-2 8-5 1-3 0-6-2-8L73 64l38-35c3-2 4-6 2-9-1-2-4-4-7-4Z"/></symbol>
+</svg>
+
+<header class="canvas-head">
+  <h1>Kairomes 最終設計：Paper &amp; Ink</h1>
+  <p>以方向 A 為主，並採用 B 的密度、佇列分頁與差異行號，以及 C 的邊界處理和連線路徑圖。所有畫面只使用 tokens.css 與 components.css，圖示為 Phosphor regular（作用中為 fill）。每個畫面都有淺色與深色版本。</p>
+</header>
+
+<section class="screen" data-tpl="tpl-desk-ready" data-id="a1-desktop-overview" data-w="1080" data-h="720">
+  <h2>(a1) Desktop 總覽 · 已就緒 · 1080×720</h2>
+  <p>連線只在側欄底部說一次。需確認卡只列數量、種類與最早到期時間，不顯示 argv 或差異；審核與收回都在瀏覽器側欄進行（Desktop 收回要等 A9 另案審查）。</p>
+</section>
+<section class="screen" data-tpl="tpl-desk-setup" data-id="a2-desktop-setup" data-w="1080" data-h="720">
+  <h2>(a2) Desktop 總覽 · 設定清單 · 1080×720</h2>
+  <p>設定流程用中性色，下一步用墨色按鈕，畫面上沒有紅色。</p>
+</section>
+<section class="screen" data-tpl="tpl-desk-diag" data-id="a3-desktop-diagnostics-error" data-w="1080" data-h="720">
+  <h2>(a3) Desktop 疑難排解 · 金鑰被拒 · 1080×720</h2>
+  <p>路徑圖直接標出出問題的那一段，並只給一個修復動作。每個檢查項目只說一件事，隱私說明放在最後。</p>
+</section>
+<section class="screen" data-tpl="tpl-sp-queue" data-id="b1-side-queue" data-w="400" data-h="760">
+  <h2>(b1) 側欄 · 需確認佇列 · 400×760</h2>
+  <p>工具列單列 48px，需確認按鈕本身中性，只有計數徽章是緋紅色。分頁不重複顯示計數，每一列都可整列點選。</p>
+</section>
+<section class="screen" data-tpl="tpl-sp-access" data-id="b2-side-access-360" data-w="360" data-h="640">
+  <h2>(b2) 側欄 · 360px · 操作模式彈出視窗</h2>
+  <p>寬度低於 380px 時，工具列標籤收成圖示。彈出視窗以 position:fixed 對齊工具列，不會被裁切。選到全自主時，風險和適用範圍才會出現。</p>
+</section>
+<section class="screen" data-tpl="tpl-sp-cmd" data-id="c-side-approval-command" data-w="400" data-h="760">
+  <h2>(c) 側欄 · 命令核准 · 400×760</h2>
+  <p>風險條放在最前面且不能收合，上面的風險項目是事實說明，不是按鈕。ChatGPT 的理由標示為未經驗證；argv 的每個元素都用等寬字型分開顯示。</p>
+</section>
+<section class="screen" data-tpl="tpl-sp-files" data-id="d-side-approval-files" data-w="400" data-h="760">
+  <h2>(d) 側欄 · 檔案變更核准 · 400×760</h2>
+  <p>每個檔案一個區塊，並列新舊行號，預設自動換行。核准中的路徑一律換行顯示，不截斷。</p>
+</section>
+<section class="screen" data-tpl="tpl-wb-400" data-id="e1-workbench-400" data-w="400" data-h="760">
+  <h2>(e1) 工作台動態 · 側欄內 400px</h2>
+  <p>每列兩行，種類圖示一律中性，狀態只用標記表示；需確認是緋紅，失敗是朱紅。失敗和結果待確認會直接寫出原因。新動態提示在列表中佔位，不會蓋住第一列。</p>
+</section>
+<section class="screen" data-tpl="tpl-wb-1280" data-id="e2-workbench-1280" data-w="1280" data-h="800">
+  <h2>(e2) 工作台 · 1280 · 命令檢視</h2>
+  <p>工作目錄以相對路徑顯示（專案根目錄）。小工具內不出現絕對路徑。輸出可以只看 stderr。</p>
+</section>
+<section class="screen" data-tpl="tpl-wb-search" data-id="e3-workbench-search-400" data-w="400" data-h="760">
+  <h2>(e3) 工作台 · 搜尋結果 · 400px</h2>
+  <p>依檔案分組，片段以符合處為中心並標示，符合文字不會被省略號截掉。</p>
+</section>
+<section class="screen" data-tpl="tpl-wb-files" data-id="e4-workbench-files-400" data-w="400" data-h="760">
+  <h2>(e4) 工作台 · 檔案瀏覽 · 400px</h2>
+  <p>麵包屑只顯示路徑，專案名稱只出現在切換器。</p>
+</section>
+<section class="screen" data-tpl="tpl-sp-mcp" data-id="f-side-settings-mcp" data-w="400" data-h="760">
+  <h2>(f) 側欄 · MCP 整合 · 400×760</h2>
+  <p>工具列為全自主狀態。需要登入的伺服器不顯示開關，並先說明登入後會開啟哪些工具；啟動失敗時寫出原因並提供重試。</p>
+</section>
+<section class="screen" data-tpl="tpl-mcp-result" data-id="g-mcp-result-card" data-w="400" data-h="auto">
+  <h2>(g) ChatGPT 內的 MCP 結果卡 · 400px</h2>
+  <p>使用中文眉標，圖片按原始比例顯示，長文字可展開並提供複製；呼叫內容與結構化結果收在摺疊區塊裡。</p>
+</section>
+<section class="screen" data-tpl="tpl-sheet" data-id="z-components" data-w="1080" data-h="auto">
+  <h2>元件與色彩角色</h2>
+  <p>components.css 中的共用元件。</p>
+</section>
+
+<!-- ===================== (a1) Desktop ready ===================== -->
+<template id="tpl-desk-ready">
+<div class="desk">
+  <aside class="desk-side">
+    <div class="desk-brand"><svg class="k-logo"><use href="#k-mark"/></svg>Kairomes</div>
+    <nav class="desk-nav" aria-label="主要">
+      <a href="#" aria-current="page"><svg class="k-icon"><use href="#ph-house-fill"/></svg>總覽</a>
+      <a href="#"><svg class="k-icon"><use href="#ph-folder"/></svg>專案<span class="nav-count">3</span></a>
+      <a href="#"><svg class="k-icon"><use href="#ph-plug"/></svg>連線設定</a>
+      <a href="#"><svg class="k-icon"><use href="#ph-lifebuoy"/></svg>疑難排解</a>
+    </nav>
+    <div class="desk-foot">
+      <button class="status-chip" type="button"><span class="k-dot" data-tone="success"></span>已連上 ChatGPT<svg class="k-icon" data-size="sm"><use href="#ph-caret-right"/></svg></button>
+      <div class="desk-ver">Kairomes 0.2.0</div>
+    </div>
+  </aside>
+  <main class="desk-main">
+    <div class="desk-body">
+      <h1 class="k-page-title">總覽</h1>
+      <div class="k-statusline">
+        <span class="k-kind" data-tone="success"><svg class="k-icon" data-size="lg"><use href="#ph-check-circle"/></svg></span>
+        <div class="k-statusline__text">
+          <div class="k-statusline__title">本機服務與安全通道運作正常</div>
+          <div class="k-statusline__meta">已運作 3 小時 · 10 秒前檢查</div>
+        </div>
+        <button class="k-btn k-btn--primary" type="button">開啟工作台<svg class="k-icon"><use href="#ph-arrow-up-right"/></svg></button>
+      </div>
+      <section>
+        <div class="section-head"><h2 class="k-section-title">需注意</h2></div>
+        <div class="attn-grid">
+          <article class="k-card attn" data-tone="brand">
+            <div class="attn__label"><span class="k-kind" data-tone="brand"><svg class="k-icon"><use href="#ph-inbox"/></svg></span>需確認</div>
+            <div class="attn__value" data-tone="brand">2 件<span class="k-countdown"><svg class="k-icon"><use href="#ph-timer"/></svg>最快 剩 4:12</span></div>
+            <ul class="attn__list">
+              <li><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg>1 個命令<span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span></li>
+              <li><svg class="k-icon" data-size="sm"><use href="#ph-pencil"/></svg>1 個檔案變更<span class="k-tag" style="--ws:var(--k-ws-2)">docs-site</span></li>
+            </ul>
+            <div class="attn__foot k-meta"><svg class="k-icon" data-size="sm"><use href="#ph-sidebar"/></svg>請在瀏覽器側欄審核</div>
+          </article>
+          <article class="k-card attn" data-tone="warning">
+            <div class="attn__label"><span class="k-kind" data-tone="warning"><svg class="k-icon"><use href="#ph-lightning"/></svg></span>全自主 · docs-site</div>
+            <div class="attn__value" data-tone="warning">剩 12 分</div>
+            <div class="attn__facts"><span><svg class="k-icon" data-size="sm"><use href="#ph-desktop"/></svg>主機權限</span><span><svg class="k-icon" data-size="sm"><use href="#ph-globe"/></svg>可連網</span></div>
+            <div class="attn__text">到期後改回逐步確認。</div>
+            <div class="attn__foot k-meta"><svg class="k-icon" data-size="sm"><use href="#ph-sidebar"/></svg>要提早收回，請到瀏覽器側欄</div>
+          </article>
+          <article class="k-card attn">
+            <div class="attn__label"><span class="k-kind"><svg class="k-icon"><use href="#ph-chat"/></svg></span>最近 ChatGPT 呼叫</div>
+            <div class="attn__value">2 分鐘前</div>
+            <div class="attn__text">讀取 <span class="k-mono">src/main.ts</span> · Kairomes</div>
+            <div class="attn__foot k-meta">今天 48 次</div>
+          </article>
+        </div>
+      </section>
+      <section>
+        <div class="section-head"><h2 class="k-section-title">專案</h2><button class="k-btn k-btn--secondary k-btn--sm" type="button"><svg class="k-icon" data-size="sm"><use href="#ph-plus"/></svg>新增專案</button></div>
+        <div class="proj-grid">
+          <article class="k-card proj">
+            <div class="proj__head"><span class="k-avatar k-avatar--lg" style="--ws:var(--k-ws-1)">K</span><div class="proj__id"><div class="proj__name">Kairomes</div><div class="proj__path">D:\code\kairomes</div></div></div>
+            <div class="proj__pills"><span class="k-pill"><svg class="k-icon"><use href="#ph-shield-check"/></svg>逐步確認</span><span class="proj__caps">讀寫・命令・終端機</span></div>
+            <div class="proj__foot">2 分鐘前使用<span class="need"><span class="k-badge">1</span>需確認</span></div>
+          </article>
+          <article class="k-card proj">
+            <div class="proj__head"><span class="k-avatar k-avatar--lg" style="--ws:var(--k-ws-2)">D</span><div class="proj__id"><div class="proj__name">docs-site</div><div class="proj__path">D:\code\docs-site</div></div></div>
+            <div class="proj__pills"><span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-lightning"/></svg>全自主</span><span class="proj__caps">讀寫・命令</span></div>
+            <div class="proj__foot">8 分鐘前使用<span class="need"><span class="k-badge">1</span>需確認</span></div>
+          </article>
+          <article class="k-card proj">
+            <div class="proj__head"><span class="k-avatar k-avatar--lg" style="--ws:var(--k-ws-3)">筆</span><div class="proj__id"><div class="proj__name">個人筆記</div><div class="proj__path">C:\Users\mei\Documents\Notes</div></div></div>
+            <div class="proj__pills"><span class="k-pill"><svg class="k-icon"><use href="#ph-eye"/></svg>唯讀</span><span class="proj__caps">讀取・搜尋</span></div>
+            <div class="proj__foot">昨天使用</div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+</template>
+
+<!-- ===================== (a2) Desktop setup ===================== -->
+<template id="tpl-desk-setup">
+<div class="desk">
+  <aside class="desk-side">
+    <div class="desk-brand"><svg class="k-logo"><use href="#k-mark"/></svg>Kairomes</div>
+    <nav class="desk-nav" aria-label="主要">
+      <a href="#" aria-current="page"><svg class="k-icon"><use href="#ph-house-fill"/></svg>總覽</a>
+      <a href="#"><svg class="k-icon"><use href="#ph-folder"/></svg>專案<span class="nav-count">1</span></a>
+      <a href="#"><svg class="k-icon"><use href="#ph-plug"/></svg>連線設定</a>
+      <a href="#"><svg class="k-icon"><use href="#ph-lifebuoy"/></svg>疑難排解</a>
+    </nav>
+    <div class="desk-foot">
+      <button class="status-chip" type="button"><span class="k-dot"></span>尚未連上 ChatGPT<svg class="k-icon" data-size="sm"><use href="#ph-caret-right"/></svg></button>
+      <div class="desk-ver">Kairomes 0.2.0</div>
+    </div>
+  </aside>
+  <main class="desk-main">
+    <div class="desk-body">
+      <h1 class="k-page-title">總覽</h1>
+      <div class="k-statusline">
+        <span class="k-kind"><svg class="k-icon" data-size="lg"><use href="#ph-list-checks"/></svg></span>
+        <div class="k-statusline__text">
+          <div class="k-statusline__title">還差 3 步，就能讓 ChatGPT 讀取你的專案</div>
+          <div class="k-statusline__meta">完成的步驟會自動打勾</div>
+        </div>
+        <div class="statusline__progress"><span class="k-num">3／6</span><div class="k-progress" role="progressbar" aria-valuenow="3" aria-valuemin="0" aria-valuemax="6" aria-label="設定進度"><span style="width:50%"></span></div></div>
+      </div>
+      <ol class="k-card k-steps">
+        <li class="k-step" data-state="done"><span class="k-step__mark"><svg class="k-icon" data-size="sm"><use href="#ph-check"/></svg></span><div class="k-step__title">加入專案</div><div class="k-step__meta">已加入 Kairomes</div></li>
+        <li class="k-step" data-state="done"><span class="k-step__mark"><svg class="k-icon" data-size="sm"><use href="#ph-check"/></svg></span><div class="k-step__title">安裝 tunnel-client</div><div class="k-step__meta">版本 1.4.2</div></li>
+        <li class="k-step" data-state="done"><span class="k-step__mark"><svg class="k-icon" data-size="sm"><use href="#ph-check"/></svg></span><div class="k-step__title">建立 Tunnel profile</div><div class="k-step__meta">kairomes-default</div></li>
+        <li class="k-step" data-state="current" aria-current="step">
+          <span class="k-step__mark">4</span>
+          <div>
+            <div class="k-step__title">設定 Runtime API Key</div>
+            <p class="k-step__desc">安全通道用這把金鑰向 ChatGPT 證明身分。金鑰交給 Windows 認證管理員保管，之後不會再顯示。</p>
+            <div class="k-step__actions">
+              <button class="k-btn k-btn--primary" type="button"><svg class="k-icon"><use href="#ph-key"/></svg>設定金鑰</button>
+              <button class="k-btn k-btn--quiet" type="button">金鑰從哪裡取得？</button>
+            </div>
+          </div>
+          <div></div>
+        </li>
+        <li class="k-step" data-state="todo"><span class="k-step__mark">5</span><div class="k-step__title">配對側欄</div><div class="k-step__meta">在 Chrome 或 Edge 側欄開啟配對連結</div></li>
+        <li class="k-step" data-state="todo"><span class="k-step__mark">6</span><div class="k-step__title">在 ChatGPT 驗證</div><div class="k-step__meta">請 ChatGPT 列出你的專案</div></li>
+      </ol>
+    </div>
+  </main>
+</div>
+</template>
+
+<!-- ===================== (a3) Desktop diagnostics, error ===================== -->
+<template id="tpl-desk-diag">
+<div class="desk">
+  <aside class="desk-side">
+    <div class="desk-brand"><svg class="k-logo"><use href="#k-mark"/></svg>Kairomes</div>
+    <nav class="desk-nav" aria-label="主要">
+      <a href="#"><svg class="k-icon"><use href="#ph-house"/></svg>總覽</a>
+      <a href="#"><svg class="k-icon"><use href="#ph-folder"/></svg>專案<span class="nav-count">3</span></a>
+      <a href="#"><svg class="k-icon"><use href="#ph-plug"/></svg>連線設定</a>
+      <a href="#" aria-current="page"><svg class="k-icon"><use href="#ph-lifebuoy-fill"/></svg>疑難排解</a>
+    </nav>
+    <div class="desk-foot">
+      <button class="status-chip" type="button" data-tone="danger"><svg class="k-icon"><use href="#ph-warning-circle"/></svg>安全通道中斷<svg class="k-icon" data-size="sm"><use href="#ph-caret-right"/></svg></button>
+      <div class="desk-ver">Kairomes 0.2.0</div>
+    </div>
+  </aside>
+  <main class="desk-main">
+    <div class="desk-body">
+      <h1 class="k-page-title">疑難排解</h1>
+      <div class="k-statusline" data-tone="danger" role="alert">
+        <ol class="k-pathway" aria-label="連線路徑">
+          <li class="k-pathway__node"><span class="k-pathway__icon"><svg class="k-icon" data-size="lg"><use href="#ph-desktop"/></svg><span class="k-dot" data-tone="success"></span></span>本機</li>
+          <li class="k-pathway__link" aria-hidden="true"></li>
+          <li class="k-pathway__node" data-state="fail"><span class="k-pathway__icon"><svg class="k-icon" data-size="lg"><use href="#ph-lock"/></svg><span class="k-dot" data-tone="danger"></span></span>安全通道</li>
+          <li class="k-pathway__link" data-state="broken" aria-hidden="true"></li>
+          <li class="k-pathway__node" data-state="off"><span class="k-pathway__icon"><svg class="k-icon" data-size="lg"><use href="#ph-chat"/></svg><span class="k-dot"></span></span>ChatGPT</li>
+        </ol>
+        <div class="k-statusline__text" style="margin-left:12px">
+          <div class="k-statusline__title">ChatGPT 拒絕了 Runtime API Key</div>
+          <div class="k-statusline__meta">更新後會自動重新連線。</div>
+        </div>
+        <button class="k-btn k-btn--primary" type="button"><svg class="k-icon"><use href="#ph-key"/></svg>更新金鑰</button>
+      </div>
+      <section>
+        <div class="section-head"><h2 class="k-section-title">檢查項目</h2><span class="k-meta" style="margin-left:auto">5 秒前檢查</span></div>
+        <div class="k-card">
+          <div class="health"><span class="k-kind"><svg class="k-icon"><use href="#ph-desktop"/></svg></span><span class="health__name">本機服務</span><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>正常</span><span class="health__detail">已運作 3 小時</span><button class="k-btn k-btn--quiet k-btn--sm" type="button">重新啟動…</button></div>
+          <div class="health"><span class="k-kind"><svg class="k-icon"><use href="#ph-download"/></svg></span><span class="health__name">tunnel-client</span><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>正常</span><span class="health__detail">版本 1.4.2</span><span></span></div>
+          <div class="health" data-state="fail"><span class="k-kind" data-tone="danger"><svg class="k-icon"><use href="#ph-key"/></svg></span><span class="health__name">Runtime API Key</span><span class="k-pill" data-tone="danger"><svg class="k-icon"><use href="#ph-x-circle"/></svg>被拒絕</span><span class="health__detail">1 分鐘前驗證（HTTP 401）</span><span></span></div>
+          <div class="health"><span class="k-kind"><svg class="k-icon"><use href="#ph-lock"/></svg></span><span class="health__name">安全通道</span><span class="k-pill"><svg class="k-icon"><use href="#ph-pause"/></svg>等待金鑰</span><span class="health__detail">金鑰更新後自動重試</span><button class="k-btn k-btn--quiet k-btn--sm" type="button">停止</button></div>
+          <div class="health"><span class="k-kind"><svg class="k-icon"><use href="#ph-sidebar"/></svg></span><span class="health__name">瀏覽器側欄</span><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>正常</span><span class="health__detail">已配對 Chrome</span><span></span></div>
+        </div>
+      </section>
+      <div class="privacy"><svg class="k-icon" data-size="lg"><use href="#ph-shield-check"/></svg><span>診斷摘要只含狀態代碼與版本，不含金鑰、路徑或專案內容。</span><button class="k-btn k-btn--secondary k-btn--sm" type="button"><svg class="k-icon" data-size="sm"><use href="#ph-copy"/></svg>複製診斷摘要</button></div>
+    </div>
+  </main>
+</div>
+</template>
+
+<!-- ===================== (b1) Side panel queue ===================== -->
+<template id="tpl-sp-queue">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button" aria-haspopup="listbox"><svg class="k-icon"><use href="#ph-stack"/></svg><span class="k-switcher__label">全部專案</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button" aria-haspopup="dialog"><svg class="k-icon"><use href="#ph-shield-check"/></svg><span class="k-collapse-label">逐步確認</span></button>
+    <button class="k-need" type="button" aria-pressed="true"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span><span class="k-badge">3</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear"/></svg></button>
+  </header>
+  <div class="sp-sub">
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="返回工作台"><svg class="k-icon" data-size="lg"><use href="#ph-arrow-left"/></svg></button>
+    <nav class="k-tabs" role="tablist" aria-label="請求">
+      <button class="k-tab" role="tab" aria-selected="true" type="button">需確認</button>
+      <button class="k-tab" role="tab" aria-selected="false" type="button">執行中<span class="k-badge" data-tone="running">1</span></button>
+      <button class="k-tab" role="tab" aria-selected="false" type="button">最近</button>
+    </nav>
+  </div>
+  <div class="sp-scroll">
+    <ul class="k-list k-card" aria-label="需確認，依到期時間排序">
+      <li><button class="k-row k-row--q" type="button">
+        <span class="k-kind k-row__lead"><svg class="k-icon" data-size="lg"><use href="#ph-terminal"/></svg></span>
+        <span class="k-row__title">開啟終端機</span>
+        <span class="k-row__trail"><span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-desktop"/></svg>主機權限</span></span>
+        <span class="k-row__preview">pwsh -NoLogo</span>
+        <span class="k-row__meta"><span class="k-tag" style="--ws:var(--k-ws-2)">docs-site</span><span class="k-sep">·</span><span class="k-countdown" data-urgency="soon"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 0:48</span></span>
+      </button></li>
+      <li><button class="k-row k-row--q" type="button">
+        <span class="k-kind k-row__lead"><svg class="k-icon" data-size="lg"><use href="#ph-command"/></svg></span>
+        <span class="k-row__title">執行命令</span>
+        <span class="k-row__trail"><span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-desktop"/></svg>主機權限</span></span>
+        <span class="k-row__preview">bun run check</span>
+        <span class="k-row__meta"><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span><span class="k-countdown"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 4:12</span></span>
+      </button></li>
+      <li><button class="k-row k-row--q" type="button">
+        <span class="k-kind k-row__lead"><svg class="k-icon" data-size="lg"><use href="#ph-pencil"/></svg></span>
+        <span class="k-row__title">修改 2 個檔案</span>
+        <span class="k-row__trail"><span class="k-pill"><svg class="k-icon"><use href="#ph-folder"/></svg>工作區內</span></span>
+        <span class="k-row__preview">src/main.ts、tests/main.test.ts</span>
+        <span class="k-row__meta"><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span><span class="k-countdown"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 9:40</span><span class="k-sep">·</span><span class="k-diff__stat"><span class="k-diff__plus">+7</span><span class="k-diff__minus">−1</span></span></span>
+      </button></li>
+    </ul>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (b2) 360 + access popover ===================== -->
+<template id="tpl-sp-access">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button"><svg class="k-icon"><use href="#ph-stack"/></svg><span class="k-switcher__label">Kairomes</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button" aria-expanded="true" aria-haspopup="dialog" aria-label="操作模式：逐步確認"><svg class="k-icon"><use href="#ph-shield-check"/></svg><span class="k-collapse-label">逐步確認</span></button>
+    <button class="k-need" type="button" aria-pressed="false" aria-label="需確認 3 件"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span><span class="k-badge">3</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear"/></svg></button>
+  </header>
+  <div class="wb" aria-hidden="true">
+    <div class="wb-bar"><span class="k-toolbar__title">動態</span></div>
+    <div class="wb-list">
+      <ul class="k-list k-card">
+        <li><div class="k-row"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span><span class="k-row__title">執行 <span class="k-mono">bun test</span></span><span class="k-row__trail"><span class="k-pill" data-tone="running"><svg class="k-icon k-spin"><use href="#ph-spinner"/></svg>執行中</span></span><span class="k-row__meta">30 秒前</span></div></li>
+        <li><div class="k-row"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-file"/></svg></span><span class="k-row__title">讀取 <span class="k-mono">src/main.ts</span></span><span class="k-row__trail"><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>已完成</span></span><span class="k-row__meta">2 分鐘前</span></div></li>
+      </ul>
+    </div>
+  </div>
+  <div class="k-popover" role="dialog" aria-label="操作模式" style="top:52px">
+    <div class="k-popover__title">操作模式 · Kairomes</div>
+    <div role="radiogroup" aria-label="操作模式">
+      <button class="k-option" role="radio" aria-checked="false" type="button"><svg class="k-icon" data-size="lg"><use href="#ph-shield-check"/></svg><span class="k-option__title">逐步確認</span><span></span><span class="k-option__desc">檔案變更、命令與終端機都先問你。</span></button>
+      <button class="k-option" role="radio" aria-checked="false" type="button"><svg class="k-icon" data-size="lg"><use href="#ph-pencil"/></svg><span class="k-option__title">檔案自主</span><span></span><span class="k-option__desc">工作區內的檔案變更直接套用；命令仍要核准。</span></button>
+      <button class="k-option" role="radio" aria-checked="true" type="button"><svg class="k-icon" data-size="lg" style="color:var(--k-warning)"><use href="#ph-lightning-fill"/></svg><span class="k-option__title">全自主</span><svg class="k-icon" style="color:var(--k-ink-1)"><use href="#ph-check"/></svg><span class="k-option__desc">命令與終端機直接執行，不再逐一詢問。</span><span class="k-option__risk"><span><svg class="k-icon" data-size="sm"><use href="#ph-desktop"/></svg> 主機權限</span><span><svg class="k-icon" data-size="sm"><use href="#ph-out"/></svg> 可操作工作區外</span><span><svg class="k-icon" data-size="sm"><use href="#ph-globe"/></svg> 可連網</span></span></button>
+    </div>
+    <div class="mode-dur">
+      <span class="k-label" id="dur-l">期限</span>
+      <div class="k-chips" role="radiogroup" aria-labelledby="dur-l">
+        <button class="k-chip" type="button" aria-pressed="false">15 分鐘</button>
+        <button class="k-chip" type="button" aria-pressed="true">1 小時</button>
+        <button class="k-chip" type="button" aria-pressed="false">4 小時</button>
+        <button class="k-chip" type="button" aria-pressed="false">直到收回</button>
+      </div>
+    </div>
+    <div class="scope-note">適用所有 ChatGPT 聊天，不只目前這一個。</div>
+    <div class="k-popover__foot">
+      <button class="k-btn k-btn--secondary" type="button">取消</button>
+      <button class="k-btn k-btn--primary" type="button">啟用全自主 1 小時</button>
+    </div>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (c) Command approval ===================== -->
+<template id="tpl-sp-cmd">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button"><svg class="k-icon"><use href="#ph-stack"/></svg><span class="k-switcher__label">全部專案</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button"><svg class="k-icon"><use href="#ph-shield-check"/></svg><span class="k-collapse-label">逐步確認</span></button>
+    <button class="k-need" type="button" aria-pressed="true"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span><span class="k-badge">3</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear"/></svg></button>
+  </header>
+  <div class="sp-sub">
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="返回需確認列表"><svg class="k-icon" data-size="lg"><use href="#ph-arrow-left"/></svg></button>
+    <span class="sp-sub__title">執行命令</span><span class="sp-sub__pos">2／3</span>
+    <span class="k-countdown k-countdown--pill" aria-label="剩 4 分 12 秒到期"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 4:12</span>
+  </div>
+  <div class="sp-scroll sp-scroll--pad">
+    <div class="k-risk" role="note">
+      <div class="k-risk__title"><svg class="k-icon"><use href="#ph-shield-warning-fill"/></svg>主機權限</div>
+      <div class="k-risk__text">以你的 Windows 帳號執行，沒有隔離。</div>
+      <ul class="k-risk__facts">
+        <li class="k-risk__fact"><svg class="k-icon"><use href="#ph-out"/></svg>可操作工作區外</li>
+        <li class="k-risk__fact"><svg class="k-icon"><use href="#ph-globe"/></svg>可連網</li>
+      </ul>
+    </div>
+    <figure class="k-quote">
+      <figcaption class="k-quote__label">ChatGPT 的說明（未經驗證）</figcaption>
+      <blockquote class="k-quote__text">執行型別檢查與測試，確認剛才的修改沒有破壞建置。</blockquote>
+    </figure>
+    <dl class="k-dl">
+      <div><dt>執行檔</dt><dd class="k-codebox">C:\Users\mei\.bun\bin\bun.exe</dd></div>
+      <div><dt>參數（3 個）</dt><dd><ol class="k-argv">
+        <li class="k-argv__item"><span class="k-argv__idx">0</span><span class="k-argv__val">bun</span></li>
+        <li class="k-argv__item"><span class="k-argv__idx">1</span><span class="k-argv__val">run</span></li>
+        <li class="k-argv__item"><span class="k-argv__idx">2</span><span class="k-argv__val">check</span></li>
+      </ol></dd></div>
+      <div><dt>工作目錄</dt><dd class="k-codebox">D:\code\kairomes</dd><div class="k-dl__note">Kairomes 專案根目錄</div></div>
+      <div><dt>時限</dt><dd>只允許這一次，最多 120 秒</dd></div>
+    </dl>
+    <div class="req-meta"><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>請求 <span class="k-mono">00000002</span><span class="k-sep">·</span>下午 6:39 提出</div>
+  </div>
+  <div class="k-actionbar">
+    <div class="k-actionbar__row">
+      <button class="k-btn k-btn--primary k-btn--lg" type="button"><svg class="k-icon"><use href="#ph-check"/></svg>允許這次</button>
+      <button class="k-btn k-btn--secondary k-btn--lg" type="button">拒絕</button>
+    </div>
+    <button class="k-btn k-btn--quiet k-btn--sm" type="button">拒絕並說明原因…</button>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (d) File change approval ===================== -->
+<template id="tpl-sp-files">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button"><svg class="k-icon"><use href="#ph-stack"/></svg><span class="k-switcher__label">全部專案</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button"><svg class="k-icon"><use href="#ph-shield-check"/></svg><span class="k-collapse-label">逐步確認</span></button>
+    <button class="k-need" type="button" aria-pressed="true"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span><span class="k-badge">3</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear"/></svg></button>
+  </header>
+  <div class="sp-sub">
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="返回需確認列表"><svg class="k-icon" data-size="lg"><use href="#ph-arrow-left"/></svg></button>
+    <span class="sp-sub__title">修改 2 個檔案</span><span class="sp-sub__pos">3／3</span>
+    <span class="k-countdown k-countdown--pill"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 9:40</span>
+  </div>
+  <div class="sp-scroll sp-scroll--pad" style="gap:14px">
+    <div class="k-risk" data-tone="neutral" role="note">
+      <div class="k-risk__title"><svg class="k-icon"><use href="#ph-shield-check"/></svg>只寫入 Kairomes 工作區</div>
+      <div class="k-risk__text">套用前核對檔案版本；檔案已變動就停止，不會覆寫。</div>
+    </div>
+    <figure class="k-quote">
+      <figcaption class="k-quote__label">ChatGPT 的說明（未經驗證）</figcaption>
+      <blockquote class="k-quote__text">把歡迎訊息改成「Kairomes 已就緒」並補上測試。</blockquote>
+    </figure>
+    <div class="diff-bar">
+      <span class="diff-bar__title">2 個檔案</span>
+      <span class="k-diff__stat"><span class="k-diff__plus">+7</span><span class="k-diff__minus">−1</span></span>
+      <button class="k-btn k-btn--quiet k-btn--sm" type="button" aria-pressed="true"><svg class="k-icon"><use href="#ph-wrap"/></svg>自動換行</button>
+    </div>
+    <section class="k-diff" aria-label="src/main.ts">
+      <div class="k-diff__head">
+        <span class="k-diff__path"><span class="k-diff__dir">src/</span><span class="k-diff__file">main.ts</span></span>
+        <span class="k-pill">修改</span>
+        <span class="k-diff__stat"><span class="k-diff__plus">+1</span><span class="k-diff__minus">−1</span></span>
+      </div>
+      <div class="k-diff__body">
+        <div class="k-diff__line" data-kind="hunk"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln"></span><span class="k-diff__sign"></span><span class="k-diff__code">第 10–13 行</span></div>
+        <div class="k-diff__line"><span class="k-diff__ln k-diff__ln--old">10</span><span class="k-diff__ln">10</span><span class="k-diff__sign"></span><span class="k-diff__code">import { render } from "./render";</span></div>
+        <div class="k-diff__line" data-kind="del"><span class="k-diff__ln k-diff__ln--old">11</span><span class="k-diff__ln"></span><span class="k-diff__sign">−</span><span class="k-diff__code">export const message = "Kairomes";</span></div>
+        <div class="k-diff__line" data-kind="add"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln">11</span><span class="k-diff__sign">+</span><span class="k-diff__code">export const message = "Kairomes 已就緒";</span></div>
+        <div class="k-diff__line"><span class="k-diff__ln k-diff__ln--old">12</span><span class="k-diff__ln">12</span><span class="k-diff__sign"></span><span class="k-diff__code">render(message);</span></div>
+      </div>
+    </section>
+    <section class="k-diff" aria-label="tests/main.test.ts">
+      <div class="k-diff__head">
+        <span class="k-diff__path"><span class="k-diff__dir">tests/</span><span class="k-diff__file">main.test.ts</span></span>
+        <span class="k-pill">新檔案</span>
+        <span class="k-diff__stat"><span class="k-diff__plus">+6</span></span>
+      </div>
+      <div class="k-diff__body">
+        <div class="k-diff__line" data-kind="add"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln">1</span><span class="k-diff__sign">+</span><span class="k-diff__code">import { expect, test } from "bun:test";</span></div>
+        <div class="k-diff__line" data-kind="add"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln">2</span><span class="k-diff__sign">+</span><span class="k-diff__code">import { message } from "../src/main";</span></div>
+        <div class="k-diff__line" data-kind="add"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln">3</span><span class="k-diff__sign">+</span><span class="k-diff__code"></span></div>
+        <div class="k-diff__line" data-kind="add"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln">4</span><span class="k-diff__sign">+</span><span class="k-diff__code">test("歡迎訊息包含產品名稱", () =&gt; {</span></div>
+        <div class="k-diff__line" data-kind="add"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln">5</span><span class="k-diff__sign">+</span><span class="k-diff__code">  expect(message).toContain("Kairomes");</span></div>
+        <div class="k-diff__line" data-kind="add"><span class="k-diff__ln k-diff__ln--old"></span><span class="k-diff__ln">6</span><span class="k-diff__sign">+</span><span class="k-diff__code">});</span></div>
+      </div>
+    </section>
+  </div>
+  <div class="k-actionbar">
+    <div class="k-actionbar__row">
+      <button class="k-btn k-btn--primary k-btn--lg" type="button"><svg class="k-icon"><use href="#ph-check"/></svg>套用這批</button>
+      <button class="k-btn k-btn--secondary k-btn--lg" type="button">拒絕</button>
+    </div>
+    <button class="k-btn k-btn--quiet k-btn--sm" type="button">拒絕並說明原因…</button>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (e1) Workbench 400 ===================== -->
+<template id="tpl-wb-400">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button"><svg class="k-icon"><use href="#ph-stack"/></svg><span class="k-switcher__label">全部專案</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button"><svg class="k-icon"><use href="#ph-shield-check"/></svg><span class="k-collapse-label">逐步確認</span></button>
+    <button class="k-need" type="button" aria-pressed="false"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span><span class="k-badge">2</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear"/></svg></button>
+  </header>
+  <div class="wb">
+    <div class="wb-bar">
+      <h1 class="k-toolbar__title" style="margin:0">動態</h1>
+      <span class="k-live" data-state="paused" role="status"><svg class="k-icon" data-size="sm"><use href="#ph-pause"/></svg>已暫停跟隨</span>
+      <span class="k-toolbar__spacer"></span>
+      <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="搜尋專案內容"><svg class="k-icon" data-size="lg"><use href="#ph-search"/></svg></button>
+      <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="檔案"><svg class="k-icon" data-size="lg"><use href="#ph-folder"/></svg></button>
+    </div>
+    <div class="wb-chips k-chips" role="group" aria-label="篩選">
+      <button class="k-chip" aria-pressed="true" type="button">全部</button>
+      <button class="k-chip" aria-pressed="false" type="button">變更</button>
+      <button class="k-chip" aria-pressed="false" type="button">命令</button>
+      <button class="k-chip" aria-pressed="false" data-tone="danger" type="button">失敗<span class="k-chip__count">1</span></button>
+    </div>
+    <div class="wb-list">
+      <button class="k-newpill" type="button"><svg class="k-icon"><use href="#ph-arrow-up"/></svg>有 3 則新動態 · 回到最新</button>
+      <div class="k-group-label">剛剛</div>
+      <ul class="k-list k-card">
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span>
+          <span class="k-row__title">執行 <span class="k-mono">bun test</span></span>
+          <span class="k-row__trail"><span class="k-pill" data-tone="running"><svg class="k-icon k-spin"><use href="#ph-spinner"/></svg>執行中</span></span>
+          <span class="k-row__meta">30 秒前<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span><span class="k-num">已執行 0:14</span></span>
+        </button></li>
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span>
+          <span class="k-row__title">執行 <span class="k-mono">bun run check</span></span>
+          <span class="k-row__trail"><span class="k-pill" data-tone="brand"><svg class="k-icon"><use href="#ph-inbox"/></svg>需確認</span></span>
+          <span class="k-row__meta">1 分鐘前<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span><span class="k-countdown"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 4:12</span></span>
+        </button></li>
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-pencil"/></svg></span>
+          <span class="k-row__title">修改 2 個檔案</span>
+          <span class="k-row__trail"><span class="k-pill" data-tone="brand"><svg class="k-icon"><use href="#ph-inbox"/></svg>需確認</span></span>
+          <span class="k-row__meta">1 分鐘前<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span><span class="k-countdown"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 9:40</span></span>
+        </button></li>
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-file"/></svg></span>
+          <span class="k-row__title">讀取 <span class="k-mono">src/main.ts</span></span>
+          <span class="k-row__trail"><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>已完成</span></span>
+          <span class="k-row__meta">2 分鐘前<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>148 行</span>
+        </button></li>
+      </ul>
+      <div class="k-group-label">今天</div>
+      <ul class="k-list k-card">
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span>
+          <span class="k-row__title">執行 <span class="k-mono">bun test</span></span>
+          <span class="k-row__trail"><span class="k-pill" data-tone="danger"><svg class="k-icon"><use href="#ph-x-circle"/></svg>失敗</span></span>
+          <span class="k-row__meta">下午 3:12<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>4.2 秒</span>
+          <span class="k-row__reason" data-tone="danger">結束碼 1 · 1 個測試未通過</span>
+        </button></li>
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-pencil"/></svg></span>
+          <span class="k-row__title">套用 3 個檔案</span>
+          <span class="k-row__trail"><span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-question"/></svg>結果待確認</span></span>
+          <span class="k-row__meta">下午 2:58<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-2)">docs-site</span></span>
+          <span class="k-row__reason" data-tone="warning">連線中斷，無法確認是否已寫入。</span>
+        </button></li>
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span>
+          <span class="k-row__title">執行 <span class="k-mono">bun run lint</span></span>
+          <span class="k-row__trail"><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>已完成</span></span>
+          <span class="k-row__meta">下午 2:41<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>1.8 秒</span>
+        </button></li>
+        <li><button class="k-row" type="button">
+          <span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span>
+          <span class="k-row__title">執行 <span class="k-mono">rm -rf dist</span></span>
+          <span class="k-row__trail"><span class="k-pill"><svg class="k-icon"><use href="#ph-prohibit"/></svg>已拒絕</span></span>
+          <span class="k-row__meta">下午 2:20<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-2)">docs-site</span></span>
+        </button></li>
+      </ul>
+    </div>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (e2) Workbench 1280 ===================== -->
+<template id="tpl-wb-1280">
+<div class="host">
+  <header class="host-top">
+    <svg class="k-logo"><use href="#k-mark"/></svg>
+    <button class="k-switcher" type="button" aria-haspopup="listbox"><svg class="k-icon"><use href="#ph-stack"/></svg>全部專案<svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <nav class="k-tabs" role="tablist" aria-label="工作台">
+      <button class="k-tab" role="tab" aria-selected="true" type="button">動態</button>
+      <button class="k-tab" role="tab" aria-selected="false" type="button">檔案</button>
+      <button class="k-tab" role="tab" aria-selected="false" type="button">變更</button>
+      <button class="k-tab" role="tab" aria-selected="false" type="button">命令</button>
+      <button class="k-tab" role="tab" aria-selected="false" type="button">終端機</button>
+    </nav>
+    <label class="k-field"><svg class="k-icon"><use href="#ph-search"/></svg><input class="k-input" placeholder="搜尋專案內容" aria-label="搜尋專案內容"><span class="k-kbd">/</span></label>
+  </header>
+  <div class="host-body">
+    <div class="host-tl wb">
+      <div class="wb-bar">
+        <div class="k-chips" role="group" aria-label="篩選">
+          <button class="k-chip" aria-pressed="true" type="button">全部</button>
+          <button class="k-chip" aria-pressed="false" type="button">變更</button>
+          <button class="k-chip" aria-pressed="false" type="button">命令</button>
+          <button class="k-chip" aria-pressed="false" data-tone="danger" type="button">失敗<span class="k-chip__count">1</span></button>
+        </div>
+        <span class="k-toolbar__spacer"></span>
+        <span class="k-live" data-state="live" role="status"><span class="k-dot" data-pulse></span>即時</span>
+      </div>
+      <div class="wb-list">
+        <div class="k-group-label">剛剛</div>
+        <ul class="k-list k-card">
+          <li><button class="k-row" type="button"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span><span class="k-row__title">執行 <span class="k-mono">bun test</span></span><span class="k-row__trail"><span class="k-pill" data-tone="running"><svg class="k-icon k-spin"><use href="#ph-spinner"/></svg>執行中</span></span><span class="k-row__meta">30 秒前<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>已執行 0:14</span></button></li>
+          <li><button class="k-row" type="button"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span><span class="k-row__title">執行 <span class="k-mono">bun run check</span></span><span class="k-row__trail"><span class="k-pill" data-tone="brand"><svg class="k-icon"><use href="#ph-inbox"/></svg>需確認</span></span><span class="k-row__meta">1 分鐘前<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span><span class="k-countdown"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 4:12</span></span></button></li>
+          <li><button class="k-row" type="button"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-file"/></svg></span><span class="k-row__title">讀取 <span class="k-mono">src/main.ts</span></span><span class="k-row__trail"><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>已完成</span></span><span class="k-row__meta">2 分鐘前<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>148 行</span></button></li>
+        </ul>
+        <div class="k-group-label">今天</div>
+        <ul class="k-list k-card">
+          <li><button class="k-row" type="button" aria-current="true"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span><span class="k-row__title">執行 <span class="k-mono">bun test</span></span><span class="k-row__trail"><span class="k-pill" data-tone="danger"><svg class="k-icon"><use href="#ph-x-circle"/></svg>失敗</span></span><span class="k-row__meta">下午 3:12<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>4.2 秒</span><span class="k-row__reason" data-tone="danger">結束碼 1 · 1 個測試未通過</span></button></li>
+          <li><button class="k-row" type="button"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-pencil"/></svg></span><span class="k-row__title">套用 3 個檔案</span><span class="k-row__trail"><span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-question"/></svg>結果待確認</span></span><span class="k-row__meta">下午 2:58<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-2)">docs-site</span></span><span class="k-row__reason" data-tone="warning">連線中斷，無法確認是否已寫入。</span></button></li>
+          <li><button class="k-row" type="button"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-command"/></svg></span><span class="k-row__title">執行 <span class="k-mono">bun run lint</span></span><span class="k-row__trail"><span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>已完成</span></span><span class="k-row__meta">下午 2:41<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>1.8 秒</span></button></li>
+          <li><button class="k-row" type="button"><span class="k-kind k-kind--sm k-row__lead"><svg class="k-icon" data-size="sm"><use href="#ph-terminal"/></svg></span><span class="k-row__title">終端機 <span class="k-mono">pwsh</span></span><span class="k-row__trail"><span class="k-pill"><svg class="k-icon"><use href="#ph-minus-circle"/></svg>已結束</span></span><span class="k-row__meta">下午 1:05<span class="k-sep">·</span><span class="k-tag" style="--ws:var(--k-ws-2)">docs-site</span><span class="k-sep">·</span>用了 6 分鐘</span></button></li>
+        </ul>
+      </div>
+    </div>
+    <section class="insp" aria-label="檢視">
+      <div class="insp-head">
+        <span class="k-kind k-kind--lg"><svg class="k-icon" data-size="lg"><use href="#ph-command"/></svg></span>
+        <div class="insp-title">執行 <span class="k-mono">bun test</span><span class="k-pill" data-tone="danger"><svg class="k-icon"><use href="#ph-x-circle"/></svg>失敗</span></div>
+        <div class="insp-actions">
+          <button class="k-btn k-btn--secondary k-btn--sm" type="button"><svg class="k-icon" data-size="sm"><use href="#ph-copy"/></svg>複製輸出</button>
+          <button class="k-btn k-btn--quiet k-btn--icon k-btn--sm" type="button" aria-label="關閉檢視"><svg class="k-icon"><use href="#ph-x"/></svg></button>
+        </div>
+        <div class="insp-meta"><span class="k-tag" style="--ws:var(--k-ws-1)">Kairomes</span><span class="k-sep">·</span>今天 下午 3:12<span class="k-sep">·</span><svg class="k-icon" data-size="sm"><use href="#ph-user"/></svg>你在 3:11 允許這次</div>
+      </div>
+      <div class="insp-body">
+        <dl class="k-facts">
+          <div><dt>結束碼</dt><dd class="k-mono" data-tone="danger">1</dd></div>
+          <div><dt>耗時</dt><dd>4.2 秒</dd></div>
+          <div><dt>輸出</dt><dd>2.1 KB · 52 行</dd></div>
+        </dl>
+        <dl class="k-dl two">
+          <div><dt>指令</dt><dd class="k-codebox">bun test --filter render</dd></div>
+          <div><dt>工作目錄</dt><dd class="k-codebox" style="font-family:var(--k-font-sans)"><svg class="k-icon"><use href="#ph-house"/></svg> 專案根目錄</dd></div>
+        </dl>
+        <div class="k-output">
+          <div class="k-output__head">
+            <span class="k-output__title">輸出</span><span class="k-meta">最後 14 行</span>
+            <div class="k-seg" role="group" aria-label="輸出來源"><button type="button" aria-pressed="true">全部</button><button type="button" aria-pressed="false">只看 stderr</button></div>
+            <button class="k-btn k-btn--quiet k-btn--sm" type="button" aria-pressed="true"><svg class="k-icon" data-size="sm"><use href="#ph-wrap"/></svg>換行</button>
+            <button class="k-btn k-btn--quiet k-btn--sm" type="button">完整輸出</button>
+          </div>
+          <div class="k-output__body">
+            <div class="k-output__line"><span class="k-output__ln">39</span><span class="k-output__tx">tests/render.test.ts:</span></div>
+            <div class="k-output__line" data-kind="ok"><span class="k-output__ln">40</span><span class="k-output__tx">✓ 歡迎訊息包含產品名稱 [0.41ms]</span></div>
+            <div class="k-output__line" data-kind="fail"><span class="k-output__ln">41</span><span class="k-output__tx">✗ render 會輸出歡迎訊息 [1.02ms]</span></div>
+            <div class="k-output__line"><span class="k-output__ln">42</span><span class="k-output__tx"></span></div>
+            <div class="k-output__line" data-kind="err"><span class="k-output__ln">43</span><span class="k-output__tx">error: expect(received).toBe(expected)</span></div>
+            <div class="k-output__line"><span class="k-output__ln">44</span><span class="k-output__tx">Expected: "Kairomes 已就緒"</span></div>
+            <div class="k-output__line"><span class="k-output__ln">45</span><span class="k-output__tx">Received: "Kairomes"</span></div>
+            <div class="k-output__line"><span class="k-output__ln">46</span><span class="k-output__tx">      at tests/render.test.ts:9:18</span></div>
+            <div class="k-output__line"><span class="k-output__ln">47</span><span class="k-output__tx"></span></div>
+            <div class="k-output__line" data-kind="ok"><span class="k-output__ln">48</span><span class="k-output__tx"> 1 pass</span></div>
+            <div class="k-output__line" data-kind="err"><span class="k-output__ln">49</span><span class="k-output__tx"> 1 fail</span></div>
+            <div class="k-output__line"><span class="k-output__ln">50</span><span class="k-output__tx"> 2 expect() calls</span></div>
+            <div class="k-output__line"><span class="k-output__ln">51</span><span class="k-output__tx">Ran 2 tests across 1 files. [86.00ms]</span></div>
+            <div class="k-output__line"><span class="k-output__ln">52</span><span class="k-output__tx">exit code 1</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (e3) Search results 400 ===================== -->
+<template id="tpl-wb-search">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button"><svg class="k-icon"><use href="#ph-folder"/></svg><span class="k-switcher__label">Kairomes</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button"><svg class="k-icon"><use href="#ph-shield-check"/></svg><span class="k-collapse-label">逐步確認</span></button>
+    <button class="k-need" type="button" aria-pressed="false" data-count="0"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear"/></svg></button>
+  </header>
+  <div class="wb">
+    <div class="wb-bar" style="padding-left:6px">
+      <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="返回動態"><svg class="k-icon" data-size="lg"><use href="#ph-arrow-left"/></svg></button>
+      <h1 class="k-toolbar__title" style="margin:0">搜尋</h1>
+    </div>
+    <div style="padding:0 12px 10px; display:grid; gap:8px">
+      <label class="k-field"><svg class="k-icon"><use href="#ph-search"/></svg><input class="k-input" value="approval" aria-label="搜尋專案內容"><button class="k-btn k-btn--quiet k-btn--icon k-btn--sm" type="button" aria-label="清除" style="position:absolute;right:2px"><svg class="k-icon"><use href="#ph-x"/></svg></button></label>
+      <div class="srch-sum" role="status">23 筆 · 6 個檔案</div>
+    </div>
+    <div class="wb-list" style="gap:10px">
+      <section class="k-card">
+        <div class="hit-file"><svg class="k-icon"><use href="#ph-file-code"/></svg><span class="hit-file__name"><span class="k-mono">approval-panel.ts</span><span class="hit-file__dir">apps/extension/src</span></span><span class="k-badge" data-tone="neutral">8</span></div>
+        <button class="hit" type="button"><span class="hit__ln">16</span><span class="k-snippet">const titles: Record&lt;Kind, string&gt; = { // <mark>approval</mark> titles</span></button>
+        <button class="hit" type="button"><span class="hit__ln">175</span><span class="k-snippet">…risk.textContent = describeRisk(<mark>approval</mark>.scope);</span></button>
+        <button class="hit" type="button"><span class="hit__ln">321</span><span class="k-snippet">…label.append(<mark>approval</mark>Title(item), workspaceTag(item));</span></button>
+        <div class="hit-more"><button class="k-btn k-btn--quiet k-btn--sm" type="button">顯示其餘 5 筆<svg class="k-icon" data-size="sm"><use href="#ph-caret-down"/></svg></button></div>
+      </section>
+      <section class="k-card">
+        <div class="hit-file"><svg class="k-icon"><use href="#ph-file-code"/></svg><span class="hit-file__name"><span class="k-mono">approval-state.ts</span><span class="hit-file__dir">apps/extension/src</span></span><span class="k-badge" data-tone="neutral">3</span></div>
+        <button class="hit" type="button"><span class="hit__ln">42</span><span class="k-snippet">export function next<mark>Approval</mark>(queue: PendingApproval[]) {</span></button>
+        <button class="hit" type="button"><span class="hit__ln">88</span><span class="k-snippet">…if (!isTrusted) throw new Error("<mark>approval</mark> requires a user gesture");</span></button>
+      </section>
+    </div>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (e4) File browser 400 ===================== -->
+<template id="tpl-wb-files">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button"><svg class="k-icon"><use href="#ph-folder"/></svg><span class="k-switcher__label">Kairomes</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button"><svg class="k-icon"><use href="#ph-shield-check"/></svg><span class="k-collapse-label">逐步確認</span></button>
+    <button class="k-need" type="button" aria-pressed="false" data-count="0"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear"/></svg></button>
+  </header>
+  <div class="wb">
+    <div class="wb-bar" style="padding-left:6px">
+      <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="返回動態"><svg class="k-icon" data-size="lg"><use href="#ph-arrow-left"/></svg></button>
+      <h1 class="k-toolbar__title" style="margin:0">檔案</h1>
+      <span class="k-toolbar__spacer"></span>
+      <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="搜尋專案內容"><svg class="k-icon" data-size="lg"><use href="#ph-search"/></svg></button>
+    </div>
+    <nav class="crumb-bar" aria-label="路徑">
+      <ol class="k-crumbs">
+        <li><button type="button" aria-label="專案根目錄"><svg class="k-icon"><use href="#ph-house"/></svg></button></li>
+        <li><button type="button">apps</button></li>
+        <li><button type="button">extension</button></li>
+        <li><span aria-current="page">src</span></li>
+      </ol>
+    </nav>
+    <div class="wb-list">
+      <ul class="k-list k-card">
+        <li><button class="k-row fb-row" type="button"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-folder"/></svg><span class="k-row__title">icons</span><span class="k-row__trail">4 個項目</span></button></li>
+        <li><button class="k-row fb-row" type="button"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-file-code"/></svg><span class="k-row__title">access-panel.ts</span><span class="k-row__trail">12.4 KB</span></button></li>
+        <li><button class="k-row fb-row" type="button"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-file-code"/></svg><span class="k-row__title">active-work-panel.ts</span><span class="k-row__trail">6.1 KB</span></button></li>
+        <li><button class="k-row fb-row" type="button" aria-current="true"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-file-code"/></svg><span class="k-row__title">approval-panel.ts</span><span class="k-row__trail">18.9 KB</span></button></li>
+        <li><button class="k-row fb-row" type="button"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-file-code"/></svg><span class="k-row__title">approval-state.ts</span><span class="k-row__trail">7.3 KB</span></button></li>
+        <li><button class="k-row fb-row" type="button"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-file-code"/></svg><span class="k-row__title">mcp-panel.ts</span><span class="k-row__trail">31.0 KB</span></button></li>
+        <li><button class="k-row fb-row" type="button"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-file-code"/></svg><span class="k-row__title">sidepanel.ts</span><span class="k-row__trail">28.2 KB</span></button></li>
+        <li><button class="k-row fb-row" type="button"><svg class="k-icon k-row__lead" data-size="lg"><use href="#ph-file-code"/></svg><span class="k-row__title">workspace-selection.ts</span><span class="k-row__trail">3.8 KB</span></button></li>
+      </ul>
+    </div>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (f) MCP settings ===================== -->
+<template id="tpl-sp-mcp">
+<div class="sp">
+  <header class="k-toolbar">
+    <span class="k-logo-status" role="img" aria-label="Kairomes，已連線"><svg class="k-logo"><use href="#k-mark"/></svg><span class="k-dot" data-tone="success"></span></span>
+    <button class="k-switcher sp-switch" type="button"><svg class="k-icon"><use href="#ph-folder"/></svg><span class="k-switcher__label">docs-site</span><svg class="k-icon" data-size="sm"><use href="#ph-caret-updown"/></svg></button>
+    <button class="k-access" type="button" data-mode="auto" aria-label="全自主，剩 11 分 52 秒"><svg class="k-icon"><use href="#ph-lightning-fill"/></svg><span class="k-collapse-label">全自主</span><span class="k-access__time">11:52</span></button>
+    <button class="k-need" type="button" aria-pressed="false"><svg class="k-icon k-collapse-icon"><use href="#ph-inbox"/></svg><span class="k-collapse-label">需確認</span><span class="k-badge">1</span></button>
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-pressed="true" aria-label="設定"><svg class="k-icon" data-size="lg"><use href="#ph-gear-fill"/></svg></button>
+  </header>
+  <div class="sp-sub">
+    <button class="k-btn k-btn--quiet k-btn--icon" type="button" aria-label="返回工作台"><svg class="k-icon" data-size="lg"><use href="#ph-arrow-left"/></svg></button>
+    <nav class="k-tabs" role="tablist" aria-label="設定">
+      <button class="k-tab" role="tab" aria-selected="false" type="button">一般</button>
+      <button class="k-tab" role="tab" aria-selected="true" type="button">MCP 整合</button>
+    </nav>
+  </div>
+  <div class="sp-scroll" style="gap:12px">
+    <div class="mcp-top">
+      <label class="k-field"><svg class="k-icon"><use href="#ph-search"/></svg><input class="k-input" placeholder="搜尋伺服器或工具" aria-label="搜尋伺服器或工具"><span class="k-kbd">/</span></label>
+      <button class="k-btn k-btn--secondary" type="button"><svg class="k-icon"><use href="#ph-plus"/></svg>加入</button>
+    </div>
+    <div class="k-chips" role="group" aria-label="篩選伺服器">
+      <button class="k-chip" aria-pressed="true" type="button">全部<span class="k-chip__count">3</span></button>
+      <button class="k-chip" aria-pressed="false" type="button">已開啟<span class="k-chip__count">1</span></button>
+      <button class="k-chip" aria-pressed="false" data-tone="danger" type="button">需處理<span class="k-chip__count">2</span></button>
+    </div>
+    <article class="k-card srv">
+      <div class="srv-head">
+        <span class="k-kind"><svg class="k-icon" data-size="lg"><use href="#ph-server"/></svg></span>
+        <div><div class="srv-name">Chrome DevTools</div><div class="srv-meta" data-tone="success"><span class="k-dot" data-tone="success"></span><span class="st">已連線</span><span class="k-sep">·</span>stdio<span class="k-sep">·</span>27 個工具</div></div>
+        <input class="k-switch" type="checkbox" checked aria-label="開啟 Chrome DevTools">
+      </div>
+      <div class="srv-risk">
+        <span class="k-pill"><svg class="k-icon"><use href="#ph-eye"/></svg>唯讀 12</span>
+        <span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-pencil"/></svg>可能修改資料 9</span>
+        <span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-lightning"/></svg>可執行動作 4</span>
+        <span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-globe"/></svg>可連外 2</span>
+      </div>
+      <ul class="tool-list">
+        <li class="tool"><span class="tool-name">evaluate_script</span><span class="tool-risk" data-tone="warning"><svg class="k-icon" data-size="sm"><use href="#ph-lightning"/></svg>可執行動作</span><input class="k-switch" type="checkbox" checked aria-label="evaluate_script"></li>
+        <li class="tool"><span class="tool-name">navigate_page</span><span class="tool-risk" data-tone="warning"><svg class="k-icon" data-size="sm"><use href="#ph-globe"/></svg>可連外</span><input class="k-switch" type="checkbox" checked aria-label="navigate_page"></li>
+        <li class="tool"><span class="tool-name">fill_form</span><span class="tool-risk" data-tone="warning"><svg class="k-icon" data-size="sm"><use href="#ph-pencil"/></svg>可能修改資料</span><input class="k-switch" type="checkbox" aria-label="fill_form"></li>
+      </ul>
+      <div class="srv-foot">
+        <button class="k-btn k-btn--quiet k-btn--sm" type="button">全部 27 個工具<svg class="k-icon" data-size="sm"><use href="#ph-caret-down"/></svg></button>
+        <button class="k-btn k-btn--quiet k-btn--icon k-btn--sm" type="button" aria-label="重新探索工具"><svg class="k-icon"><use href="#ph-refresh"/></svg></button>
+        <button class="k-btn k-btn--danger-quiet k-btn--sm" type="button"><svg class="k-icon" data-size="sm"><use href="#ph-trash"/></svg>移除</button>
+      </div>
+    </article>
+    <article class="k-card srv">
+      <div class="srv-head">
+        <span class="k-kind"><svg class="k-icon" data-size="lg"><use href="#ph-server"/></svg></span>
+        <div><div class="srv-name">GitHub</div><div class="srv-meta" data-tone="warning"><span class="k-dot" data-tone="warning"></span><span class="st">需要登入</span><span class="k-sep">·</span>HTTP<span class="k-sep">·</span>OAuth</div></div>
+        <span></span>
+      </div>
+      <div class="k-notice srv-note" data-tone="warning">
+        <svg class="k-icon"><use href="#ph-signin"/></svg>
+        <div class="k-notice__body">登入後會開啟全部 41 個工具。</div>
+        <button class="k-btn k-btn--primary k-btn--sm k-notice__action" type="button">登入</button>
+      </div>
+      <div class="srv-risk">
+        <span class="k-pill"><svg class="k-icon"><use href="#ph-eye"/></svg>唯讀 30</span>
+        <span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-pencil"/></svg>可能修改資料 5</span>
+        <span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-globe"/></svg>可連外 6</span>
+      </div>
+    </article>
+    <article class="k-card srv">
+      <div class="srv-head">
+        <span class="k-kind"><svg class="k-icon" data-size="lg"><use href="#ph-server"/></svg></span>
+        <div><div class="srv-name">Filesystem</div><div class="srv-meta" data-tone="danger"><span class="k-dot" data-tone="danger"></span><span class="st">啟動失敗</span><span class="k-sep">·</span>stdio</div></div>
+        <span></span>
+      </div>
+      <div class="k-notice srv-note" data-tone="danger" role="alert">
+        <svg class="k-icon"><use href="#ph-warning-circle"/></svg>
+        <div class="k-notice__body">找不到 npx。安裝 Node.js 後再試一次。</div>
+        <button class="k-btn k-btn--secondary k-btn--sm k-notice__action" type="button"><svg class="k-icon" data-size="sm"><use href="#ph-retry"/></svg>重試</button>
+      </div>
+    </article>
+  </div>
+</div>
+</template>
+
+<!-- ===================== (g) MCP result card ===================== -->
+<template id="tpl-mcp-result">
+<div class="mr">
+  <article class="k-card mr-card">
+    <div class="mr-head">
+      <svg class="k-logo" aria-hidden="true"><use href="#k-mark"/></svg>
+      <span class="mr-eyebrow">MCP 結果 · Chrome DevTools</span>
+      <span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>呼叫完成</span>
+    </div>
+    <h2 class="mr-title"><span class="k-mono">take_screenshot</span><span class="k-meta">0.8 秒</span></h2>
+    <figure class="mr-img">
+      <div class="mr-img__stage"><div class="mr-shot" role="img" aria-label="工具回傳的截圖"></div></div>
+      <figcaption>1280 × 720<span class="k-sep">·</span>PNG<span class="k-sep">·</span>184 KB</figcaption>
+    </figure>
+    <div>
+      <div class="mr-text">已擷取目前分頁的可見區域。頁面標題為「Kairomes 已就緒」，主內容包含 3 個專案卡片與 1 個未讀通知；截圖未包含瀏覽器外框。</div>
+      <div class="mr-actions" style="margin-top:6px">
+        <button class="k-btn k-btn--quiet k-btn--sm" type="button"><svg class="k-icon" data-size="sm"><use href="#ph-caret-down"/></svg>展開全部</button>
+        <button class="k-btn k-btn--quiet k-btn--sm" type="button"><svg class="k-icon" data-size="sm"><use href="#ph-copy"/></svg>複製文字</button>
+      </div>
+    </div>
+    <div>
+      <details class="mr-details"><summary><svg class="k-icon" data-size="sm"><use href="#ph-caret-right"/></svg>呼叫內容<span class="k-meta" style="font-weight:400">2 個參數</span></summary></details>
+      <details class="mr-details"><summary><svg class="k-icon" data-size="sm"><use href="#ph-caret-right"/></svg>結構化結果<span class="k-meta" style="font-weight:400">JSON · 3 個欄位</span></summary></details>
+    </div>
+  </article>
+</div>
+</template>
+
+<!-- ===================== Component sheet ===================== -->
+<template id="tpl-sheet">
+<div class="sheet">
+  <div>
+    <h3>色彩角色 · 每個顏色只有一種意思</h3>
+    <div class="roles">
+      <div class="role"><div class="role__solid" style="background:var(--k-brand);color:var(--k-brand-ink)">3</div><div class="role__soft" style="background:var(--k-brand-soft);color:var(--k-brand-on)"><svg class="k-icon"><use href="#ph-inbox"/></svg>需確認</div><div class="role__name"><b>brand</b>品牌、等你決定</div></div>
+      <div class="role"><div class="role__solid" style="background:var(--k-primary-bg);color:var(--k-primary-ink)">允許這次</div><div class="role__soft" style="background:var(--k-surface-2);color:var(--k-ink-1)">墨色</div><div class="role__name"><b>primary</b>每個畫面一個主動作</div></div>
+      <div class="role"><div class="role__solid" style="background:var(--k-running)"></div><div class="role__soft" style="background:var(--k-running-soft);color:var(--k-running-on)"><svg class="k-icon"><use href="#ph-spinner"/></svg>執行中</div><div class="role__name"><b>running</b>執行、連線中</div></div>
+      <div class="role"><div class="role__solid" style="background:var(--k-success)"></div><div class="role__soft" style="background:var(--k-success-soft);color:var(--k-success-on)"><svg class="k-icon"><use href="#ph-check"/></svg>已完成</div><div class="role__name"><b>success</b>完成、已連線</div></div>
+      <div class="role"><div class="role__solid" style="background:var(--k-warning)"></div><div class="role__soft" style="background:var(--k-warning-soft);color:var(--k-warning-on)"><svg class="k-icon"><use href="#ph-question"/></svg>結果待確認</div><div class="role__name"><b>warning</b>不確定、高權限</div></div>
+      <div class="role"><div class="role__solid" style="background:var(--k-danger);color:var(--k-danger-ink)">移除</div><div class="role__soft" style="background:var(--k-danger-soft);color:var(--k-danger-on)"><svg class="k-icon"><use href="#ph-x-circle"/></svg>失敗</div><div class="role__name"><b>danger</b>錯誤、破壞性</div></div>
+      <div class="role"><div class="role__solid" style="background:var(--k-neutral)"></div><div class="role__soft" style="background:var(--k-neutral-soft);color:var(--k-neutral-on)"><svg class="k-icon"><use href="#ph-prohibit"/></svg>已拒絕</div><div class="role__name"><b>neutral</b>拒絕、取消、到期</div></div>
+    </div>
+  </div>
+  <div class="sheet-grid">
+    <div>
+      <h3>按鈕</h3>
+      <div class="sheet-row">
+        <button class="k-btn k-btn--primary" type="button">允許這次</button>
+        <button class="k-btn k-btn--secondary" type="button">拒絕</button>
+        <button class="k-btn k-btn--quiet" type="button">拒絕並說明原因…</button>
+        <button class="k-btn k-btn--danger-quiet" type="button"><svg class="k-icon"><use href="#ph-trash"/></svg>移除</button>
+        <button class="k-btn k-btn--danger" type="button">解除掛載</button>
+        <button class="k-btn k-btn--primary" type="button" disabled>核對並預覽</button>
+        <button class="k-btn k-btn--secondary k-btn--icon" type="button" aria-label="複製"><svg class="k-icon"><use href="#ph-copy"/></svg></button>
+        <button class="k-btn k-btn--secondary" type="button" style="outline:2px solid var(--k-focus);outline-offset:2px">鍵盤焦點</button>
+      </div>
+    </div>
+    <div>
+      <h3>狀態標記（圖示＋文字，不只靠顏色）</h3>
+      <div class="sheet-row">
+        <span class="k-pill" data-tone="brand"><svg class="k-icon"><use href="#ph-inbox"/></svg>需確認</span>
+        <span class="k-pill" data-tone="running"><svg class="k-icon"><use href="#ph-spinner"/></svg>執行中</span>
+        <span class="k-pill" data-tone="success"><svg class="k-icon"><use href="#ph-check"/></svg>已完成</span>
+        <span class="k-pill" data-tone="danger"><svg class="k-icon"><use href="#ph-x-circle"/></svg>失敗</span>
+        <span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-question"/></svg>結果待確認</span>
+        <span class="k-pill" data-tone="warning"><svg class="k-icon"><use href="#ph-stale"/></svg>內容可能已過時</span>
+        <span class="k-pill"><svg class="k-icon"><use href="#ph-prohibit"/></svg>已拒絕</span>
+        <span class="k-pill"><svg class="k-icon"><use href="#ph-minus-circle"/></svg>已取消</span>
+        <span class="k-pill"><svg class="k-icon"><use href="#ph-expired"/></svg>已到期</span>
+        <span class="k-pill" data-tone="running"><svg class="k-icon"><use href="#ph-broadcast"/></svg>連線中</span>
+      </div>
+      <div class="sheet-row" style="margin-top:10px">
+        <span class="k-badge">3</span>
+        <span class="k-badge" data-tone="running">1</span>
+        <span class="k-badge" data-tone="neutral">12</span>
+        <span class="k-dot" data-tone="success"></span>
+        <span class="k-countdown"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 4:12</span>
+        <span class="k-countdown" data-urgency="soon"><svg class="k-icon"><use href="#ph-timer"/></svg>剩 0:48</span>
+        <span class="k-countdown" data-urgency="expired"><svg class="k-icon"><use href="#ph-expired"/></svg>已到期</span>
+        <span class="k-live" data-state="live"><span class="k-dot"></span>即時</span>
+        <span class="k-kbd">Esc</span>
+      </div>
+    </div>
+    <div>
+      <h3>提示（同一位置，一次只顯示一則）</h3>
+      <div style="display:grid;gap:8px">
+        <div class="k-notice" data-tone="success" role="status"><svg class="k-icon"><use href="#ph-check-circle"/></svg><div class="k-notice__body">配對連結已複製，10 分鐘內有效。</div></div>
+        <div class="k-notice" data-tone="warning" role="status"><svg class="k-icon"><use href="#ph-question"/></svg><div class="k-notice__body"><span class="k-notice__title">結果待確認。</span>不會自動重試。</div><button class="k-btn k-btn--secondary k-btn--sm k-notice__action" type="button">查詢狀態</button></div>
+        <div class="k-notice" data-tone="danger" role="alert"><svg class="k-icon"><use href="#ph-warning-circle"/></svg><div class="k-notice__body"><span class="k-notice__title">ChatGPT 拒絕了金鑰。</span></div><button class="k-btn k-btn--secondary k-btn--sm k-notice__action" type="button">更新金鑰</button></div>
+      </div>
+    </div>
+    <div>
+      <h3>輸入 · 開關 · 分頁 · 篩選</h3>
+      <div style="display:grid;gap:12px">
+        <div class="sheet-row" style="flex-wrap:nowrap">
+          <label class="k-field" style="flex:1"><svg class="k-icon"><use href="#ph-search"/></svg><input class="k-input" placeholder="搜尋工具" aria-label="搜尋工具"><span class="k-kbd">/</span></label>
+          <input class="k-switch" type="checkbox" checked aria-label="開">
+          <input class="k-switch" type="checkbox" aria-label="關">
+          <input class="k-switch" type="checkbox" disabled aria-label="需先登入">
+        </div>
+        <div class="sheet-row" style="gap:16px">
+          <nav class="k-tabs"><button class="k-tab" aria-selected="true" type="button">一般</button><button class="k-tab" aria-selected="false" type="button">MCP 整合</button><button class="k-tab" aria-disabled="true" type="button" title="這個專案沒有終端機權限">終端機</button></nav>
+          <div class="k-chips"><button class="k-chip" aria-pressed="true" type="button">全部</button><button class="k-chip" type="button">變更</button><button class="k-chip" data-tone="danger" type="button">失敗<span class="k-chip__count">1</span></button></div>
+          <div class="k-seg"><button type="button" aria-pressed="true">全部</button><button type="button" aria-pressed="false">只看 stderr</button></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3>空狀態</h3>
+      <div class="k-card k-card--flat k-empty" style="padding:20px 16px">
+        <span class="k-empty__icon"><svg class="k-icon" data-size="xl"><use href="#ph-inbox"/></svg></span>
+        <div class="k-empty__title">沒有待確認的請求</div>
+        <div class="k-empty__text">ChatGPT 要改檔案或執行命令時會列在這裡。</div>
+        <button class="k-btn k-btn--secondary k-btn--sm" type="button">返回工作台</button>
+      </div>
+    </div>
+    <div>
+      <h3>字級（系統字型，不載入網路字型）</h3>
+      <div class="type-sample">
+        <div style="font-size:var(--k-text-xl);font-weight:600">總覽 <span>22 · 頁面標題</span></div>
+        <div style="font-size:var(--k-text-lg);font-weight:600">需注意 <span>18 · 區段標題</span></div>
+        <div style="font-size:var(--k-text-md);font-weight:600">修改 2 個檔案 <span>16 · 工具列、卡片標題</span></div>
+        <div style="font-size:var(--k-text-base)">命令會以你的 Windows 帳號執行。 <span>14 · 所有決策文字</span></div>
+        <div style="font-size:var(--k-text-meta);color:var(--k-ink-3)">2 分鐘前 · 剩 4:12 <span>13 · 時間與計數</span></div>
+        <div class="k-mono" style="font-size:var(--k-text-base)">C:\Users\mei\.bun\bin\bun.exe <span style="font-family:var(--k-font-sans)">14 · 等寬</span></div>
+      </div>
+      <h3 style="margin-top:16px">Handoff 步驟</h3>
+      <ol class="k-stepper"><li class="k-stepper__item" data-state="done"><span class="k-stepper__mark"><svg class="k-icon" data-size="sm"><use href="#ph-check"/></svg></span>選擇來源<span class="k-sr-only">（已完成）</span></li><li class="k-stepper__sep" aria-hidden="true"></li><li class="k-stepper__item" aria-current="step"><span class="k-stepper__mark">2</span>整理內容</li><li class="k-stepper__sep" aria-hidden="true"></li><li class="k-stepper__item"><span class="k-stepper__mark">3</span>預覽並複製</li></ol>
+    </div>
+  </div>
+</div>
+</template>
+
+<script>
+  for (const section of document.querySelectorAll('section.screen')) {
+    const tpl = document.getElementById(section.dataset.tpl);
+    const pair = document.createElement('div');
+    pair.className = 'pair';
+    for (const theme of ['light', 'dark']) {
+      const fig = document.createElement('figure');
+      fig.className = 'frame-wrap';
+      const cap = document.createElement('figcaption');
+      cap.textContent = theme === 'light' ? '淺色' : '深色';
+      const frame = document.createElement('div');
+      frame.className = 'frame k-app';
+      frame.dataset.theme = theme;
+      frame.id = `${section.dataset.id}-${theme}`;
+      frame.style.width = section.dataset.w + 'px';
+      if (section.dataset.h === 'auto') frame.classList.add('frame--auto');
+      else frame.style.height = section.dataset.h + 'px';
+      frame.appendChild(tpl.content.cloneNode(true));
+      fig.append(cap, frame);
+      pair.appendChild(fig);
+    }
+    section.appendChild(pair);
+  }
+</script>
+</body>
+</html>

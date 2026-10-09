@@ -1,11 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   addWorkspace,
+  CLOSE_HINT_EVENT,
   CONFIRM_RESTART_EVENT,
   DESKTOP_STATUS_EVENT,
   EXTERNAL_TARGETS,
   getDiagnostics,
   getWorkspacePaths,
+  hideMainWindow,
+  onCloseHint,
   onConfirmRestart,
   openExternal,
   performAction,
@@ -191,6 +194,27 @@ test("a tray restart request only notifies the UI; it never restarts by itself",
   await settle();
   tauri.emit(CONFIRM_RESTART_EVENT, null);
   expect(requests).toBe(1);
+});
+
+test("the first-close hint only notifies the UI; the window hides when the UI asks", async () => {
+  const tauri = fakeTauri((command) => {
+    if (command === "hide_main_window") return null;
+    throw new Error(`unexpected ${command}`);
+  });
+  let hints = 0;
+  const stop = onCloseHint(() => hints++);
+  await settle();
+  tauri.emit(CLOSE_HINT_EVENT, null);
+  expect(hints).toBe(1);
+  await hideMainWindow();
+  expect(tauri.calls.map((call) => call.command)).toEqual([
+    "plugin:event|listen",
+    "hide_main_window",
+  ]);
+  stop();
+  await settle();
+  tauri.emit(CLOSE_HINT_EVENT, null);
+  expect(hints).toBe(1);
 });
 
 test("project, diagnostics and link wrappers send only ids and fixed names", async () => {

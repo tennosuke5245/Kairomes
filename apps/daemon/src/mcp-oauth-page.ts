@@ -1,40 +1,64 @@
 import { createHash } from "node:crypto";
+import { tokensCss } from "../../../packages/ui-tokens/index.ts";
 
 export type McpOAuthPageOutcome = "connected" | "authorized" | "failed";
 
-const messages = {
-  connected: { title: "已連線", detail: "可返回 Kairomes 使用工具。", symbol: "check" },
-  authorized: { title: "授權已完成", detail: "請返回 Kairomes 重試連線。", symbol: "pending" },
-  failed: { title: "登入未完成", detail: "請返回 Kairomes 重新登入。", symbol: "failed" },
+// Phosphor 2.1.10 (regular) path data, inlined: the page loads nothing from anywhere.
+const icons = {
+  check:
+    "M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z",
+  info: "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z",
+  warning:
+    "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z",
 } as const;
 
-const style = `
-:root{color-scheme:light dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f5f1e9;color:#222727}
-*{box-sizing:border-box}
-body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px}
-main{width:min(100%,360px);padding:32px;background:#fffdf8;border:1px solid #dfd6ca;border-radius:20px;box-shadow:0 12px 40px #3027190b}
-.brand{display:flex;align-items:center;gap:9px;margin-bottom:28px;font-size:14px;font-weight:600;color:#5d6461}
-.brand span{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#f8eae6;color:#b93443;font-size:19px;font-weight:750}
-.symbol{display:grid;place-items:center;width:48px;height:48px;margin-bottom:20px;border-radius:50%;background:#edf3e9;color:#4d7752}
-.authorized .symbol{background:#f9f0dd;color:#937127}
-.failed .symbol{background:#f9e9e5;color:#b93443}
-svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-h1{margin:0;font-size:24px;line-height:1.4;font-weight:700;letter-spacing:-.02em}
-p{margin:12px 0 0;font-size:15px;line-height:1.7;color:#606965;overflow-wrap:anywhere}
-@media(prefers-color-scheme:dark){:root{background:#181b1a;color:#f1f1e9}main{background:#222725;border-color:#3b433e;box-shadow:none}.brand,p{color:#bdc6be}.brand span{background:#3c282b;color:#ee9da3}.symbol{background:#2c3a2e;color:#b1cfab}.authorized .symbol{background:#3d3522;color:#e3c481}.failed .symbol{background:#422b2c;color:#efadb1}}
+// One status sentence and one next step; the server name, URLs and remote errors never
+// appear, because this page is static and identical for every MCP server.
+const messages = {
+  connected: {
+    tone: "success",
+    icon: icons.check,
+    title: "已連線",
+    detail: "可以關閉這個分頁，回到 Kairomes 使用工具。",
+  },
+  authorized: {
+    tone: "neutral",
+    icon: icons.info,
+    title: "授權已完成",
+    detail: "回到 Kairomes 側欄，按「重試」取得工具。",
+  },
+  failed: {
+    tone: "danger",
+    icon: icons.warning,
+    title: "登入未完成",
+    detail: "回到 Kairomes 側欄再試一次。",
+  },
+} as const;
+
+/** The K mark from app-icon.svg; its fill follows --k-brand-mark in both themes. */
+const kMark =
+  '<svg class="mark" viewBox="0 0 128 128" aria-hidden="true" focusable="false"><path d="M22 16c-6 0-10 4-10 10v76c0 6 4 10 10 10s10-4 10-10V26c0-6-4-10-10-10Z"/><path d="M106 16H84c-3 0-6 1-8 4L38 57c-4 4-4 10 0 14l39 37c2 3 5 4 8 4h21c4 0 7-2 8-5 1-3 0-6-2-8L73 64l38-35c3-2 4-6 2-9-1-2-4-4-7-4Z"/></svg>';
+
+// tokens.css (light, dark via prefers-color-scheme) plus the few rules this card needs.
+const style = `${tokensCss}
+*,*::before,*::after{box-sizing:border-box}
+body{display:grid;min-height:100svh;margin:0;padding:24px 16px;place-items:center;background:var(--k-bg);color:var(--k-ink-1);font:var(--k-text-base)/1.5 var(--k-font-sans)}
+main{width:min(100%,480px);padding:24px;border:1px solid var(--k-line);border-radius:var(--k-radius-lg);background:var(--k-surface);box-shadow:var(--k-shadow-1),var(--k-inset-hi)}
+.brand{display:flex;align-items:center;gap:8px;margin:0 0 20px;color:var(--k-ink-2);font-weight:var(--k-weight-strong)}
+.mark{width:20px;height:20px;fill:var(--k-brand-mark)}
+.status{display:grid;grid-template-columns:40px minmax(0,1fr);gap:4px 14px;align-items:center;padding:14px 16px;border:1px solid var(--tone-line);border-radius:var(--k-radius-md);background:var(--tone-soft)}
+.icon{display:grid;grid-row:span 2;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--k-surface);color:var(--tone)}
+.icon svg{width:24px;height:24px;fill:currentColor}
+h1{margin:0;color:var(--tone-on);font-size:var(--k-text-lg);font-weight:var(--k-weight-strong);line-height:var(--k-leading-tight)}
+p{margin:0;color:var(--k-ink-2);overflow-wrap:anywhere}
 `;
 const styleHash = createHash("sha256").update(style).digest("base64");
-const symbols = {
-  check: '<path d="m5 12 4 4L19 6"/>',
-  pending: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/>',
-  failed: '<path d="m7 7 10 10M17 7 7 17"/>',
-} as const;
 
 /** Static callback UI only: never interpolate request URLs, OAuth data or remote errors. */
 export function mcpOAuthCallbackResponse(outcome: McpOAuthPageOutcome, status = 200): Response {
   const message = messages[outcome];
   return new Response(
-    `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${message.title} · Kairomes</title><style>${style}</style></head><body><main class="${outcome}" aria-labelledby="result-title"><div class="brand"><span aria-hidden="true">K</span>Kairomes</div><div class="symbol" aria-hidden="true"><svg viewBox="0 0 24 24">${symbols[message.symbol]}</svg></div><h1 id="result-title">${message.title}</h1><p>${message.detail}</p></main></body></html>`,
+    `<!doctype html><html lang="zh-Hant-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${message.title} · Kairomes</title><style>${style}</style></head><body><main class="${outcome}" aria-labelledby="result-title"><p class="brand">${kMark}Kairomes</p><div class="status" data-tone="${message.tone}"><span class="icon" aria-hidden="true"><svg viewBox="0 0 256 256" focusable="false"><path d="${message.icon}"/></svg></span><h1 id="result-title">${message.title}</h1><p>${message.detail}</p></div></main></body></html>`,
     {
       status,
       headers: {

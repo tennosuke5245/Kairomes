@@ -1,7 +1,16 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { lstat, mkdir, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import {
   collectDiagnostics,
@@ -22,6 +31,7 @@ import {
   diagnosticSummary,
   HandoffInputSchema,
   KairomesError,
+  McpMountFileSchema,
   parseVersion,
   publicError,
   type TunnelReason,
@@ -47,9 +57,6 @@ import {
 const SETTINGS_FILE = "companion-settings.json";
 const CONNECTION_FILE = "companion-connection.json";
 const CHATGPT_CONNECTORS_URL = "https://chatgpt.com/#settings/Connectors";
-const sourceLogo = fileURLToPath(
-  new URL("../../extension/assets/kairomes-k-128.png", import.meta.url),
-);
 
 const SettingsSchema = z
   .object({
@@ -233,21 +240,6 @@ async function acquireCompanionConnection(
     }
   }
   throw new KairomesError("COMPANION_START_FAILED", "無法建立 Companion 單一執行個體。");
-}
-
-async function loadLogoBase64() {
-  const candidates = [
-    sourceLogo,
-    path.join(path.dirname(process.execPath), "resources", "kairomes-k-128.png"),
-  ];
-  for (const candidate of candidates) {
-    try {
-      return (await readFile(candidate)).toString("base64");
-    } catch {
-      // Source checkout and packaged executable use different roots.
-    }
-  }
-  throw new KairomesError("COMPANION_ASSET_MISSING", "找不到 Companion 標誌資源。");
 }
 
 function stripTerminalControls(value: string) {
@@ -645,8 +637,8 @@ class CompanionRuntime {
           this.workbenchVersion = health.version;
           this.workbenchMessage =
             health.version === VERSION
-              ? "偵測到另一個 CMD 啟動的工作台。Companion 不會強制關閉它；停止舊程序後可重新接管。"
-              : `既有工作台版本 ${health.version ?? "未知"} 與 Kairomes ${VERSION} 不同；停止舊程序後按重新接管。`;
+              ? "偵測到另一個 CMD 啟動的工作台。Companion 不會強制關閉它；停止舊程序後再重試工作台。"
+              : `既有工作台版本 ${health.version ?? "未知"} 與 Kairomes ${VERSION} 不同；停止舊程序後再重試工作台。`;
           return;
         } catch {
           // Fall through to the original safe startup error.
@@ -852,6 +844,27 @@ class CompanionRuntime {
   }
 
   /**
+   * MCP servers for the Companion page rail: enabled and configured counts only, read the way
+   * the host reads mcp-servers.json. Null when the file cannot be read or is invalid.
+   */
+  async mcpSummary(): Promise<{ mcp: { enabled: number; total: number } | null }> {
+    const file = path.join(this.dataDirectory, "mcp-servers.json");
+    try {
+      const info = await stat(file);
+      if (!info.isFile() || info.size > 1024 * 1024) return { mcp: null };
+      const parsed = McpMountFileSchema.safeParse(JSON.parse(await readFile(file, "utf8")));
+      if (!parsed.success) return { mcp: null };
+      const servers = parsed.data.servers;
+      return {
+        mcp: { enabled: servers.filter((server) => server.enabled).length, total: servers.length },
+      };
+    } catch (error) {
+      const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+      return { mcp: missing ? { enabled: 0, total: 0 } : null };
+    }
+  }
+
+  /**
    * `expectedVersion` is the caller's own version: Desktop passes its own, so a Companion or
    * workbench left over from another version is reported with its fix, and the summary is
    * headed with Desktop's version. It defaults to this Companion's version.
@@ -944,7 +957,7 @@ class CompanionRuntime {
         await this.workbenchConnection();
         throw new KairomesError(
           "WORKBENCH_RUNNING",
-          "舊工作台仍在執行；請先在原 CMD 按 Ctrl+C，再按重新接管。",
+          "舊工作台仍在執行；請先在原 CMD 按 Ctrl+C，再重試工作台。",
         );
       } catch (error) {
         if (error instanceof KairomesError && error.code === "WORKBENCH_RUNNING") throw error;
@@ -965,7 +978,7 @@ class CompanionRuntime {
     if (this.external)
       throw new KairomesError(
         "WORKBENCH_RUNNING",
-        "Extension ID 已保存。請先停止舊工作台，再按重新接管完成配對。",
+        "Extension ID 已保存。請先停止舊工作台，再重試工作台完成配對。",
       );
     await this.tunnel.stop();
     await this.closeOwnedWorkbench();
@@ -1077,6 +1090,7 @@ const ActionSchema = z.discriminatedUnion("action", [
         .optional(),
     })
     .strict(),
+  z.object({ action: z.literal("mcp_summary") }).strict(),
   z.object({ action: z.literal("quit") }).strict(),
 ]);
 
@@ -1129,7 +1143,7 @@ export async function startCompanionApplication(options: {
   );
   const instanceId = crypto.randomUUID();
   const token = randomBytes(32).toString("hex");
-  const page = companionPage(await loadLogoBase64(), VERSION);
+  const page = companionPage(VERSION);
   const scriptHashes = Array.from(
     page.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g),
     (match) =>
@@ -1222,6 +1236,7 @@ export async function startCompanionApplication(options: {
         else if (input.action === "workspace_details") result = await runtime.workspaceDetails();
         else if (input.action === "diagnostics")
           result = await runtime.diagnostics(input.expectedVersion);
+        else if (input.action === "mcp_summary") result = await runtime.mcpSummary();
         else if (input.action === "quit") setTimeout(() => void shutdown(), 80);
         return Response.json({ ok: true, ...result }, { headers });
       } catch (error) {

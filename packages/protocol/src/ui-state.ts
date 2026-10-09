@@ -107,7 +107,11 @@ const byKind: Record<UiStateKind, Record<string, Entry>> = {
     failed: ["danger", "XCircle", "啟動失敗"],
   },
   file_change: {},
-  artifact_import: {},
+  artifact_import: {
+    // The local user has to drop, paste or choose the image in the side panel.
+    awaiting_file: ["attention", "Tray", "等待圖片"],
+    preparing: ["running", "CircleNotch", "準備中", true],
+  },
   tool: {},
   mcp_server: {
     ready: ["success", "Dot", "已連線"],
@@ -184,4 +188,38 @@ export function toneFor(kind: UiStateKind, state: string): UiState {
  */
 export function iconSpriteId(icon: Exclude<UiStateIcon, "Dot">) {
   return `ph-${icon.replace(/(?<=[A-Za-z0-9])(?=[A-Z])/g, "-").toLowerCase()}`;
+}
+
+export type WorkspaceHue = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * Decorative workspace hue ws-1 … ws-5 (design spec § Workspace hue): FNV-1a over the ID's
+ * UTF-16 code units. The side panel, the workbench and Desktop all use this one function, so a
+ * project keeps its colour on every surface; its name is always shown beside it.
+ */
+export function workspaceHue(workspaceId: string): WorkspaceHue {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < workspaceId.length; index++) {
+    hash ^= workspaceId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (((hash >>> 0) % 5) + 1) as WorkspaceHue;
+}
+
+/**
+ * Byte size in binary units, as every Kairomes limit is stated (25 MiB): `980 B`, `2.1 KiB`,
+ * `150 KiB`, `3.1 MiB`, one decimal below 100. The side panel, the workbench and the result
+ * card all use it, so one file reads the same size everywhere.
+ */
+export function formatBytes(bytes: number) {
+  const value = Math.max(0, bytes);
+  if (value < 1024) return `${value} B`;
+  const units = ["KiB", "MiB", "GiB"];
+  let scaled = value / 1024;
+  let unit = 0;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit++;
+  }
+  return `${scaled < 100 ? scaled.toFixed(1) : Math.round(scaled)} ${units[unit]}`;
 }

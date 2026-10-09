@@ -3,6 +3,8 @@ import {
   type AccessGrant,
   ApprovalInputSchema,
   type CompanionGrantSummary,
+  IMAGE_IMPORT_UPLOAD_ID_HEADER,
+  IMAGE_IMPORT_UPLOAD_TYPES,
   KairomesError,
   LIMITS,
   MCP_COMMAND_RELATIVE_MESSAGE,
@@ -46,7 +48,33 @@ function panelSnapshot(
     commands: service.commands.approvals(),
     changes: service.changes.approvals(),
     imports: service.imports.approvals(),
+    importHydration: service.imports.hydration(),
   };
+}
+
+const importRoutePattern =
+  /^\/api\/panel\/imports\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(file|content)$/;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** HTTP status of import route failures the panel must tell apart; anything else is 400. */
+const importStatus: Record<string, number> = {
+  PANEL_UNAUTHORIZED: 401,
+  ARTIFACT_IMPORT_NOT_FOUND: 404,
+  IMPORT_NOT_AWAITING_FILE: 409,
+  REQUEST_ID_REUSED: 409,
+  ARTIFACT_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
+  ARTIFACT_IMPORT_LIMIT: 429,
+};
+
+/** `inline` with an ASCII fallback name and the UTF-8 name; never a path or URL. */
+function inlineDisposition(relative: string) {
+  const name = relative.split("/").at(-1) ?? "image";
+  const ascii = name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "image";
+  const encoded = encodeURIComponent(name).replace(
+    /['()*!]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `inline; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 /** Trusted local summary of live autonomy grants: level and expiry only, never id or owner. */
@@ -185,14 +213,25 @@ function startLocalServer(
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port,
-    // The stdio relay enforces the same cap before forwarding to /api/mcp.
-    maxRequestBodySize: LIMITS.requestBodyBytes,
+    // Only the trusted image upload route may stream up to 25 MiB; every other route keeps the
+    // requestBodyBytes cap below, which the stdio relay also applies before /api/mcp.
+    maxRequestBodySize: LIMITS.artifactBytes,
     async fetch(request, bunServer) {
       const url = new URL(request.url);
       const host = `127.0.0.1:${bunServer.port}`;
       if (request.headers.get("host") !== host || url.hostname !== "127.0.0.1") {
         return new Response("Invalid host", { status: 403, headers });
       }
+      const importRoute = importRoutePattern.exec(url.pathname);
+      if (importRoute?.[2] !== "file") {
+        // A chunked body has no length to check up front, so only the upload route accepts one.
+        if (request.headers.has("transfer-encoding"))
+          return new Response("Length required", { status: 411, headers });
+        const declared = request.headers.get("content-length");
+        if (declared !== null && !(Number(declared) <= LIMITS.requestBodyBytes))
+          return new Response("Request too large", { status: 413, headers });
+      }
+      const importCreate = url.pathname === "/api/panel/imports";
       if (request.method === "GET" && url.pathname === "/healthz") {
         return Response.json(
           { status: "ok", instanceId: workbench?.instanceId, version: VERSION },
@@ -209,14 +248,32 @@ function startLocalServer(
         "/api/panel/mcp",
         "/api/panel/mcp-auth",
       ].includes(url.pathname);
-      if (panel) {
-        if (!workbench || !extensionOrigin || request.headers.get("origin") !== extensionOrigin)
+      if (panel || importCreate || importRoute) {
+        const origin = request.headers.get("origin");
+        // Chromium skips CORS for an extension page that holds host access to 127.0.0.1, and then
+        // sends no Origin on a GET (POST keeps it). The pending-image read is the panel's only
+        // GET, so it may arrive without an Origin from a browser context that is not a web page
+        // (Sec-Fetch-Site "none"). A same-origin page (the workbench) sends "same-origin" and is
+        // refused; any Origin that is sent must be the extension's; the panel token is required.
+        const fetchSite = request.headers.get("sec-fetch-site");
+        const originlessRead =
+          importRoute?.[2] === "content" &&
+          request.method === "GET" &&
+          origin === null &&
+          (fetchSite === null || fetchSite === "none");
+        if (!workbench || !extensionOrigin || (origin !== extensionOrigin && !originlessRead))
           return new Response("Invalid extension origin", { status: 403, headers });
         const panelHeaders = {
           ...headers,
           "Access-Control-Allow-Origin": extensionOrigin,
           Vary: "Origin",
         };
+        // Pending image bytes are read with GET; the upload adds its idempotency header.
+        const method = importRoute?.[2] === "content" ? "GET" : "POST";
+        const allowedHeaders =
+          importRoute?.[2] === "file"
+            ? ["authorization", "content-type", "x-kairomes-upload-id"]
+            : ["authorization", "content-type"];
         if (request.method === "OPTIONS") {
           const requested =
             request.headers
@@ -225,22 +282,36 @@ function startLocalServer(
               .split(",")
               .map((value) => value.trim()) ?? [];
           if (
-            request.headers.get("access-control-request-method") !== "POST" ||
-            requested.some((value) => !["authorization", "content-type"].includes(value))
+            request.headers.get("access-control-request-method") !== method ||
+            requested.some((value) => !allowedHeaders.includes(value))
           )
             return new Response("Invalid preflight", { status: 403, headers: panelHeaders });
           return new Response(null, {
             status: 204,
             headers: {
               ...panelHeaders,
-              "Access-Control-Allow-Methods": "POST",
-              "Access-Control-Allow-Headers": "Authorization, Content-Type",
+              "Access-Control-Allow-Methods": method,
+              "Access-Control-Allow-Headers":
+                importRoute?.[2] === "file"
+                  ? "Authorization, Content-Type, X-Kairomes-Upload-Id"
+                  : "Authorization, Content-Type",
             },
           });
         }
-        if (request.method !== "POST")
+        if (request.method !== method)
           return new Response("Method not allowed", { status: 405, headers: panelHeaders });
-        if (!request.headers.get("content-type")?.startsWith("application/json"))
+        const contentType =
+          request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+        if (importRoute?.[2] === "file") {
+          if (!(IMAGE_IMPORT_UPLOAD_TYPES as readonly string[]).includes(contentType))
+            return new Response("Expected PNG, JPEG or WebP", {
+              status: 415,
+              headers: panelHeaders,
+            });
+        } else if (
+          importRoute?.[2] !== "content" &&
+          !request.headers.get("content-type")?.startsWith("application/json")
+        )
           return new Response("Expected JSON", { status: 415, headers: panelHeaders });
         try {
           if (url.pathname === "/api/panel/pair") {
@@ -283,6 +354,53 @@ function startLocalServer(
               { message: "側欄配對已失效，請重新配對。" },
               { status: 401, headers: panelHeaders },
             );
+          if (importCreate) {
+            const body = await request.json();
+            if (!pairing.valid(panelToken))
+              return Response.json(
+                { message: "配對已失效。" },
+                { status: 401, headers: panelHeaders },
+              );
+            const created = await service.imports.createLocal(body);
+            return Response.json(
+              { ...panelSnapshot(service, workbench), import: created },
+              { headers: panelHeaders },
+            );
+          }
+          if (importRoute?.[2] === "file") {
+            const uploadId = request.headers.get(IMAGE_IMPORT_UPLOAD_ID_HEADER) ?? "";
+            if (!uuidPattern.test(uploadId))
+              throw new KairomesError("VALIDATION", "上傳需要 X-Kairomes-Upload-Id（UUID）。");
+            const declared = request.headers.get("content-length");
+            const uploaded = await service.imports.upload(importRoute[1] as string, {
+              uploadId: uploadId.toLowerCase(),
+              contentType,
+              body: request.body,
+              declaredBytes: declared === null ? undefined : Number(declared),
+              authorized: () => pairing.valid(panelToken),
+            });
+            return Response.json(
+              { ...panelSnapshot(service, workbench), import: uploaded },
+              { headers: panelHeaders },
+            );
+          }
+          if (importRoute?.[2] === "content") {
+            // Reading the bytes is what lets this pairing approve them (see imports.decide).
+            const content = service.imports.content(importRoute[1] as string, panelToken);
+            const body = new Uint8Array(content.data.length);
+            body.set(content.data);
+            content.data.fill(0);
+            return new Response(body.buffer, {
+              headers: {
+                ...panelHeaders,
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Type": content.mimeType,
+                "Content-Length": String(body.byteLength),
+                "Content-Disposition": inlineDisposition(content.path),
+              },
+            });
+          }
           if (url.pathname === "/api/panel/stream") {
             z.object({})
               .strict()
@@ -411,16 +529,17 @@ function startLocalServer(
             return Response.json(await service.mcp.panelState(), { headers: panelHeaders });
           }
           const input = ApprovalInputSchema.parse(await request.json());
-          if (input.action !== "list") await service.decideApproval(input);
+          if (input.action !== "list") await service.decideApproval(input, panelToken);
           return Response.json(panelSnapshot(service, workbench), { headers: panelHeaders });
         } catch (error) {
           const exposed = publicError(error);
           const status =
-            exposed.code === "ACCESS_RECEIPT_LIMIT"
+            (importCreate || importRoute ? importStatus[exposed.code] : undefined) ??
+            (exposed.code === "ACCESS_RECEIPT_LIMIT"
               ? 429
               : ["ACCESS_REQUEST_CHANGED", "ACCESS_REQUEST_EXPIRED"].includes(exposed.code)
                 ? 409
-                : 400;
+                : 400);
           return Response.json(exposed, { status, headers: panelHeaders });
         }
       }
@@ -601,6 +720,7 @@ function startLocalServer(
               commands: service.commands.approvals(),
               changes: service.changes.approvals(),
               imports: service.imports.approvals(),
+              importHydration: service.imports.hydration(),
             },
             { headers },
           );

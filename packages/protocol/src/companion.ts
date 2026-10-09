@@ -44,10 +44,17 @@ export type CompanionTunnelStatus = {
   nextRetryAt: string | null;
 };
 
+/** Kind of a waiting approval, as the Desktop 需確認 card counts it. */
+export type CompanionPendingKind = "command" | "terminal" | "file_change" | "import";
+
 /** Pending approval counts only; no ids, fingerprints, argv, cwd or diffs. */
 export type CompanionPendingSummary = {
   total: number;
   byWorkspace: { workspace_id: string; count: number }[];
+  /** Counts per kind and workspace; absent from an older Companion. */
+  byKind?: { kind: CompanionPendingKind; workspace_id: string; count: number }[];
+  /** ISO 8601 deadline of the request that expires first (null when none); absent from an older Companion. */
+  earliestExpiresAt?: string | null;
 };
 
 /** Autonomy grant metadata only; never the grant id, owner or pairing token. */

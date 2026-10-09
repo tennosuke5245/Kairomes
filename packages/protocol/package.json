@@ -1,13 +1,14 @@
 {
   "name": "@kairomes/protocol",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./ui-state": "./src/ui-state.ts",
-    "./diff-lines": "./src/diff-lines.ts"
+    "./diff-lines": "./src/diff-lines.ts",
+    "./image-path": "./src/image-path.ts"
   },
   "dependencies": {
     "zod": "4.6.5"

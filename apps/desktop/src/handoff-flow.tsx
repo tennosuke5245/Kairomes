@@ -1,18 +1,54 @@
-import { ArrowLeft, CircleNotch, Copy } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import {
+  ArrowCounterClockwise,
+  ArrowLeft,
+  CaretRight,
+  ChatCircleText,
+  Check,
+  CheckCircle,
+  CircleNotch,
+  ClockCounterClockwise,
+  Copy,
+  PencilSimple,
+  PencilSimpleLine,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type {
   HandoffBaseline,
   HandoffFields,
   HandoffPreview,
 } from "../../../packages/protocol/src/handoff.ts";
-import { handoffCoverageTruncated } from "../../../packages/protocol/src/handoff.ts";
 import type { AgentSession, HandoffSnapshot } from "../../daemon/src/agent-sessions.ts";
 import { handoffRequest } from "./api.ts";
+import { Icon, NoticeSlot, StatePill, waitable } from "./components.tsx";
 import { copyHandoffContent, handoffError } from "./handoff-copy.ts";
+import {
+  baselineSummary,
+  briefReady,
+  canCopyHandoff,
+  coverageSummary,
+  emptySourcesText,
+  HANDOFF_COPIED_TEXT,
+  type HandoffStage,
+  type HandoffStep,
+  handoffCopyBlocker,
+  handoffStepHeading,
+  handoffSteps,
+  handoffTitle,
+  relatedPaths,
+  relatedPathsError,
+  sessionUpdated,
+  sourceStatusPill,
+} from "./handoff-model.ts";
 import { HandoffRequestGuard } from "./handoff-session.ts";
 import type { WorkspaceSummary } from "./model.ts";
+import { type Notice, nextNotice } from "./notice.ts";
 
 type StartResult = { draft_id: string; sessions: AgentSession[]; nextCursor: string | null };
+type SourceSnapshot = Omit<HandoffSnapshot, "workspace">;
+/** Which request is in flight, so only its own control shows the spinner. */
+type BusyOp = "codex" | "manual" | "list" | "check" | "copy" | "reselect" | `session:${string}`;
+
 const emptyFields: HandoffFields = {
   goal: "",
   next_action: "",
@@ -20,35 +56,159 @@ const emptyFields: HandoffFields = {
   decisions: "",
   unknowns: "",
 };
-function sourceStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    idle: "閒置",
-    notLoaded: "未載入",
-    inProgress: "進行中",
-    active: "進行中",
-    running: "進行中",
-    systemError: "來源異常",
-    error: "來源異常",
-    unavailable: "無法核對",
-    unknown: "未知",
-  };
-  return labels[status] ?? "未知";
+const OPTIONAL_FIELDS = [
+  ["completed", "完成事項"],
+  ["decisions", "決策"],
+  ["unknowns", "待驗證"],
+] as const;
+
+/** 選擇來源 → 整理內容 → 預覽並複製; done marks hold a Phosphor check, never a text glyph. */
+export function HandoffStepper({ steps }: { steps: readonly HandoffStep[] }) {
+  return (
+    <ol className="k-stepper handoff-stepper" aria-label="接續步驟">
+      {steps.flatMap((step, index) => {
+        const item = (
+          <li
+            key={step.label}
+            className="k-stepper__item"
+            data-state={step.state === "done" ? "done" : undefined}
+            aria-current={step.state === "current" ? "step" : undefined}
+          >
+            <span className="k-stepper__mark" aria-hidden="true">
+              {step.state === "done" ? <Icon icon={Check} size="sm" /> : index + 1}
+            </span>
+            {step.label}
+            {step.state === "done" ? <span className="k-sr-only">（已完成）</span> : null}
+          </li>
+        );
+        return index
+          ? [<li key={`${step.label}-sep`} className="k-stepper__sep" aria-hidden="true" />, item]
+          : [item];
+      })}
+    </ol>
+  );
+}
+
+/** One row per Codex session of this project: title, relative time and the source state. */
+export function SessionList({
+  sessions,
+  hasNextPage,
+  busy,
+  now,
+  onSelect,
+}: {
+  sessions: readonly AgentSession[];
+  hasNextPage: boolean;
+  busy: BusyOp | null;
+  now: number;
+  onSelect: (session: AgentSession) => void;
+}) {
+  if (!sessions.length)
+    return (
+      <p className="handoff-sessions__empty" role="status">
+        {emptySourcesText(hasNextPage)}
+      </p>
+    );
+  return (
+    <ul className="k-list">
+      {sessions.map((session) => {
+        const pill = sourceStatusPill(session.sourceStatus);
+        const loading = busy === `session:${session.id}`;
+        return (
+          <li key={session.id}>
+            <button
+              className="k-row handoff-session"
+              type="button"
+              aria-busy={loading || undefined}
+              {...waitable(busy !== null, () => onSelect(session))}
+            >
+              <span className="k-row__lead k-kind k-kind--sm">
+                <Icon icon={loading ? CircleNotch : ChatCircleText} size="sm" spin={loading} />
+              </span>
+              <span className="k-row__title" title={session.title}>
+                {session.title}
+              </span>
+              <span className="k-row__trail">
+                <StatePill {...pill} />
+              </span>
+              <span className="k-row__meta">{sessionUpdated(session.updatedAt, now)}</span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** The baseline in one line, with the per-file versions, HEAD and dirty list behind it. */
+export function BaselineDetails({ baseline }: { baseline: HandoffBaseline }) {
+  const summary = baselineSummary(baseline);
+  return (
+    <details className="desk-advanced handoff-baseline">
+      <summary>
+        <Icon icon={CaretRight} size="sm" />
+        <span
+          className="handoff-baseline__state"
+          data-tone={summary.complete ? "success" : "warning"}
+        >
+          <Icon icon={summary.complete ? CheckCircle : WarningCircle} />
+          {summary.text}
+        </span>
+      </summary>
+      <ul className="handoff-files">
+        {baseline.files.map((file) => (
+          <li key={file.path}>
+            <code className="k-mono">{file.path}</code>
+            <span className="k-meta">{file.version ? file.version.slice(0, 12) : file.reason}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="handoff-note">
+        {baseline.git.state === "available"
+          ? `HEAD：${baseline.git.head ?? "無 commit"} · ${baseline.git.dirty.length} 個未提交的變更`
+          : "無法用 Git 核對。"}
+      </p>
+      {baseline.git.dirty.length ? (
+        <ul className="handoff-files" aria-label="本機未提交的變更">
+          {baseline.git.dirty.map((file) => (
+            <li key={`${file.status}:${file.previousPath ?? ""}:${file.path}`}>
+              <code className="k-mono">{file.status.trim()}</code>
+              <span className="k-wrap-any">
+                {file.previousPath ? `${file.previousPath} → ` : ""}
+                {file.path}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="handoff-note">未選入的內容沒有核對；未提交清單不是來源 Agent 的修改清單。</p>
+    </details>
+  );
 }
 
 export function HandoffFlow({
   workspace,
   onClose,
   request = handoffRequest,
+  notify,
+  slot,
 }: {
   workspace: WorkspaceSummary;
   onClose: () => void;
   request?: typeof handoffRequest;
+  /**
+   * Routes the flow's messages to the host's one notice slot; null clears only the flow's own
+   * message. Without it the flow keeps its own slot (standalone previews).
+   */
+  notify?: (notice: Notice | null) => void;
+  /** The host's notice slot and live regions, placed under this page's header. */
+  slot?: ReactNode;
 }) {
-  const [stage, setStage] = useState<"source" | "brief">("source");
+  const [stage, setStage] = useState<HandoffStage>("source");
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [sourceListed, setSourceListed] = useState(false);
-  const [snapshot, setSnapshot] = useState<Omit<HandoffSnapshot, "workspace"> | null>(null);
+  const [snapshot, setSnapshot] = useState<SourceSnapshot | null>(null);
   const [fields, setFields] = useState<HandoffFields>(emptyFields);
   const [paths, setPaths] = useState("");
   const [baseline, setBaseline] = useState<HandoffBaseline | null>(null);
@@ -57,12 +217,32 @@ export function HandoffFlow({
   const [preview, setPreview] = useState<HandoffPreview | null>(null);
   const [reviewed, setReviewed] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [busy, setBusy] = useState<BusyOp | null>(null);
+  const [localNotice, setLocalNotice] = useState<Notice | null>(null);
   const draft = useRef<string | null>(null);
   const guard = useRef(new HandoffRequestGuard());
   const title = useRef<HTMLHeadingElement>(null);
+  const stepTitle = useRef<HTMLHeadingElement>(null);
+  const sessionsTitle = useRef<HTMLHeadingElement>(null);
   const previewField = useRef<HTMLTextAreaElement>(null);
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
+  // Relative times on the source rows; a minute is fine-grained enough for 5 分鐘前.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!sourceListed) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [sourceListed]);
+
+  /** One message at a time; null clears only this flow's message. */
+  const say = useCallback((next: Notice | null) => {
+    const host = notifyRef.current;
+    if (host) host(next);
+    else setLocalNotice((current) => (next ? nextNotice(current, next) : null));
+  }, []);
+  const dismissLocal = useCallback(() => setLocalNotice(null), []);
 
   useEffect(() => {
     guard.current.activate(workspace.id);
@@ -79,16 +259,17 @@ export function HandoffFlow({
     setPreview(null);
     setReviewed(false);
     setCopied(false);
-    setBusy(false);
-    setError("");
+    setBusy(null);
+    say(null);
     title.current?.focus();
     return () => {
       guard.current.close();
+      say(null);
       const draftId = draft.current;
       draft.current = null;
       if (draftId) void request({ action: "cancel", draft_id: draftId }).catch(() => undefined);
     };
-  }, [request, workspace.id]);
+  }, [request, workspace.id, say]);
 
   const invalidate = () => {
     setBaseline(null);
@@ -107,20 +288,26 @@ export function HandoffFlow({
     setPermissionsChecked(false);
     invalidate();
   };
-  const run = async (operation: (active: () => boolean) => Promise<void>) => {
+  /** Moving forward lands on the new step's heading, so a screen reader hears where it is. */
+  const focusStep = (active: () => boolean = () => true) =>
+    requestAnimationFrame(() => active() && stepTitle.current?.focus());
+  /** A listed or paged source list: focus goes to its heading, above the new rows. */
+  const focusSessions = (active: () => boolean) =>
+    requestAnimationFrame(() => active() && sessionsTitle.current?.focus());
+  const run = async (op: BusyOp, operation: (active: () => boolean) => Promise<void>) => {
     const active = guard.current.begin();
-    setBusy(true);
-    setError("");
+    setBusy(op);
+    say(null);
     try {
       await operation(active);
     } catch (caught) {
-      if (active()) setError(handoffError(caught).message);
+      if (active()) say({ tone: "danger", text: handoffError(caught).message, source: "handoff" });
     } finally {
-      if (active()) setBusy(false);
+      if (active()) setBusy(null);
     }
   };
   const start = (provider: "codex" | "manual") =>
-    void run(async (active) => {
+    void run(provider, async (active) => {
       clearSource();
       const oldDraft = draft.current;
       draft.current = null;
@@ -144,14 +331,14 @@ export function HandoffFlow({
       setSourceListed(provider === "codex");
       if (provider === "manual") {
         setStage("brief");
-        requestAnimationFrame(() => active() && title.current?.focus());
-      }
+        focusStep(active);
+      } else focusSessions(active);
     });
   const selectSource = (session: AgentSession) =>
-    void run(async (active) => {
+    void run(`session:${session.id}`, async (active) => {
       const draftId = draft.current;
       if (!draftId) return;
-      const result = await request<{ snapshot: Omit<HandoffSnapshot, "workspace"> }>({
+      const result = await request<{ snapshot: SourceSnapshot }>({
         action: "snapshot",
         draft_id: draftId,
         session_id: session.id,
@@ -164,24 +351,37 @@ export function HandoffFlow({
       setPermissionsChecked(false);
       invalidate();
       setStage("brief");
-      requestAnimationFrame(() => active() && title.current?.focus());
+      focusStep(active);
+    });
+  const nextPage = () =>
+    void run("list", async (active) => {
+      const draftId = draft.current;
+      if (!draftId || !cursor) return;
+      const page = await request<Omit<StartResult, "draft_id">>({
+        action: "list",
+        draft_id: draftId,
+        cursor,
+      });
+      if (active()) {
+        setSessions(page.sessions);
+        setCursor(page.nextCursor);
+        // 下一頁 is gone on the last page; the list heading is where the new rows start.
+        focusSessions(active);
+      }
     });
   const update = (key: keyof HandoffFields, value: string) => {
     setFields((old) => ({ ...old, [key]: value }));
     invalidate();
   };
   const checkAndPreview = () =>
-    void run(async (active) => {
+    void run("check", async (active) => {
       const draftId = draft.current;
       if (!draftId) return;
       invalidate();
       const checked = await request<HandoffBaseline>({
         action: "baseline",
         draft_id: draftId,
-        paths: paths
-          .split(/\r?\n/)
-          .map((p) => p.trim())
-          .filter(Boolean),
+        paths: relatedPaths(paths),
       });
       if (!active()) return;
       setBaseline(checked);
@@ -192,10 +392,13 @@ export function HandoffFlow({
         source_stopped: sourceStopped,
         permissions_checked: permissionsChecked,
       });
-      if (active()) setPreview(result);
+      if (!active()) return;
+      setPreview(result);
+      setStage("preview");
+      focusStep(active);
     });
   const copy = () =>
-    void run(async (active) => {
+    void run("copy", async (active) => {
       const draftId = draft.current;
       if (!draftId || !preview || !reviewed) return;
       setCopied(false);
@@ -209,7 +412,12 @@ export function HandoffFlow({
             permissions_checked: true,
           }),
         writeText: (text) => navigator.clipboard.writeText(text),
-        invalidate,
+        // The reviewed content no longer stands: back to the form to check again.
+        invalidate: () => {
+          invalidate();
+          setStage("brief");
+          focusStep(active);
+        },
         fallback: () => {
           setReviewed(false);
           setCopied(false);
@@ -218,10 +426,13 @@ export function HandoffFlow({
         },
         active,
       });
-      if (copied) setCopied(true);
+      if (copied) {
+        setCopied(true);
+        say({ tone: "success", text: HANDOFF_COPIED_TEXT, source: "handoff" });
+      }
     });
   const reselect = () =>
-    void run(async (active) => {
+    void run("reselect", async (active) => {
       const draftId = draft.current;
       draft.current = null;
       clearSource();
@@ -229,293 +440,373 @@ export function HandoffFlow({
       requestAnimationFrame(() => active() && title.current?.focus());
       if (draftId) await request({ action: "cancel", draft_id: draftId });
     });
+  /** Back to the form: the reviewed preview no longer stands, so 核對並預覽 runs again. */
+  const edit = () => {
+    invalidate();
+    setStage("brief");
+    focusStep();
+  };
+
+  const pending = busy !== null;
+  // A preview step without a preview (it was just invalidated) shows the form instead.
+  const view: HandoffStage = stage === "preview" && !preview ? "brief" : stage;
+  const steps = handoffSteps(view, copied);
+  const pathsError = relatedPathsError(paths);
+  const ready = briefReady(fields) && !pathsError;
+  const copyBlocker = preview
+    ? handoffCopyBlocker({ preview, sourceStopped, permissionsChecked })
+    : null;
+  const spinner = (op: BusyOp, fallback: ReactNode = null) =>
+    busy === op ? <Icon icon={CircleNotch} spin /> : fallback;
 
   return (
-    <section className="handoff-page" aria-labelledby="handoff-title" aria-busy={busy}>
-      <div className="handoff-heading">
-        <button className="button secondary" type="button" onClick={onClose}>
-          <ArrowLeft /> 專案
+    <section className="handoff-page" aria-labelledby="handoff-title" aria-busy={pending}>
+      <header className="handoff-head">
+        <button
+          className="k-btn k-btn--quiet k-btn--sm handoff-back"
+          type="button"
+          onClick={onClose}
+        >
+          <Icon icon={ArrowLeft} />
+          返回專案
         </button>
-        <div>
-          <h2 ref={title} tabIndex={-1} id="handoff-title">
-            {stage === "source" ? "選來源" : "接續內容"}
+        <h1 className="k-page-title handoff-title" ref={title} tabIndex={-1} id="handoff-title">
+          {handoffTitle(workspace.name)}
+        </h1>
+        <HandoffStepper steps={steps} />
+        {slot ?? <NoticeSlot notice={localNotice} onDismiss={dismissLocal} />}
+      </header>
+
+      {view === "source" ? (
+        <section className="handoff-step" aria-labelledby="handoff-step-title">
+          <h2 className="k-sr-only" id="handoff-step-title" ref={stepTitle} tabIndex={-1}>
+            {handoffStepHeading("source")}
           </h2>
-          <span>
-            {workspace.name}
-            {snapshot ? ` · ${snapshot.source.title}` : ""}
-          </span>
-        </div>
-        {busy ? <CircleNotch className="spin" aria-label="正在核對" /> : null}
-      </div>
-      {error ? (
-        <p className="field-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {stage === "source" ? (
-        <>
-          <div className="button-row">
+          <div className="handoff-choices">
             <button
-              className="button primary"
+              className="k-card handoff-choice"
               type="button"
-              disabled={busy}
-              onClick={() => start("codex")}
+              data-selected={sourceListed || undefined}
+              aria-busy={busy === "codex" || undefined}
+              {...waitable(pending, () => start("codex"))}
             >
-              讀取 Codex 紀錄
+              <span className="k-kind">
+                <Icon icon={ClockCounterClockwise} size="lg" />
+              </span>
+              <span className="handoff-choice__text">
+                <span className="handoff-choice__title">讀取 Codex 紀錄</span>
+                <span className="handoff-choice__desc">
+                  列出這個專案最近的 Codex 對話，選一筆當參考。
+                </span>
+              </span>
+              {spinner("codex", <Icon icon={CaretRight} />)}
             </button>
             <button
-              className="button secondary"
+              className="k-card handoff-choice"
               type="button"
-              disabled={busy}
-              onClick={() => start("manual")}
+              aria-busy={busy === "manual" || undefined}
+              {...waitable(pending, () => start("manual"))}
             >
-              手動建立摘要
+              <span className="k-kind">
+                <Icon icon={PencilSimpleLine} size="lg" />
+              </span>
+              <span className="handoff-choice__text">
+                <span className="handoff-choice__title">手動建立摘要</span>
+                <span className="handoff-choice__desc">不讀取紀錄，直接寫下目標與下一步。</span>
+              </span>
+              {spinner("manual", <Icon icon={CaretRight} />)}
             </button>
           </div>
-          <section className="handoff-sources" aria-label="同專案來源紀錄">
-            {sessions.map((session) => (
-              <button
-                className="handoff-source"
-                type="button"
-                disabled={busy}
-                key={session.id}
-                onClick={() => selectSource(session)}
-              >
-                <strong>{session.title}</strong>
-                <span>
-                  {new Date(session.updatedAt * 1000).toLocaleString()} ·{" "}
-                  {sourceStatusLabel(session.sourceStatus)}
-                </span>
-              </button>
-            ))}
-            {sourceListed && !sessions.length && !busy ? (
-              <p>此頁沒有同專案紀錄，可手動建立摘要。</p>
-            ) : null}
-          </section>
-          {cursor ? (
-            <button
-              className="button secondary"
-              disabled={busy}
-              type="button"
-              onClick={() =>
-                void run(async (active) => {
-                  const draftId = draft.current;
-                  if (!draftId || !cursor) return;
-                  const page = await request<Omit<StartResult, "draft_id">>({
-                    action: "list",
-                    draft_id: draftId,
-                    cursor,
-                  });
-                  if (active()) {
-                    setSessions(page.sessions);
-                    setCursor(page.nextCursor);
-                  }
-                })
-              }
-            >
-              下一頁
-            </button>
+          {sourceListed ? (
+            <section className="k-card handoff-sessions" aria-labelledby="handoff-sessions-title">
+              <div className="k-card__head">
+                <h3
+                  className="k-card__title"
+                  id="handoff-sessions-title"
+                  ref={sessionsTitle}
+                  tabIndex={-1}
+                >
+                  這個專案的 Codex 紀錄
+                </h3>
+              </div>
+              <SessionList
+                sessions={sessions}
+                hasNextPage={cursor !== null}
+                busy={busy}
+                now={now}
+                onSelect={selectSource}
+              />
+              {cursor ? (
+                <div className="handoff-sessions__foot">
+                  <button
+                    className="k-btn k-btn--secondary k-btn--sm"
+                    type="button"
+                    aria-busy={busy === "list" || undefined}
+                    {...waitable(pending, nextPage)}
+                  >
+                    {spinner("list")}
+                    下一頁
+                  </button>
+                </div>
+              ) : null}
+            </section>
           ) : null}
-        </>
-      ) : (
-        <>
+        </section>
+      ) : null}
+
+      {view === "brief" ? (
+        <section className="handoff-step handoff-form" aria-labelledby="handoff-step-title">
+          <h2 className="k-sr-only" id="handoff-step-title" ref={stepTitle} tabIndex={-1}>
+            {handoffStepHeading("brief")}
+          </h2>
           {snapshot ? (
-            <details className="handoff-details">
+            <details className="desk-advanced handoff-ref">
               <summary>
-                來源參考 · 最近 {snapshot.coverage.recentTurnsRequested} turns
-                {snapshot.partialTurns.length ? " · 有中斷" : ""}
-                {snapshot.pendingTurns.length ? " · 有進行中" : ""}
-                {handoffCoverageTruncated(snapshot.coverage) || snapshot.coverage.hasOlderTurns
-                  ? " · 範圍有限"
-                  : ""}
+                <Icon icon={CaretRight} size="sm" />
+                <span className="handoff-ref__title">
+                  來源參考：{snapshot.source.title}
+                  <span className="k-meta"> · {coverageSummary(snapshot)}</span>
+                </span>
               </summary>
-              <p>來源摘錄僅供參考；請刪除敏感內容再自行整理。</p>
-              <pre>
+              <p className="handoff-note">來源摘錄只供參考；整理時請刪掉敏感內容。</p>
+              <pre className="k-codebox handoff-excerpt">
                 {[snapshot.lastUserRequest, snapshot.lastAgentResponse]
                   .filter(Boolean)
-                  .join("\n\n") || "沒有可用文字"}
+                  .join("\n\n") || "沒有可用的文字。"}
               </pre>
-              <pre>
-                {[...snapshot.completedTurns, ...snapshot.partialTurns]
-                  .flatMap((turn) => turn.actions)
-                  .map((action) => `${action.command} · exit ${action.exitCode ?? "unknown"}`)
-                  .join("\n")}
-              </pre>
-              <p>歷史命令的執行時間與當時版本未知。</p>
+              {[...snapshot.completedTurns, ...snapshot.partialTurns].some(
+                (turn) => turn.actions.length,
+              ) ? (
+                <pre className="k-codebox handoff-excerpt">
+                  {[...snapshot.completedTurns, ...snapshot.partialTurns]
+                    .flatMap((turn) => turn.actions)
+                    .map(
+                      (action) =>
+                        `${action.command ?? action.type} · 結束碼 ${action.exitCode ?? "不明"}`,
+                    )
+                    .join("\n")}
+                </pre>
+              ) : null}
+              <p className="handoff-note">歷史命令的執行時間與當時的版本不明。</p>
             </details>
           ) : null}
-          <div className="handoff-fields">
-            <label>
+          <div className="handoff-field">
+            <label className="handoff-label" htmlFor="handoff-goal">
               目標
-              <textarea
-                maxLength={500}
-                value={fields.goal}
-                disabled={busy}
-                onChange={(event) => update("goal", event.target.value)}
-              />
             </label>
-            <label>
+            <textarea
+              id="handoff-goal"
+              className="k-textarea"
+              maxLength={500}
+              required
+              value={fields.goal}
+              disabled={pending}
+              onChange={(event) => update("goal", event.target.value)}
+            />
+          </div>
+          <div className="handoff-field">
+            <label className="handoff-label" htmlFor="handoff-next">
               下一步
-              <textarea
-                maxLength={500}
-                value={fields.next_action}
-                disabled={busy}
-                onChange={(event) => update("next_action", event.target.value)}
-              />
             </label>
-            <details className="handoff-details">
-              <summary>完成事項、決策與待驗證</summary>
-              {(
-                [
-                  ["completed", "完成事項"],
-                  ["decisions", "決策"],
-                  ["unknowns", "待驗證"],
-                ] as const
-              ).map(([key, label]) => (
-                <label key={key}>
-                  {label}
+            <textarea
+              id="handoff-next"
+              className="k-textarea"
+              maxLength={500}
+              required
+              value={fields.next_action}
+              disabled={pending}
+              onChange={(event) => update("next_action", event.target.value)}
+            />
+          </div>
+          <details className="desk-advanced">
+            <summary>
+              <Icon icon={CaretRight} size="sm" />
+              完成事項、決策與待驗證（選填）
+            </summary>
+            <div className="handoff-optional__fields">
+              {OPTIONAL_FIELDS.map(([key, label]) => (
+                <div className="handoff-field" key={key}>
+                  <label className="handoff-label" htmlFor={`handoff-${key}`}>
+                    {label}
+                  </label>
                   <textarea
+                    id={`handoff-${key}`}
+                    className="k-textarea"
                     maxLength={1000}
                     value={fields[key]}
-                    disabled={busy}
+                    disabled={pending}
                     onChange={(event) => update(key, event.target.value)}
                   />
-                </label>
+                </div>
               ))}
-            </details>
-            <label>
-              相關文字檔 <span>最多 20 檔，每行一個相對路徑</span>
-              <textarea
-                className="handoff-paths"
-                placeholder={"src/main.ts\nREADME.md"}
-                value={paths}
-                disabled={busy}
+            </div>
+          </details>
+          <div className="handoff-field">
+            <label className="handoff-label" htmlFor="handoff-paths">
+              相關文字檔
+            </label>
+            <textarea
+              id="handoff-paths"
+              className="k-textarea k-input--mono handoff-paths"
+              placeholder={"src/main.ts\nREADME.md"}
+              value={paths}
+              disabled={pending}
+              aria-invalid={pathsError ? true : undefined}
+              aria-describedby="handoff-paths-hint"
+              onChange={(event) => {
+                setPaths(event.target.value);
+                invalidate();
+              }}
+            />
+            {pathsError ? (
+              <p className="k-error" id="handoff-paths-hint">
+                {pathsError}
+              </p>
+            ) : (
+              <p className="k-hint" id="handoff-paths-hint">
+                每行一個相對路徑，最多 20 個；預覽前會核對版本。
+              </p>
+            )}
+          </div>
+          <fieldset className="handoff-attest">
+            <legend className="handoff-label">複製前的確認</legend>
+            <label className="handoff-check">
+              <input
+                className="k-check"
+                type="checkbox"
+                checked={sourceStopped}
+                disabled={pending}
                 onChange={(event) => {
-                  setPaths(event.target.value);
-                  setBaseline(null);
+                  setSourceStopped(event.target.checked);
                   invalidate();
                 }}
               />
+              已在來源停止工作（人工聲明）
             </label>
-          </div>
-          <label className="handoff-check">
-            <input
-              type="checkbox"
-              checked={sourceStopped}
-              disabled={busy}
-              onChange={(event) => {
-                setSourceStopped(event.target.checked);
-                invalidate();
-              }}
-            />
-            已在來源停止工作（人工聲明）
-          </label>
-          <label className="handoff-check">
-            <input
-              type="checkbox"
-              checked={permissionsChecked}
-              disabled={busy}
-              onChange={(event) => {
-                setPermissionsChecked(event.target.checked);
-                invalidate();
-              }}
-            />
-            已在原生側欄核對此專案有效權限
-          </label>
-          <details className="handoff-details">
-            <summary>權限與並行限制</summary>
-            <p>
-              此步不收回授權。若要停用自動執行，請在原生側欄收回；會影響同實例其他工作。人工停止不保證排他寫入。
-            </p>
-          </details>
-          <div className="button-row">
+            <label className="handoff-check">
+              <input
+                className="k-check"
+                type="checkbox"
+                checked={permissionsChecked}
+                disabled={pending}
+                onChange={(event) => {
+                  setPermissionsChecked(event.target.checked);
+                  invalidate();
+                }}
+              />
+              已在瀏覽器側欄核對這個專案目前的權限
+            </label>
+            <details className="desk-advanced">
+              <summary>
+                <Icon icon={CaretRight} size="sm" />
+                權限與並行限制
+              </summary>
+              <p className="handoff-note">
+                接續不會收回授權。要停用自動執行，請到瀏覽器側欄收回；這會影響同一個 Kairomes
+                的其他工作。人工停止不保證只有一方寫入。
+              </p>
+            </details>
+          </fieldset>
+          <div className="handoff-actions">
             <button
-              className="button secondary"
+              className="k-btn k-btn--primary"
               type="button"
-              disabled={busy || !fields.goal.trim() || !fields.next_action.trim()}
-              onClick={checkAndPreview}
+              disabled={!ready}
+              aria-busy={busy === "check" || undefined}
+              aria-describedby={
+                !briefReady(fields)
+                  ? "handoff-ready-hint"
+                  : pathsError
+                    ? "handoff-paths-hint"
+                    : undefined
+              }
+              {...waitable(pending, checkAndPreview)}
             >
-              {preview ? "重新核對" : "核對並預覽"}
+              {spinner("check")}
+              核對並預覽
             </button>
-            <button className="text-link" type="button" onClick={reselect}>
+            <button className="k-btn k-btn--quiet" type="button" {...waitable(pending, reselect)}>
+              {spinner("reselect", <Icon icon={ArrowCounterClockwise} />)}
               重新選來源
             </button>
           </div>
-          {baseline ? (
-            <details className="handoff-details">
-              <summary>
-                {baseline.complete ? "相關檔案已核對" : "基準不完整，僅供核對"} ·{" "}
-                {baseline.files.length} 檔
-              </summary>
-              <ul>
-                {baseline.files.map((file) => (
-                  <li key={file.path}>
-                    <strong>{file.path}</strong> ·{" "}
-                    {file.version ? file.version.slice(0, 12) : file.reason}
-                  </li>
-                ))}
-              </ul>
-              <p>
-                {baseline.git.state === "available"
-                  ? `HEAD：${baseline.git.head ?? "無 commit"} · ${baseline.git.dirty.length} 個 dirty 記錄`
-                  : "Git 無法核對"}
-              </p>
-              {baseline.git.dirty.length ? (
-                <ul aria-label="本機 dirty 記錄">
-                  {baseline.git.dirty.map((file) => (
-                    <li key={`${file.status}:${file.previousPath ?? ""}:${file.path}`}>
-                      <code>{file.status.trim()}</code> ·{" "}
-                      {file.previousPath ? `${file.previousPath} → ` : ""}
-                      {file.path}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <p>未選入內容未核對；dirty 清單不是來源 Agent 的修改清單。</p>
-            </details>
+          {briefReady(fields) ? null : (
+            <p className="k-hint handoff-hint" id="handoff-ready-hint">
+              填好目標與下一步，就能核對並預覽。
+            </p>
+          )}
+        </section>
+      ) : null}
+
+      {view === "preview" && preview ? (
+        <section className="handoff-step handoff-form" aria-labelledby="handoff-step-title">
+          <h2 className="k-sr-only" id="handoff-step-title" ref={stepTitle} tabIndex={-1}>
+            {handoffStepHeading("preview")}
+          </h2>
+          {baseline ? <BaselineDetails baseline={baseline} /> : null}
+          {preview.blocked_reason ? (
+            <div className="k-notice" data-tone="warning" role="status">
+              <Icon icon={WarningCircle} size="lg" />
+              <div className="k-notice__body">{preview.blocked_reason}</div>
+            </div>
           ) : null}
-          {preview ? (
-            <section className="handoff-preview">
-              <h3>將複製的完整內容</h3>
-              {preview.blocked_reason ? (
-                <p className="field-error" role="status">
-                  {preview.blocked_reason}
-                </p>
-              ) : null}
-              <textarea
-                ref={previewField}
-                readOnly
-                value={preview.text}
-                aria-label="將複製的接續內容"
-              />
-              <label className="handoff-check">
-                <input
-                  type="checkbox"
-                  checked={reviewed}
-                  disabled={busy}
-                  onChange={(event) => {
-                    setReviewed(event.target.checked);
-                    setCopied(false);
-                  }}
-                />
-                已審閱分享內容
-              </label>
-              <button
-                className="button primary"
-                type="button"
-                disabled={
-                  busy || !reviewed || !sourceStopped || !permissionsChecked || !preview.complete
-                }
-                onClick={copy}
-              >
-                <Copy />
-                複製接續內容
-              </button>
-              {copied ? <p role="status">已複製，請自行貼到 ChatGPT。</p> : null}
-            </section>
+          <div className="handoff-field">
+            <label className="handoff-label" htmlFor="handoff-preview">
+              將複製的完整內容
+            </label>
+            <textarea
+              id="handoff-preview"
+              className="k-codebox handoff-codebox"
+              ref={previewField}
+              readOnly
+              value={preview.text}
+            />
+          </div>
+          <label className="handoff-check">
+            <input
+              className="k-check"
+              type="checkbox"
+              checked={reviewed}
+              disabled={pending}
+              onChange={(event) => {
+                setReviewed(event.target.checked);
+                setCopied(false);
+              }}
+            />
+            已審閱分享內容
+          </label>
+          <div className="handoff-actions">
+            <button
+              className="k-btn k-btn--primary"
+              type="button"
+              disabled={
+                !canCopyHandoff({
+                  busy: false,
+                  reviewed,
+                  sourceStopped,
+                  permissionsChecked,
+                  preview,
+                })
+              }
+              aria-busy={busy === "copy" || undefined}
+              aria-describedby={copyBlocker ? "handoff-copy-hint" : undefined}
+              {...waitable(pending, copy)}
+            >
+              {spinner("copy", <Icon icon={Copy} />)}
+              複製接續內容
+            </button>
+            <button className="k-btn k-btn--quiet" type="button" {...waitable(pending, edit)}>
+              <Icon icon={PencilSimple} />
+              返回修改
+            </button>
+          </div>
+          {copyBlocker ? (
+            <p className="k-hint handoff-hint" id="handoff-copy-hint">
+              {copyBlocker}
+            </p>
           ) : null}
-        </>
-      )}
+        </section>
+      ) : null}
     </section>
   );
 }

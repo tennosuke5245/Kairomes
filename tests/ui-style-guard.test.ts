@@ -7,7 +7,11 @@ const root = new URL("../", import.meta.url);
 const read = (file: string) => readFile(new URL(file, root), "utf8");
 const TOKENS = "packages/ui-tokens/tokens.css";
 const COMPONENTS = "packages/ui-tokens/components.css";
-const GUARDED_STYLESHEETS = [TOKENS, COMPONENTS];
+const SIDE_PANEL = ["apps/extension/sidepanel.css", "apps/extension/mcp-panel.css"];
+const WIDGET = "apps/widget/src/styles.css";
+const MCP_RESULT = "apps/widget/src/mcp-result.css";
+const DESKTOP = "apps/desktop/src/styles.css";
+const GUARDED_STYLESHEETS = [TOKENS, COMPONENTS, ...SIDE_PANEL, WIDGET, MCP_RESULT, DESKTOP];
 const MIN_FONT_PX = 12;
 
 type Rule = { at: string[]; selector: string; declarations: Map<string, string> };
@@ -254,9 +258,90 @@ describe("guarded stylesheets", () => {
     }
   });
 
-  test("components.css takes every colour from tokens", async () => {
-    const css = (await read(COMPONENTS)).replace(/\/\*[\s\S]*?\*\//g, "");
+  test("components.css and the side panel take every colour from tokens", async () => {
+    for (const file of [COMPONENTS, ...SIDE_PANEL]) {
+      const css = (await read(file)).replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(css.match(/#[0-9a-f]{3,8}\b/gi) ?? [], file).toEqual([]);
+      expect(css.match(/\b(?:rgba?|hsla?)\(/gi) ?? [], file).toEqual([]);
+    }
+  });
+
+  test("the side panel uses no legacy palette names and no theme pin", async () => {
+    for (const file of SIDE_PANEL) {
+      const css = (await read(file)).replace(/\/\*[\s\S]*?\*\//g, "");
+      // Every var() is a --k-* token or the shared [data-tone] plumbing (--tone, --tone-soft,
+      // --tone-on, --tone-line): the legacy alias block (--red, --paper, …) is gone.
+      expect(css.match(/var\(--(?!k-|tone\)|tone-(?:soft|on|line)\))[\w-]+/g) ?? [], file).toEqual(
+        [],
+      );
+    }
+    const html = await read("apps/extension/sidepanel.html");
+    expect(html.match(/<html\b[^>]*>/)?.[0]).not.toContain("data-theme");
+  });
+
+  test("the workbench, host viewer and MCP result card take every colour from tokens", async () => {
+    for (const file of [WIDGET, MCP_RESULT]) {
+      const css = await read(file);
+      // No light-only or OS-only palettes: no legacy aliases, no own dark-mode branch.
+      expect(css, file).not.toMatch(/--signal-(?:bg|paper|ink|muted|faint|line|red|green)\b/);
+      expect(css, file).not.toMatch(
+        /--(?:bg|panel|raised|paper|ink|muted|faint|accent|error|red|green|line|text)\s*:/,
+      );
+      expect(css, file).not.toMatch(/prefers-color-scheme/);
+      expect(css, file).not.toContain("chatgpt-workbench");
+      const literals = parseCss(css).flatMap((rule) =>
+        [...rule.declarations]
+          .filter(([, value]) => /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(/i.test(value))
+          .map(([property, value]) => `${file} ${rule.selector} { ${property}: ${value} }`),
+      );
+      expect(literals).toEqual([]);
+    }
+    expect(parseCss(await read(WIDGET)).length).toBeGreaterThan(200);
+  });
+
+  test("the replaced renderers and pickers leave no styles behind", async () => {
+    const selectors = (await Promise.all([WIDGET, MCP_RESULT].map(read))).flatMap((css) =>
+      parseCss(css).map((rule) => rule.selector),
+    );
+    const legacy =
+      /\.(?:topbar|body-grid|sidebar|main-panel|view-tabs|chat-composer|welcome|workspace-picker|section-label|icon-button|accent-button|error-banner|connection|result-card|result-header|result-status|signal-diff|full-diff|inspector-(?:heading|status|section|callout|primary|technical|command|error)|signal-file|signal-search|editor-code|line-numbers|search-result|file-row|command-(?:toolbar|output|argv)|terminal-(?:toolbar|footer|screen)|output-preview|result-excerpt)(?![\w-])/;
+    expect(selectors.filter((selector) => legacy.test(selector))).toEqual([]);
+  });
+});
+
+describe("Desktop stylesheet", () => {
+  const desktopCss = async () => (await read(DESKTOP)).replace(/\/\*[\s\S]*?\*\//g, "");
+
+  test("takes every colour from tokens and keeps no legacy alias or theme pin", async () => {
+    const css = await desktopCss();
     expect(css.match(/#[0-9a-f]{3,8}\b/gi) ?? []).toEqual([]);
     expect(css.match(/\b(?:rgba?|hsla?)\(/gi) ?? []).toEqual([]);
+    // Every var() is a --k-* token or the [data-tone] plumbing; the alias block is gone.
+    expect(css.match(/var\(--(?!k-|tone\)|tone-(?:soft|on|line)\))[\w-]+/g) ?? []).toEqual([]);
+    expect(css).not.toMatch(/color-scheme\s*:/);
+    const html = await read("apps/desktop/index.html");
+    expect(html.match(/<html\b[^>]*>/)?.[0]).not.toContain("data-theme");
+  });
+
+  test("sizes text only from the type scale, so nothing drops below the 13px meta size", async () => {
+    const rules = parseCss(await desktopCss());
+    const sizes = rules.flatMap((rule) =>
+      ["font-size", "font"].flatMap((name) => {
+        const value = rule.declarations.get(name);
+        return value ? [`${rule.selector} { ${name}: ${value} }`] : [];
+      }),
+    );
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(sizes.filter((size) => !/var\(--k-text-(?:meta|base|md|lg|xl)\)/.test(size))).toEqual(
+      [],
+    );
+  });
+
+  test("has no narrow-screen layouts the 820px window cannot reach", async () => {
+    const rules = parseCss(await desktopCss());
+    const widths = rules.flatMap((rule) => rule.at).filter((at) => /max-width|min-width/.test(at));
+    expect(widths).toEqual([]);
+    // One focus treatment comes from components.css; the old translucent ring is gone.
+    expect(rules.some((rule) => rule.declarations.get("outline")?.includes("3px"))).toBe(false);
   });
 });

@@ -48,4 +48,8 @@ async function request<T>(input: HandoffInput): Promise<T> {
 }
 const root = document.querySelector<HTMLElement>("#root");
 if (!root) throw new Error("Missing handoff fixture root");
-createRoot(root).render(<HandoffFlow workspace={workspace} onClose={() => {}} request={request} />);
+createRoot(root).render(
+  <div className="k-app desk-preview">
+    <HandoffFlow workspace={workspace} onClose={() => {}} request={request} />
+  </div>,
+);

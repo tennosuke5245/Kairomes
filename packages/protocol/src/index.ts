@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DenialReasonSchema } from "./approval.ts";
 import { ArtifactInputs, ArtifactSchema } from "./artifact.ts";
+import { ImageImportInputs, ImageImportResultSchema } from "./artifact-import.ts";
 import {
   CommandInputs,
   CommandListSchema,
@@ -29,19 +30,22 @@ export { readSnapshots } from "./event-stream.ts";
 export * from "./file-change.ts";
 export * from "./git.ts";
 export * from "./handoff.ts";
+export * from "./image-path.ts";
 export * from "./mcp-auth.ts";
 export * from "./mcp-host.ts";
 export * from "./panel-access.ts";
 export * from "./ui-state.ts";
 export { z };
-export const VERSION = "0.2.0";
-export const WIDGET_URI = "ui://kairomes/workbench/v7.html";
-export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v3.html";
+export const VERSION = "0.3.0";
+export const WIDGET_URI = "ui://kairomes/workbench/v8.html";
+export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v4.html";
 export const LIMITS = {
   concurrentCalls: 4,
   fileBytes: 1024 * 1024,
   artifactBytes: 25 * 1024 * 1024,
   artifactPixels: 80 * 1024 * 1024,
+  /** Decoded-size budget of one imported image (16 MP); each side stays within 16,384 px. */
+  importPixels: 16 * 1024 * 1024,
   responseBytes: 48 * 1024,
   directoryEntries: 200,
   /** Directory entries read by one workspace_snapshot call. */
@@ -304,6 +308,7 @@ export const ToolDataSchema = z.discriminatedUnion("kind", [
   GitStatusSchema,
   GitDiffSchema,
   GitLogSchema,
+  ImageImportResultSchema,
 ]);
 export type ToolData = z.infer<typeof ToolDataSchema>;
 export const WorkspaceId = z.string().uuid();
@@ -329,6 +334,7 @@ export const Inputs = {
   ...CommandInputs,
   ...FileChangeInputs,
   ...GitInputs,
+  ...ImageImportInputs,
   ...McpInputs,
   terminal_start: z
     .object({

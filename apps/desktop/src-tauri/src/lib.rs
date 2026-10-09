@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex, OnceLock,
@@ -33,6 +33,11 @@ const TRAY_ID: &str = "kairomes-tray";
 const STATUS_EVENT: &str = "desktop-status";
 /// Asks the UI to confirm a runtime restart requested from the tray.
 const CONFIRM_RESTART_EVENT: &str = "desktop-confirm-restart";
+/// The first close of the window: the UI says once that Kairomes keeps running in the tray,
+/// then hides the window through `hide_main_window`.
+const CLOSE_HINT_EVENT: &str = "desktop-close-hint";
+/// Marker in the app config directory: the close hint has been shown on this machine.
+const CLOSE_HINT_MARKER: &str = "close-hint-shown";
 const VISIBLE_STATUS_INTERVAL: Duration = Duration::from_secs(2);
 const HIDDEN_STATUS_INTERVAL: Duration = Duration::from_secs(6);
 const TUNNEL_CLIENT_RECHECK: Duration = Duration::from_secs(30);
@@ -1200,6 +1205,30 @@ fn open_external(app: AppHandle, target: String) -> Result<(), String> {
         .map_err(|error| format!("無法開啟瀏覽器：{error}"))
 }
 
+/// True only for the first close on this machine: it writes the marker, so every later close
+/// hides the window at once. Any filesystem error counts as already shown, so closing the
+/// window always works even if the UI never answers.
+fn take_close_hint(config_dir: &Path) -> bool {
+    let marker = config_dir.join(CLOSE_HINT_MARKER);
+    if fs::symlink_metadata(&marker).is_ok() {
+        return false;
+    }
+    fs::create_dir_all(config_dir).is_ok()
+        && fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&marker)
+            .is_ok()
+}
+
+/// Hides the main window to the tray once the user has read the one-time close hint.
+#[tauri::command]
+fn hide_main_window(app: AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.hide();
+    }
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.show();
@@ -1303,7 +1332,16 @@ pub fn run() {
                 let app = window.app_handle();
                 if !runtime_state(app).quitting.load(Ordering::SeqCst) {
                     api.prevent_close();
-                    let _ = window.hide();
+                    // The first close explains the tray instead of vanishing; the UI hides the
+                    // window after that. A second close (or no answer) hides it directly.
+                    let first = app
+                        .path()
+                        .app_config_dir()
+                        .map(|dir| take_close_hint(&dir))
+                        .unwrap_or(false);
+                    if !first || app.emit_to(MAIN_WINDOW, CLOSE_HINT_EVENT, ()).is_err() {
+                        let _ = window.hide();
+                    }
                 }
             }
             WindowEvent::Focused(true) => wake_status_loop(window.app_handle()),
@@ -1323,7 +1361,8 @@ pub fn run() {
             remove_workspace,
             get_diagnostics,
             handoff_request,
-            open_external
+            open_external,
+            hide_main_window
         ])
         .run(tauri::generate_context!())
         .expect("Kairomes Desktop failed to start");
@@ -1332,6 +1371,34 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn close_hint_is_taken_once_per_config_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "kairomes-close-hint-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        // The directory does not exist yet: the first close creates it and takes the hint.
+        assert!(take_close_hint(&dir));
+        assert!(!take_close_hint(&dir));
+        assert!(dir.join(CLOSE_HINT_MARKER).is_file());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn close_hint_counts_as_shown_when_it_cannot_be_recorded() {
+        let file =
+            std::env::temp_dir().join(format!("kairomes-close-hint-file-{}", std::process::id()));
+        fs::write(&file, b"not a directory").unwrap();
+        // A config path that is a file cannot hold the marker: close hides, never asks.
+        assert!(!take_close_hint(&file));
+        let _ = fs::remove_file(&file);
+    }
 
     fn connection_json(origin: &str, token: &str, pid: u32, instance: &str) -> Vec<u8> {
         serde_json::to_vec(&json!({

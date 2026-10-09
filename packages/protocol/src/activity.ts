@@ -1,9 +1,15 @@
-import type { ArtifactImport, ArtifactImportApproval } from "./artifact-import.ts";
+import type {
+  ArtifactImport,
+  ArtifactImportApproval,
+  ArtifactImportWriteOutcome,
+  ImageImportHydration,
+} from "./artifact-import.ts";
 import type { Command, CommandApproval } from "./command.ts";
 import type { FileChange, FileChangeApproval } from "./file-change.ts";
 import type { TerminalSession, ToolData, ToolName, Workspace } from "./index.ts";
 
-export type ActivitySource = "mcp" | "local-ui" | "system";
+/** local-panel: started by the local user in the paired Extension side panel. */
+export type ActivitySource = "mcp" | "local-ui" | "local-panel" | "system";
 export interface ActivityEntry {
   id: string;
   seq: number;
@@ -20,7 +26,7 @@ export interface ActivityEntry {
     | FileChange["state"]
     | ArtifactImport["state"];
   updatedAt: number;
-  /** Includes quarantined internal activity names that are not public MCP tools. */
+  /** Image imports keep the internal activity name artifact_import_request for every route. */
   tool?: ToolName | "artifact_import_request";
   workspaceId?: string;
   path?: string;
@@ -28,6 +34,10 @@ export interface ActivityEntry {
   commandId?: string;
   changeId?: string;
   importId?: string;
+  /** Image imports only: label `failed` with `unknown` as 結果待確認 (artifactImportLabel). */
+  writeOutcome?: ArtifactImportWriteOutcome;
+  /** Image imports only: the fixed error code, so a conflict names its cause (never the message). */
+  errorCode?: string;
   resultId?: string;
   message?: string;
 }
@@ -63,6 +73,12 @@ export interface PanelSnapshot {
   commands?: CommandApproval[];
   changes?: FileChangeApproval[];
   imports?: ArtifactImportApproval[];
+  /** Whether ChatGPT attached the image file to image_import_request calls (diagnostics). */
+  importHydration?: ImageImportHydration;
+}
+/** Response of the trusted import routes: the full snapshot plus the import they touched. */
+export interface PanelImportResponse extends PanelSnapshot {
+  import: ArtifactImportApproval;
 }
 export interface AccessGrant {
   id: string;

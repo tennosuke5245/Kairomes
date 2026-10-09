@@ -3,7 +3,8 @@
 ## 語言與依據
 
 - 對使用者的回覆、介面文字及公開文件使用繁體中文，禁止簡體中文。程式識別字使用英文；MCP 工具描述使用清楚的英文。
-- 以目前程式碼及根目錄的 `README.md`、`CONTRIBUTING.md`、`SECURITY.md` 為準；歷史計畫不能作為現行功能的唯一依據。
+- 以目前程式碼及根目錄的 `README.md`、`CONTRIBUTING.md`、`SECURITY.md` 與 `docs/usage.md` 為準；歷史計畫不能作為現行功能的唯一依據。
+- `README.en.md`、`README.ja.md` 是 README 的英文與日文翻譯，修改 README 時一併更新；其他公開文件維持繁體中文。
 
 ## 專案位置
 
@@ -11,6 +12,7 @@
 - `apps/extension`：Chrome／Edge 側欄；`apps/widget`：聊天內 MCP App。
 - `apps/cli`：CLI 與 Desktop sidecar 入口；`apps/daemon`：本機服務、MCP、核准與工具執行。
 - `packages/protocol`：共享 schema；`packages/workspace-core`：工作區登錄與檔案操作；`scripts`：建置與檢查。
+- `packages/ui-tokens`：共用設計 token 與 `.k-*` 元件樣式，由 `tests/ui-style-guard.test.ts` 守門。
 
 ## 修改與驗證
 
