@@ -515,7 +515,8 @@ test("destinations stay create-only inside the workspace", async () => {
 });
 
 test("a folder removed while downloading fails the import within the result bounds", async () => {
-  const folders = ["a", "b", "c", "d"].map((letter) => letter.repeat(240));
+  // Long enough that the message needs truncating, short enough for macOS's 1024-byte paths.
+  const folders = ["a", "b"].map((letter) => letter.repeat(240));
   await mkdir(path.join(f.root, ...folders), { recursive: true });
   const gate = deferred<Uint8Array>();
   respond = () => gate.promise;
@@ -525,6 +526,7 @@ test("a folder removed while downloading fails the import within the result boun
   const failed = await settled(started.image_import.id);
   expect(failed).toMatchObject({ state: "failed", error_code: "PARENT_NOT_FOUND" });
   expect(failed.message?.length).toBeLessThanOrEqual(500);
+  expect(failed.message).toEndWith("…");
   expect(() => ImageImportResultSchema.parse(manager.poll(started.image_import.id))).not.toThrow();
 });
 
