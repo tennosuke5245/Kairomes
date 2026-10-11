@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | 開發者 | OpenAI 託管的 plugin | 使用者自建的自訂 MCP plugin（Secure MCP Tunnel） |
 | 檔案參數 | 對模型呈現為字串 `file_uri`（絕對本機路徑），runtime 上傳後改寫；這與 OpenAI Codex 原始碼對 fileParams 的處理一致，推論為同一機制（見[產圖自動交付 §2](generated-image-delivery.md#2-google-drive-是怎麼收到產圖的)） | 公開契約 `_meta["openai/fileParams"]`：頂層欄位為**物件或物件陣列** `{download_url, file_id, mime_type?, file_name?}`（[OpenAI Plugins Reference](https://developers.openai.com/plugins/reference#define-file-inputs)） |
-| 是否有公開文件 | 改寫的輸出形狀有公開；輸入端的遮蔽與上傳、Drive 的實作沒有公開 | 有；但文件沒說明哪些來源（上傳、產圖、Python 產物）會被交付 |
+| 是否有公開文件 | 改寫的輸出形狀有官方文件；輸入端的遮蔽與上傳沒有官方文件（Codex 開源原始碼可見，ChatGPT 網頁版未公開）；Drive 的實作未公開 | 有；但文件沒說明哪些來源（上傳、產圖、Python 產物）會被交付 |
 | 取得 bytes 的位置 | OpenAI 與 Google 的雲端之間 | 使用者電腦經網際網路下載 OpenAI 短效網址，不帶 Cookie 或帳號憑證 |
 | 寫入位置與控制 | 使用者的 Drive，受 Google OAuth 權限範圍限制 | 本機專案資料夾，由側欄個別核准，只建立新檔 |
 | 檔案類型 | Drive 本身不限 | 需要本機白名單：存進電腦的檔案可能被雙擊執行或被工具自動載入 |
@@ -34,7 +34,7 @@
 
 - Kairomes 不改成接收字串路徑。若 ChatGPT 對 Kairomes 也做上傳改寫，daemon 收到的就是檔案物件；收到未改寫的字串路徑（例如 `/mnt/data/report.xlsx`）時一律拒絕，不嘗試解讀，也不把它當網址。
 - Drive 成功上傳的截圖、其他 connector 的回報或單元測試，都不能代替 Kairomes 的實測。
-- 現行圖片工具描述寫著「不要自己填 `/mnt/data` 路徑」，而 OpenAI 的 runtime 正是靠模型填路徑來觸發上傳改寫，現行措辭很可能讓檔案交不出來。文案實驗與修改依[產圖自動交付 §5～§7](generated-image-delivery.md#5-程式變更先讓實驗分得出結果)，檔案工具沿用同一結論；daemon 的輸入 schema 不放寬。
+- 現行圖片工具描述寫著「不要自己填 `/mnt/data` 路徑」，而 OpenAI 開源的 Codex runtime 正是靠模型填路徑來觸發上傳改寫（原始碼），現行措辭很可能讓檔案交不出來；ChatGPT 網頁版是否相同待驗證，見[產圖自動交付 §3](generated-image-delivery.md#3-kairomes-現在可能收不到的原因)的 H2。文案實驗與修改依[產圖自動交付 §5～§7](generated-image-delivery.md#5-程式變更先讓實驗分得出結果)，檔案工具沿用同一結論；daemon 的輸入 schema 不放寬。
 
 ## 3. 使用情境與範圍
 
@@ -66,7 +66,7 @@
 | 類型白名單、內容判斷、巨集與可執行內容檢查 | 新增 | 第 6 節 |
 | Windows 網路來源標記（Mark of the Web） | 新增、待驗證 | 第 6.4 節 |
 | 文字預覽與隱藏字元提示 | 新增 | 第 8 節 |
-| 宿主交付非圖片檔、Python 產物 | 待驗證 | 第 9 節 F0；圖片的 G0 也尚未執行，兩者同一輪測 |
+| 宿主交付非圖片檔、Python 產物 | 待驗證 | 第 9 節 F0；在產圖交付的 G0 之後執行 |
 
 ## 5. 產品決策（建議值，待維護者確認）
 
@@ -192,14 +192,14 @@ ZIP 只讀中央目錄的名稱與大小，不解壓任何內容，因此沒有 
 
 ## 9. 宿主交付驗證（F0）
 
-F0 與圖片的 G0 在**同一輪**真實環境執行：同一版 daemon、真實 ChatGPT developer-mode App、Secure MCP Tunnel。工具先放在可信本機的開發旗標後面（正式建置不註冊），測試期間在側欄一律拒絕或取消，不落檔。側欄設定已有的 `importHydration` 計數（附檔／未附檔／被拒）擴充到檔案工具，用來分辨「沒有交付」「交付了不同形狀」與「下載失敗」。
+F0 在[產圖交付的 G0](generated-image-delivery.md#6-實測矩陣g0)完成、且 F3 的旗標版本就緒後執行，沿用那份文件的介面矩陣、隔離與 Refresh 步驟：同一版 daemon、以 Tunnel 建立的自訂 MCP plugin。工具先放在可信本機的開發旗標後面（正式建置不註冊），測試期間在側欄一律拒絕或取消，不落檔。側欄設定已有的 `importHydration` 計數（附檔／未附檔／被拒）擴充到檔案工具，用來分辨「沒有交付」「交付了不同形狀」與「下載失敗」。
 
 | 案例 | 材料 | 要觀察的結果 | 通過後可以宣稱 |
 | --- | --- | --- | --- |
 | 上傳的 PDF | 公開合成 PDF，已知 SHA-256 | 收到物件；下載 bytes 的 SHA-256 相符 | 匯入上傳到 ChatGPT 的 PDF |
 | 上傳的 CSV／XLSX／ZIP | 同上 | 同上；記錄是否提供 `mime_type`、`file_name` | 各類型的上傳檔 |
 | Python 產生的檔案 | 在對話中以固定內容產生合成 CSV 與 XLSX，可重算 SHA-256 | 收到物件，或沒有交付、或交付字串；比對兩種工具描述措辭 | **保存 ChatGPT 產生的檔案**（與 Drive 情境最接近） |
-| ChatGPT 產生的圖片 | 圖片 G0 原矩陣 | 見[圖片匯入架構 §4](image-import-architecture.md#4-g0先證明交付能力完全不落檔) | 保存 ChatGPT 產圖 |
+| ChatGPT 產生的圖片 | 產圖交付的 G0 | 見[產圖自動交付 §6](generated-image-delivery.md#6-實測矩陣g0) | 保存 ChatGPT 產圖 |
 | 檔案庫選檔 | 工作台「從 ChatGPT 選擇檔案」 | 非圖片能否選取；`getFileDownloadUrl` 的網址能否下載 | 從 ChatGPT 選擇檔案 |
 | 超過上限 | 30 MiB 合成檔 | 在寫入前以大小上限拒絕，分類正確 | 上限行為 |
 | 短效網址到期 | 延遲後再下載 | 固定分類，不顯示網址或遠端內容 | 恢復語意 |
@@ -217,7 +217,7 @@ F0 結果決定發布用語：只有上傳檔通過時，對外寫「匯入你�
 | F1 本機核心 | P0，可與 F0 並行 | `packages/workspace-core` 新增類型政策模組（白名單、簽章、UTF-8、ZIP 中央目錄、巨集檢查）；[`artifact-imports.ts`](../../packages/workspace-core/src/artifact-imports.ts)依類型 `prepare`；Windows 網路來源標記；位置限制 | 第 11 節的類型、位置與寫入失敗案例通過；圖片既有測試不變 |
 | F2 側欄審閱與自行匯入 | P0 | [`preview.ts`](../../apps/daemon/src/preview.ts)上傳路由改收 octet-stream；Extension 的[`approval-panel.ts`](../../apps/extension/src/approval-panel.ts)、[`import-view.ts`](../../apps/extension/src/import-view.ts)、[`import-dialog.ts`](../../apps/extension/src/import-dialog.ts)、[`image-intake.ts`](../../apps/extension/src/image-intake.ts)、[`image-preview.ts`](../../apps/extension/src/image-preview.ts)擴充為檔案；文字預覽 | 讀回＋SHA-256 閘門、文字預覽、隱藏字元、窄版與鍵盤驗收 |
 | F3 模型工具 | P0 | [`artifact-import.ts`](../../packages/protocol/src/artifact-import.ts)新增 schema；[`index.ts`](../../packages/protocol/src/index.ts)、[`tools.ts`](../../apps/daemon/src/tools.ts)、[`server.ts`](../../apps/daemon/src/server.ts)註冊與 instructions；[`openai-file-download.ts`](../../apps/daemon/src/openai-file-download.ts)依類型檢查開頭 bytes；[`artifact-imports.ts`](../../apps/daemon/src/artifact-imports.ts)共用名額；MCP 結果卡、工作台動態與「從 ChatGPT 選擇檔案」 | descriptor 快照測試；工具先在開發旗標後；`awaiting_file` 退路可用 |
-| F0 宿主交付 | P0，依賴 F3 的開發旗標版本 | 第 9 節；需維護者的真實帳號與 Tunnel | 依結果決定宣稱範圍 |
+| F0 宿主交付 | P0，依賴產圖交付的 G0 與 F3 的開發旗標版本 | 第 9 節；需維護者的真實帳號與 Tunnel | 依結果決定宣稱範圍 |
 | F4 完整流程與發布 | P1 | 真實 ChatGPT → Tunnel → 側欄 → 本機新檔 → SHA-256 核對；公開文件 | 第 12 節文件同步；`bun run check` 通過 |
 | F5 後續 | P2 | 一次多檔（`fileParams` 陣列＋批次核准）、超過 25 MiB 的落盤暫存、覆寫既有檔（綁定 `expected_version`）、建立資料夾、音訊／影片／字型、ZIP 解壓（另需 zip slip 設計）、PDF 預覽 | 各自另立規格與失敗案例 |
 
