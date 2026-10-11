@@ -2,6 +2,8 @@
 
 日期：2026-10-11。基準為 0.3.0 原始碼（`a8d47fb`）。狀態：**新增功能提案，尚未實作**。這份文件只產出規劃；沒有修改產品程式、啟用工具、執行真實 ChatGPT／Tunnel 傳檔，也沒有變更任何權限。
 
+> **優先序（2026-10-11 調整）**：先完成 [ChatGPT 產圖自動存到本機](generated-image-delivery.md)，也就是讓 ChatGPT 自己生成的圖片經 Kairomes 送進專案。本稿是之後的一般檔案擴充，依賴那份文件的診斷與實測結果。Google Drive 傳檔機制以那份文件第 2 節為準，本稿第 2 節只保留與一般檔案有關的差異。
+
 本稿延續[圖片匯入規劃](image-import-plan.md)與[圖片匯入架構](image-import-architecture.md)，把「存一張圖片」擴充成「把 ChatGPT 對話中的檔案存進本機專案資料夾」。圖片匯入已建立的下載邊界、個別核准、create-only 寫入與結果不明處理全部沿用，本稿只寫新增與不同的部分。依據為目前程式碼、[README](../../README.zh-TW.md)、[SECURITY](../../SECURITY.md)、[操作指南](../usage.md)與[側欄決策邊界](../../.agents/skills/kairomes-sidebar-planning/references/boundaries.md)。
 
 ## 1. 目標與結論
@@ -11,7 +13,7 @@
 結論：
 
 1. **方向可行，而且大部分骨架已經存在。** 圖片匯入已經用 OpenAI 公開的檔案參數契約（`_meta["openai/fileParams"]`）收檔，這個契約本身不限檔案類型。擴充到一般檔案，宿主端不需要新機制；主要新增的是本機的**類型安全、審閱畫面與寫入規則**。
-2. **Google Drive 可以，不代表 Kairomes 一定收得到同樣的檔案。** Drive 是 OpenAI 自己做的 connector，用的是沒有對第三方公開的 runtime 改寫；Kairomes 是 developer-mode App，只能依公開契約。差異見第 2 節，必須用實測（F0）確認。
+2. **Google Drive 可以，不代表 Kairomes 一定收得到同樣的檔案。** Drive 是 OpenAI 託管的 plugin；runtime 端把檔案交給工具的上傳改寫，輸出就是公開的 fileParams 物件，但輸入端怎麼運作沒有公開文件，ChatGPT 網頁版是否替自訂 plugin 做同樣的事也未知（詳見[產圖自動交付 §2](generated-image-delivery.md#2-google-drive-是怎麼收到產圖的)）。必須用實測（F0）確認。
 3. **「ChatGPT 用 Python 產生的檔案」是最大的未知數。** 這最接近 Drive 的使用情境，但公開文件沒有說明這類檔案會不會交給第三方工具。F0 未通過前，不宣稱支援。
 4. **不論宿主能不能交檔，都有可用的退路。** 模型可以只發出請求（不附檔），由使用者把下載好的檔案拖進側欄，跟現在的「等待圖片」相同。
 
@@ -19,9 +21,9 @@
 
 | 面向 | ChatGPT 的 Google Drive | Kairomes |
 | --- | --- | --- |
-| 開發者 | OpenAI 第一方 connector | 第三方自架 MCP（developer-mode App＋Secure MCP Tunnel） |
-| 檔案參數 | `google_drive_upload_file.file_uri` 是**字串**，工具描述稱它為 runtime／connector 的檔案參照與絕對本機路徑，由 runtime 改寫頂層檔案參數（[圖片匯入架構 §3.3](image-import-architecture.md#33-本環境-google-drive-runtime-的路徑重寫) 記錄的工具描述證據） | 公開契約 `_meta["openai/fileParams"]`：頂層欄位為**物件或物件陣列** `{download_url, file_id, mime_type?, file_name?}`（[OpenAI Plugins Reference](https://developers.openai.com/plugins/reference#define-file-inputs)） |
-| 是否有公開文件 | 改寫機制沒有對第三方公開 | 有；但文件沒說明哪些來源（上傳、產圖、Python 產物）會被交付 |
+| 開發者 | OpenAI 託管的 plugin | 使用者自建的自訂 MCP plugin（Secure MCP Tunnel） |
+| 檔案參數 | 對模型呈現為字串 `file_uri`（絕對本機路徑），runtime 上傳後改寫；這與 OpenAI Codex 原始碼對 fileParams 的處理一致，推論為同一機制（見[產圖自動交付 §2](generated-image-delivery.md#2-google-drive-是怎麼收到產圖的)） | 公開契約 `_meta["openai/fileParams"]`：頂層欄位為**物件或物件陣列** `{download_url, file_id, mime_type?, file_name?}`（[OpenAI Plugins Reference](https://developers.openai.com/plugins/reference#define-file-inputs)） |
+| 是否有公開文件 | 改寫的輸出形狀有公開；輸入端的遮蔽與上傳、Drive 的實作沒有公開 | 有；但文件沒說明哪些來源（上傳、產圖、Python 產物）會被交付 |
 | 取得 bytes 的位置 | OpenAI 與 Google 的雲端之間 | 使用者電腦經網際網路下載 OpenAI 短效網址，不帶 Cookie 或帳號憑證 |
 | 寫入位置與控制 | 使用者的 Drive，受 Google OAuth 權限範圍限制 | 本機專案資料夾，由側欄個別核准，只建立新檔 |
 | 檔案類型 | Drive 本身不限 | 需要本機白名單：存進電腦的檔案可能被雙擊執行或被工具自動載入 |
@@ -30,9 +32,9 @@
 
 不能沿用的推論：
 
-- Drive 的字串路徑改寫**不能**套用到 Kairomes。Kairomes 收到字串路徑（例如 `/mnt/data/report.xlsx`）時一律拒絕，不嘗試解讀，也不把它當網址。
+- Kairomes 不改成接收字串路徑。若 ChatGPT 對 Kairomes 也做上傳改寫，daemon 收到的就是檔案物件；收到未改寫的字串路徑（例如 `/mnt/data/report.xlsx`）時一律拒絕，不嘗試解讀，也不把它當網址。
 - Drive 成功上傳的截圖、其他 connector 的回報或單元測試，都不能代替 Kairomes 的實測。
-- 現行圖片工具描述寫著「不要自己填 `/mnt/data` 路徑」。如果 ChatGPT 的 runtime 需要模型以某種方式指名 Python 產物才會交付，現行措辭可能讓它交不出來；這要在 F0 用不同描述比對，但 daemon 的輸入 schema 不放寬。
+- 現行圖片工具描述寫著「不要自己填 `/mnt/data` 路徑」，而 OpenAI 的 runtime 正是靠模型填路徑來觸發上傳改寫，現行措辭很可能讓檔案交不出來。文案實驗與修改依[產圖自動交付 §5～§7](generated-image-delivery.md#5-程式變更先讓實驗分得出結果)，檔案工具沿用同一結論；daemon 的輸入 schema 不放寬。
 
 ## 3. 使用情境與範圍
 

@@ -58,6 +58,8 @@ Git 可達歷史中的相關檔案從建倉提交 `dbef01f` 就已是停用版�
 
 ### 3.3 本環境 Google Drive runtime 的路徑重寫
 
+> **2026-10-11 補充**：OpenAI 開源的 Codex runtime 會把 `openai/fileParams` 欄位對模型呈現為「絕對本機路徑」字串，呼叫時上傳並改寫成檔案物件，且只對 ChatGPT 託管的 plugin 生效。下文描述與這段原始碼一致，推論取自 Codex／Work 環境。這也代表 0.3.0 工具文案中「不要自己填 `/mnt/data` 或沙箱路徑」的指示可能擋住交付。證據分級與後續實驗見[產圖自動存到本機](generated-image-delivery.md)。
+
 本次可取得的 connector 工具描述包含：`google_drive_upload_file.file_uri` 是字串且描述為 runtime／connector 的檔案參照與絕對本機路徑；`google_drive_batch_update_document.image_uris` 提及 runtime 目前只重寫頂層檔案參數。這是**該 connector 的工具描述證據**，沒有取得後端實作，也沒有在本次規劃執行上傳。
 
 使用者提供的成功截圖可作為另一條宿主 runtime 可能已能搬檔的研究線索。其路徑型參數不能直接替換本稿的 object 型 `file`，也不能推導外接 Kairomes／Secure MCP Tunnel 具有相同的 path 重寫服務。不得把截圖的私人路徑、檔名、圖片或成功數字寫入測試 fixture 或公開紀錄。
