@@ -9,6 +9,7 @@
 | 文件 | 內容 |
 | --- | --- |
 | [設計系統](design-system.md) | 0.3.0 的 token、狀態色調、元件、各介面原則與文案規則，附可操作設計稿 |
+| [ChatGPT 檔案匯入規劃](file-import-plan.md) | 參考 Google Drive connector，把圖片匯入擴充為一般檔案：類型白名單、側欄審閱、`file_import_*` 工具草案與宿主交付驗證（F0）；尚未實作 |
 | [ChatGPT 圖片匯入規劃與設計稿](image-import-plan.md) | 直接公開檔案匯入工具、宿主傳檔驗證閘門、原生圖片審閱及可操作合成設計稿；0.3.0 原始碼已實作，真實宿主傳檔尚未驗證 |
 | [Layer MCP 相容性修補](mcp-oauth-recovery.md) | 清單 schema 上限、卡片按鈕與回呼頁修正；新版 Host 可讀 41 個公開工具，帳號工具使用待驗 |
 | [MCP OAuth 實作紀錄](mcp-oauth-implementation.md) | 第一階段原生登入、初次合成驗收與公開 metadata |
@@ -53,6 +54,7 @@
 | 0.3.0 新介面 | Desktop、側欄、工作台與 MCP 結果卡改用[設計系統](design-system.md)並支援深色模式；只有合成預覽、Vite 預覽與建置檢查，未在原生視窗、真實 Extension 或 ChatGPT 宿主驗收 |
 | 0.3.0 模型工具 | 唯讀 Git、批次讀檔、檔名尋找、核准模式回報、長輪詢與拒絕原因已實作並有自動測試 |
 | 0.3.0 圖片匯入 | 公開工具、等待圖片、側欄上傳與預覽綁定核准已實作；真實 ChatGPT 宿主交付（G0）未驗證，見[圖片匯入規劃](image-import-plan.md) |
+| 檔案匯入 | 規劃中，見[檔案匯入規劃](file-import-plan.md)；程式碼未實作，宿主交付非圖片檔（F0）未驗證 |
 
 D01～D09 的狀態指程式碼與合成證據，不代表所有產品驗收目標已達成；最新逐項限制與檢查結果以[可讀性與相容檢查](readability-audit.md)及[第四輪稽核](completion-audit.md)為準。原先九張 Kairomes 圖是改版前基準，不應當成改版後畫面。
 
