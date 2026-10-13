@@ -46,6 +46,12 @@ export function countsText(counts: { files: number; folders: number }) {
   ].join(" · ");
 }
 
+/** The summary's rows as files and new folders: a 建立資料夾 row is not a file. */
+export function rowCounts(rows: readonly ChangedPath[]) {
+  const folders = rows.filter((row) => row.operation === "建立資料夾").length;
+  return { files: rows.length - folders, folders };
+}
+
 const changedAt = (change: FileChange) => change.applied_at ?? change.created_at;
 
 /**

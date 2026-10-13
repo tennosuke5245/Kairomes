@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
-import { chmod, lstat, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { parseUnifiedDiff } from "@kairomes/protocol";
 import { fixture } from "../../../tests/fixtures.ts";
@@ -337,47 +347,63 @@ test("new folders follow the private-name and reserved-name rules", async () => 
   }
 });
 
-test.skipIf(process.platform === "win32")(
-  "an existing ancestor link blocks new folders",
-  async () => {
-    const f = await fixture();
-    try {
-      const engine = new WorkspaceChanges(f.registry);
-      const outside = path.join(f.directory, "outside");
-      await mkdir(outside);
-      await symlink(outside, `${f.root}/linked`);
-      await expect(
-        engine.prepare(f.workspace.id, [newFile("linked/new/a.ts")]),
-      ).rejects.toMatchObject({ code: "LINK_BLOCKED" });
-      expect(await readdir(outside)).toEqual([]);
-    } finally {
-      await f.dispose();
-    }
-  },
-);
+/** Directory links: junctions on Windows (no privilege needed), symbolic links elsewhere. */
+const linkType = process.platform === "win32" ? "junction" : "dir";
 
-test.skipIf(process.platform === "win32")(
-  "a planned folder replaced by a link after review blocks the batch and leaves no folder",
-  async () => {
-    const f = await fixture();
-    try {
-      const engine = new WorkspaceChanges(f.registry);
-      const outside = path.join(f.directory, "outside");
-      await mkdir(outside);
-      const prepared = await engine.prepare(f.workspace.id, [
-        newFile("fresh/one.ts"),
-        newFile("a/b/c.ts"),
-      ]);
-      await symlink(outside, `${f.root}/a`);
-      await expect(engine.apply(prepared)).rejects.toMatchObject({ code: "LINK_BLOCKED" });
-      expect(await readdir(outside)).toEqual([]);
-      expect(existsSync(`${f.root}/fresh`)).toBe(false);
-      expect((await lstat(`${f.root}/a`)).isSymbolicLink()).toBe(true);
-    } finally {
-      await f.dispose();
-    }
-  },
-);
+test("an existing ancestor link blocks new folders", async () => {
+  const f = await fixture();
+  try {
+    const engine = new WorkspaceChanges(f.registry);
+    const outside = path.join(f.directory, "outside");
+    await mkdir(outside);
+    await symlink(outside, `${f.root}/linked`, linkType);
+    await expect(
+      engine.prepare(f.workspace.id, [newFile("linked/new/a.ts")]),
+    ).rejects.toMatchObject({ code: "LINK_BLOCKED" });
+    expect(await readdir(outside)).toEqual([]);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("a planned folder replaced by a link after review blocks the batch and leaves no folder", async () => {
+  const f = await fixture();
+  try {
+    const engine = new WorkspaceChanges(f.registry);
+    const outside = path.join(f.directory, "outside");
+    await mkdir(outside);
+    const prepared = await engine.prepare(f.workspace.id, [
+      newFile("fresh/one.ts"),
+      newFile("a/b/c.ts"),
+    ]);
+    await symlink(outside, `${f.root}/a`, linkType);
+    await expect(engine.apply(prepared)).rejects.toMatchObject({ code: "LINK_BLOCKED" });
+    expect(await readdir(outside)).toEqual([]);
+    expect(existsSync(`${f.root}/fresh`)).toBe(false);
+    expect((await lstat(`${f.root}/a`)).isSymbolicLink()).toBe(true);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("an existing ancestor replaced by a link after review blocks the batch", async () => {
+  const f = await fixture();
+  try {
+    const engine = new WorkspaceChanges(f.registry);
+    const outside = path.join(f.directory, "outside");
+    await mkdir(outside);
+    await mkdir(`${f.root}/existing`);
+    const prepared = await engine.prepare(f.workspace.id, [newFile("existing/new/a.ts")]);
+    expect(prepared.folders.map((folder) => folder.path)).toEqual(["existing/new"]);
+    await rename(`${f.root}/existing`, `${f.root}/existing-old`);
+    await symlink(outside, `${f.root}/existing`, linkType);
+    await expect(engine.apply(prepared)).rejects.toMatchObject({ code: "LINK_BLOCKED" });
+    expect(await readdir(outside)).toEqual([]);
+    expect(await readdir(`${f.root}/existing-old`)).toEqual([]);
+  } finally {
+    await f.dispose();
+  }
+});
 
 test("a planned folder taken by a file after review blocks the batch", async () => {
   const f = await fixture();
@@ -713,43 +739,54 @@ test("a deleted path that was recreated, or lost its parent, cannot be reverted"
   }
 });
 
+test("a revert never writes through a link that replaced a deleted file's parent", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(`${f.root}/docs`);
+    await writeFile(`${f.root}/docs/old.md`, "old\n");
+    const old = await new WorkspaceFiles(f.registry).read(f.workspace.id, "docs/old.md");
+    const engine = new WorkspaceChanges(f.registry);
+    const outside = path.join(f.directory, "outside");
+    await mkdir(outside);
+    const deleted = await engine.prepare(f.workspace.id, [
+      { operation: "delete", path: "docs/old.md", expected_version: old.version },
+    ]);
+    await engine.apply(deleted);
+
+    // The parent of a deleted file became a link out of the workspace before the revert.
+    await rm(`${f.root}/docs`, { recursive: true });
+    await symlink(outside, `${f.root}/docs`, linkType);
+    await expect(engine.prepareRevert(deleted)).rejects.toMatchObject({
+      code: "REVERT_CONFLICT",
+    });
+    expect(await readdir(outside)).toEqual([]);
+
+    // ...or between the revert's review and its apply.
+    await rename(`${f.root}/docs`, `${f.root}/docs-link-1`);
+    await mkdir(`${f.root}/docs`);
+    const revert = await engine.prepareRevert(deleted);
+    await rename(`${f.root}/docs`, `${f.root}/docs-old`);
+    await symlink(outside, `${f.root}/docs`, linkType);
+    await expect(engine.apply(revert)).rejects.toMatchObject({
+      code: expect.stringMatching(/^(LINK_BLOCKED|WORKSPACE_CHANGED)$/),
+    });
+    expect(await readdir(outside)).toEqual([]);
+    expect(await readdir(`${f.root}/docs-old`)).toEqual([]);
+  } finally {
+    await f.dispose();
+  }
+});
+
+// File symbolic links need extra privileges on Windows.
 test.skipIf(process.platform === "win32")(
-  "a revert never writes through a link that replaced a parent or a file",
+  "a revert never writes through a link that replaced an overwritten file",
   async () => {
     const f = await fixture();
     try {
-      await mkdir(`${f.root}/docs`);
-      await writeFile(`${f.root}/docs/old.md`, "old\n");
-      const files = new WorkspaceFiles(f.registry);
-      const old = await files.read(f.workspace.id, "docs/old.md");
-      const readme = await files.read(f.workspace.id, "README.md");
+      const readme = await new WorkspaceFiles(f.registry).read(f.workspace.id, "README.md");
       const engine = new WorkspaceChanges(f.registry);
       const outside = path.join(f.directory, "outside");
       await mkdir(outside);
-      const deleted = await engine.prepare(f.workspace.id, [
-        { operation: "delete", path: "docs/old.md", expected_version: old.version },
-      ]);
-      await engine.apply(deleted);
-
-      // The parent of a deleted file became a link out of the workspace before the revert.
-      await rm(`${f.root}/docs`, { recursive: true });
-      await symlink(outside, `${f.root}/docs`);
-      await expect(engine.prepareRevert(deleted)).rejects.toMatchObject({
-        code: "REVERT_CONFLICT",
-      });
-      expect(await readdir(outside)).toEqual([]);
-
-      // ...or between the revert's review and its apply.
-      await rm(`${f.root}/docs`);
-      await mkdir(`${f.root}/docs`);
-      const revert = await engine.prepareRevert(deleted);
-      await rm(`${f.root}/docs`, { recursive: true });
-      await symlink(outside, `${f.root}/docs`);
-      await expect(engine.apply(revert)).rejects.toMatchObject({
-        code: expect.stringMatching(/^(LINK_BLOCKED|WORKSPACE_CHANGED)$/),
-      });
-      expect(await readdir(outside)).toEqual([]);
-
       // An overwritten file replaced by a link to identical bytes outside is not the same file.
       const written = await engine.prepare(f.workspace.id, [
         {
@@ -774,6 +811,35 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("a new file under a planned folder named in other casing can be reverted", async () => {
+  const f = await fixture();
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  // Windows compares paths without case, so a later path may name the planned folder in
+  // another casing. Simulated here; on Windows itself both casings below are the same file.
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    const engine = new WorkspaceChanges(f.registry);
+    const applied = await engine.prepare(f.workspace.id, [
+      { operation: "mkdir", path: "Assets" },
+      newFile("assets/a.txt"),
+    ]);
+    expect(applied.folders.map((folder) => folder.path)).toEqual(["Assets"]);
+    expect(applied.files[1]?.target).toBe(path.join(f.root, "Assets", "a.txt"));
+    // What apply leaves behind, readable under both casings as on Windows.
+    for (const folder of ["Assets", "assets"]) {
+      await mkdir(`${f.root}/${folder}`, { recursive: true });
+      await writeFile(`${f.root}/${folder}/a.txt`, "export {};\n");
+    }
+    const revert = await engine.prepareRevert(applied);
+    expect(revert.files.map((file) => [file.operation, file.path])).toEqual([
+      ["delete", "assets/a.txt"],
+    ]);
+  } finally {
+    if (platform) Object.defineProperty(process, "platform", platform);
+    await f.dispose();
+  }
+});
 
 test("reverting a batch that created folders deletes its files but keeps the folders", async () => {
   const f = await fixture();

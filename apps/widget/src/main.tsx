@@ -41,7 +41,7 @@ import {
 import { ActivityPanel, latestFocus, useActivity } from "./activity-panel.tsx";
 import { ArtifactPanel } from "./artifact-panel.tsx";
 import { createBridge } from "./bridge.ts";
-import { summarizeChanges } from "./change-summary.ts";
+import { rowCounts, summarizeChanges } from "./change-summary.ts";
 import { CommandPanel } from "./command-panel.tsx";
 import { friendlyError } from "./errors.ts";
 import { FileBrowser, FileViewer } from "./file-browser.tsx";
@@ -1269,7 +1269,7 @@ function Workbench({ hostResult }: { hostResult?: ToolData }) {
       !workspaceFilter && selectedId
         ? { id: selectedId, name: workspaceName(selectedId), hue: workspaceHue(selectedId) }
         : undefined;
-    const changeCount = summarizeChanges(activity.snapshot?.changes, workspaceFilter).length;
+    const changeCount = rowCounts(summarizeChanges(activity.snapshot?.changes, workspaceFilter));
     // Names for workspace tags; none when one project is filtered (the switcher says it).
     const tagName = workspaceFilter
       ? undefined

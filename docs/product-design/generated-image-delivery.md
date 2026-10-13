@@ -1,6 +1,6 @@
 # ChatGPT 產圖自動存到本機：規劃
 
-日期：2026-10-11。基準為 0.3.0 原始碼（`a8d47fb`）。狀態：**規劃；C2、C3 診斷已實作（未發佈），其餘尚未實作；真實 ChatGPT 交付（G0）仍未執行**。這份文件只產出研究與規劃；沒有修改產品程式、執行真實帳號測試，也沒有變更權限。
+日期：2026-10-11。基準為 0.3.0 原始碼（`a8d47fb`）。狀態：**規劃；C2、C3 診斷已實作（未發佈），其餘尚未實作；真實 ChatGPT 交付（G0）仍未執行**。這份文件只產出研究與規劃；除 C2、C3 外沒有修改產品程式，也沒有執行真實帳號測試或變更權限。
 
 **目標方向**：ChatGPT 在對話中**自己生成**的圖片 → 經 Kairomes → 存進使用者電腦上已掛載的專案資料夾。要達到的效果，就像使用者截圖裡 ChatGPT 的 Google Drive 把產圖存進 Drive 那樣（截圖是在哪個介面拍的待確認，見第 2 節）。這裡的「自動」指不用使用者先下載、再拖進側欄；每張圖仍在配對側欄個別核准（見第 8 節）。不是本機傳檔給 ChatGPT，也不是一般檔案匯入（一般檔案另見[檔案匯入規劃](file-import-plan.md)，排在本稿之後）。
 
@@ -63,7 +63,7 @@
 
 | # | 假說 | 證據 | 若成立 |
 | --- | --- | --- | --- |
-| H1 | **Kairomes 文案禁止了宿主的指名方式。** 禁令散在四處：`file` 欄位描述（[`artifact-import.ts`](../../packages/protocol/src/artifact-import.ts) 第 149～151 行）、工具描述（[`tools.ts`](../../apps/daemon/src/tools.ts) 第 92 行）、server instructions（[`server.ts`](../../apps/daemon/src/server.ts) 第 52 行）、`awaiting_file` 的 guidance（[`artifact-imports.ts`](../../apps/daemon/src/artifact-imports.ts) 第 185 行）。而且 `file` 是選填 | 文案已核對；宿主行為為原始碼＋第三方 | 模型唯一合規的動作就是省略，固定落到「等待圖片」 |
+| H1 | **Kairomes 文案禁止了宿主的指名方式。** 禁令散在四處：`file` 欄位描述（[`artifact-import.ts`](../../packages/protocol/src/artifact-import.ts) 中 `image_import_request` 的 `file` describe）、工具描述（[`tools.ts`](../../apps/daemon/src/tools.ts) 第 92 行）、server instructions（[`server.ts`](../../apps/daemon/src/server.ts) 第 52 行）、`awaiting_file` 的 guidance（[`artifact-imports.ts`](../../apps/daemon/src/artifact-imports.ts) 中以 “The image was not attached to this call” 開頭的字串）。而且 `file` 是選填 | 文案已核對；宿主行為為原始碼＋第三方 | 模型唯一合規的動作就是省略，固定落到「等待圖片」 |
 | H2 | ChatGPT 網頁版不替自訂 Tunnel plugin 做 fileParams 改寫 | 第三方證據不足以判斷：cigar-journal 在網頁版 GPT-5.x 沒收到；web-gpt-file-save 自稱成功，但沒註明介面與模型 | 改文案在網頁版也無效，只可能在 Work 或特定模型下成功 |
 | H3 | 宿主會改寫上傳圖，但生成圖不算可交付的對話檔案 | 第三方（論壇 1382637 同一 App 對照） | 只能宣稱「匯入上傳到 ChatGPT 的圖片」 |
 | H4 | 選了 Kairomes 時，ChatGPT 不觸發原生產圖，改用 Python 畫圖 | 第三方（[論壇 1382815](https://community.openai.com/t/native-image-generation-not-triggering-when-chatgpt-app-is-selected/1382815)；OpenAI_Support 建議先不選 App 產圖） | 實驗必須先產圖，下一輪才呼叫 Kairomes |
@@ -90,7 +90,7 @@ H5 的幾種擋法：
 
 計數顯示在側欄「設定 › 一般」的「ChatGPT／安全通道」列：「圖片匯入請求：附圖 N · 未附圖 N · 被拒 N」。全部為 0 時隱藏，Host 重啟後歸零。
 
-C2、C3 實作後（見第 5 節），同一列下方另有一行「交付細節：建立 N · 重送 N · 下載 N（成功 N · HTTP 4xx N …）· 被拒：沙箱路徑 N · 驗證失敗：副檔名不符 N」，只列非 0 的項目，資料來自快照的 `importHydrationDetail`。用它可以分辨下表中「被拒」的原因與「其他下載失敗」的類別，不必只看錯誤碼。
+C2、C3 實作後（見第 5 節），同一列下方另有一行「交付細節：建立 N · 重送 N · 下載 N（成功 N、HTTP 4xx N …） · 被拒：沙箱路徑 N · 驗證失敗：副檔名不符 N」，只列非 0 的項目，資料來自快照的 `importHydrationDetail`。用它可以分辨下表中「被拒」的原因與「其他下載失敗」的類別，不必只看錯誤碼。
 
 1. **準備**：
    - 在 Desktop 掛載一個**專用的空白測試專案**（不要用真實專案），建好 `g0/` 資料夾。

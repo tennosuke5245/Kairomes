@@ -660,7 +660,7 @@ async function revertChange(item: ApprovalItem): Promise<string> {
     // a revert that may already exist instead of proposing a second one.
     throw cause instanceof PanelRequestError
       ? revertRefusal(cause)
-      : new Error("結果待確認；請先查看清單中是否已有這批的復原，沒有再按一次「復原這批…」。");
+      : new Error("結果待確認；可再按一次「復原這批…」，不會重複建立。");
   }
   const { revert_change_id: created, ...snapshot } = response;
   if (connection !== target) throw new Error("結果待確認。");

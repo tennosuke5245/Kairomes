@@ -6,8 +6,8 @@ import {
 import {
   type DiffView,
   facts,
-  quote,
   requestMeta,
+  requestQuote,
   revertNote,
   riskElement,
 } from "./approval-detail.ts";
@@ -50,12 +50,12 @@ import {
   importFileAction,
   isPanelImport,
   isWindowsHost,
-  modelReason,
   outcomeReason,
   primaryLabel,
   queueRow,
   type RowMeta,
   revertLines,
+  revertOriginSummary,
   runningMeta,
   sortForTab,
   stateView,
@@ -800,10 +800,11 @@ export class ApprovalPanel {
       return;
     }
     const parts: HTMLElement[] = [riskElement(item, this.windows)];
-    const revert = revertNote(revertLines(item, this.items));
+    const revert = revertNote(revertLines(item));
     if (revert) parts.push(revert);
-    const reason = modelReason(item);
-    if (reason) parts.push(quote(reason));
+    // A revert's own summary only repeats the original's, which is quoted instead.
+    const said = requestQuote(item, this.items);
+    if (said) parts.push(said);
     parts.push(...facts(item, this.diffView), requestMeta(item, this.now()));
     this.detail.replaceChildren(...parts);
     setButtonLabel(this.approve, primaryLabel(item));
@@ -1036,8 +1037,9 @@ export class ApprovalPanel {
     const revertable =
       Boolean(this.revertChange) &&
       canRevertChange(item, this.items, this.available, this.uncertain(item));
-    const lines = revertLines(item, this.items);
-    const key = JSON.stringify([item, justApproved, revertable, lines, this.reverting]);
+    const lines = revertLines(item);
+    const origin = lines.length ? revertOriginSummary(item, this.items) : undefined;
+    const key = JSON.stringify([item, justApproved, revertable, lines, origin, this.reverting]);
     if (key !== this.recordKey) {
       this.recordKey = key;
       // The write this panel approved has finished: say how, once.
@@ -1091,9 +1093,12 @@ export class ApprovalPanel {
       if (revertable) actions.append(this.revertButton(item));
       if (actions.firstChild) outcome.append(actions);
       const revert = revertNote(lines);
+      // Records show no model summary, except a revert's quote of what it undoes.
+      const said = lines.length ? requestQuote(item, this.items) : undefined;
       this.detail.replaceChildren(
         outcome,
         ...(revert ? [revert] : []),
+        ...(said ? [said] : []),
         ...(isImportItem(item)
           ? [this.importView.show(item, "record")]
           : facts(item, this.diffView)),

@@ -128,11 +128,18 @@ test("rows are grouped, dense and whole-row buttons; reasons and tags appear onc
 });
 
 test("the changed-files button and the 變更 chip never share a label", () => {
-  const html = render({ onChanges: () => {}, changeCount: 5 });
+  const html = render({ onChanges: () => {}, changeCount: { files: 5, folders: 0 } });
   expect(html).toContain('aria-label="本次變更的 5 個檔案"');
   expect(html).toContain("5 個檔案</button>");
   expect(html).not.toMatch(/>變更<span class="k-badge"/);
   expect(html).toContain('aria-pressed="false">變更</button>');
+  // New folders are not counted as files.
+  const mixed = render({ onChanges: () => {}, changeCount: { files: 1, folders: 1 } });
+  expect(mixed).toContain('aria-label="本次變更的 1 個檔案 · 1 個新資料夾"');
+  expect(mixed).toContain("1 個檔案 · 1 個新資料夾</button>");
+  const folders = render({ onChanges: () => {}, changeCount: { files: 0, folders: 2 } });
+  expect(folders).toContain("2 個新資料夾</button>");
+  expect(render({ onChanges: () => {} })).not.toContain("wb-changes");
 });
 
 test("filter chips show counts only when non-zero and filter without touching unread", () => {

@@ -41,7 +41,7 @@ Kairomes does not read your ChatGPT cookies or chat page, and it never sends mes
 - Shows Git branches, changes, diffs, and recent commits (read-only).
 - Saves images ChatGPT generates into your project: pasting, choosing, or dragging the image into the side panel always works. ChatGPT handing the image over directly is implemented but not yet verified with real ChatGPT. Each image is previewed in the side panel and written only after you confirm.
 - Lets you approve or reject file edits and commands in the side panel. When you reject, you can give a reason and ChatGPT adjusts.
-- Lets you undo an applied batch of file edits from the side panel. The undo is shown as a new change for you to review; folders it created stay, and commands are not undone.
+- Lets you undo an applied batch of file edits from the side panel with 「復原這批…」 (Undo this batch…). The undo is shown as a new change for you to review (applied right away while autonomous mode covers file edits); folders it created stay, and commands are not undone. (Next release, not in v0.3.0.)
 - Offers a time-limited autonomous mode, so ChatGPT doesn't have to ask every time.
 - Lets you add other MCP servers from the side panel, either local programs or remote URLs.
 - Turns Codex work into a summary you can paste into ChatGPT to pick up where you left off.

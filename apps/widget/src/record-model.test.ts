@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Command, FileChange, TerminalSession } from "@kairomes/protocol";
-import { changeCounts, countsText, summarizeChanges } from "./change-summary.ts";
+import { changeCounts, countsText, rowCounts, summarizeChanges } from "./change-summary.ts";
 import { changeReason, commandRecord, terminalRecord } from "./record-model.ts";
 
 const now = new Date(2026, 9, 6, 15, 30).getTime();
@@ -165,6 +165,9 @@ test("a folder created by mkdir is its own row labelled 建立資料夾", () => 
   ];
   expect(countsText(changeCounts(mixed))).toBe("1 個檔案 · 2 個新資料夾");
   expect(countsText(changeCounts([]))).toBe("0 個檔案");
+  // The workbench bar counts the summary's rows the same way.
+  const batch: FileChange = { ...folder, files: mixed };
+  expect(rowCounts(summarizeChanges([batch]))).toEqual({ files: 1, folders: 1 });
 });
 
 test("a newer pending change is never hidden behind an older change applied later", () => {

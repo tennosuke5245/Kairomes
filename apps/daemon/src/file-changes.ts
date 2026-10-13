@@ -190,10 +190,15 @@ export class FileChangeManager {
         "FILE_CHANGE_LIMIT",
         "本次服務的檔案變更數量已達上限，請重新啟動工作台。",
       );
+    // A change with a revert being created, pending or applying stays retained, so a denied
+    // or expired revert can be retried even after later, unrelated changes.
+    const referenced = new Set<string>(input.revertsChangeId ? [input.revertsChangeId] : []);
+    for (const job of this.jobs.values())
+      if (fileChangeActive(job.view) && job.view.reverts_change_id)
+        referenced.add(job.view.reverts_change_id);
     while (this.jobs.size >= limits.retained) {
-      // The change being reverted stays retained so a denied or expired revert can be retried.
       const retired = [...this.jobs.values()].find(
-        (job) => !fileChangeActive(job.view) && job.view.id !== input.revertsChangeId,
+        (job) => !fileChangeActive(job.view) && !referenced.has(job.view.id),
       );
       if (!retired) throw new KairomesError("FILE_CHANGE_LIMIT", "檔案變更仍在清理，請稍後再試。");
       this.jobs.delete(retired.view.id);

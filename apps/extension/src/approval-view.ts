@@ -2,6 +2,7 @@ import {
   type ArtifactImportApproval,
   artifactImportDisplayState,
   artifactImportLabel,
+  REVERT_SCOPE_NOTE,
 } from "@kairomes/protocol";
 import { parseUnifiedDiff } from "@kairomes/protocol/diff-lines";
 import {
@@ -202,7 +203,8 @@ export function modelReason(item: ApprovalItem) {
 
 /**
  * 復原這批… is offered on an applied file change while the panel is online and no unconfirmed
- * decision locks it, unless a revert of it is already waiting or applying.
+ * decision locks it, unless a revert of it is already waiting or applying. A batch that only
+ * created folders has no file contents to revert (the Host refuses it with NO_CHANGES).
  */
 export function canRevertChange(
   item: ApprovalItem,
@@ -215,6 +217,7 @@ export function canRevertChange(
     !locked &&
     "files" in item &&
     item.state === "applied" &&
+    item.files.some((file) => file.operation !== "mkdir") &&
     !items.some(
       (other) =>
         "files" in other &&
@@ -239,15 +242,25 @@ function undone(item: ApprovalItem, items: readonly ApprovalItem[]): boolean {
   );
 }
 
-export const REVERT_SCOPE_NOTE = "只還原檔案內容，不復原命令或其他副作用；新建的資料夾會保留。";
+export { REVERT_SCOPE_NOTE };
 
-/** A revert's short lines: what it undoes and, while it awaits a decision, what it leaves. */
-export function revertLines(item: ApprovalItem, items: readonly ApprovalItem[]): string[] {
+/**
+ * A revert's Host-authored lines: that it undoes an earlier change and, while it awaits a
+ * decision, what it leaves. The original's model-written summary is not among them; it is
+ * shown apart as unverified text (revertOriginSummary).
+ */
+export function revertLines(item: ApprovalItem): string[] {
   if (!("files" in item) || !item.reverts_change_id) return [];
+  return item.state === "pending" ? ["復原先前的變更", REVERT_SCOPE_NOTE] : ["復原先前的變更"];
+}
+
+/** The model-written summary of the change a revert undoes, while it is still retained. */
+export function revertOriginSummary(item: ApprovalItem, items: readonly ApprovalItem[]) {
+  if (!("files" in item) || !item.reverts_change_id) return undefined;
   const original = items.find((other) => other.id === item.reverts_change_id);
-  const origin =
-    original && "summary" in original ? `復原自：${original.summary}` : "復原先前的變更";
-  return item.state === "pending" ? [origin, REVERT_SCOPE_NOTE] : [origin];
+  return original && "summary" in original && original.summary.trim()
+    ? original.summary
+    : undefined;
 }
 
 /** Below this, a pending request's countdown takes the warning style. */

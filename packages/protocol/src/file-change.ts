@@ -145,6 +145,9 @@ export const fileChangeLabels: Record<FileChange["state"], string> = {
   failed: "套用失敗",
 };
 
+/** What a revert leaves alone; the side panel and the workbench show it on a pending revert. */
+export const REVERT_SCOPE_NOTE = "只還原檔案內容，不復原命令或其他副作用；新建的資料夾會保留。";
+
 export function fileChangeActive(change: Pick<FileChange, "state">) {
   return ["pending", "applying"].includes(change.state);
 }

@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { FileChangeInputs, FileChangeResultSchema } from "@kairomes/protocol";
 import { WorkspaceFiles } from "@kairomes/workspace-core";
 import { fixture } from "../../../tests/fixtures.ts";
@@ -307,6 +308,26 @@ test("a planned folder replaced after review ends as a conflict without writing"
   }
 });
 
+test("an existing parent swapped for a link after review ends as a conflict", async () => {
+  const f = await fixture();
+  const service = new ToolService(f.registry, true);
+  try {
+    const outside = path.join(f.directory, "outside");
+    await mkdir(outside);
+    await mkdir(`${f.root}/existing`);
+    const requested = await service.changes.request(folderInput(f, "existing/new"), "mcp");
+    await rename(`${f.root}/existing`, `${f.root}/existing-old`);
+    await symlink(outside, `${f.root}/existing`, process.platform === "win32" ? "junction" : "dir");
+    const approval = service.changes.approvals().find((item) => item.id === requested.change.id);
+    await service.changes.decide(requested.change.id, approval?.fingerprint ?? "", true);
+    expect(service.changes.poll(requested.change.id).change.state).toBe("conflict");
+    expect(await readdir(outside)).toEqual([]);
+  } finally {
+    await service.close();
+    await f.dispose();
+  }
+});
+
 test("a mkdir path at the 1024-character limit keeps request and list output valid", async () => {
   const f = await fixture();
   const service = new ToolService(f.registry, true);
@@ -485,6 +506,10 @@ test("creating a revert never evicts the change it reverts", async () => {
       manager.cancel((await manager.request(await editInput(f))).change.id);
     expect(manager.list()).toHaveLength(24);
     const revert = await manager.revert(applied.change.id, crypto.randomUUID());
+    expect(manager.list().some((change) => change.id === applied.change.id)).toBe(true);
+    // While the revert is pending, later unrelated changes do not evict the original either.
+    for (let index = 0; index < 2; index++)
+      manager.cancel((await manager.request(await editInput(f))).change.id);
     expect(manager.list().some((change) => change.id === applied.change.id)).toBe(true);
     const approval = manager.approvals().find((item) => item.id === revert.change.id);
     await manager.decide(revert.change.id, approval?.fingerprint ?? "", false);

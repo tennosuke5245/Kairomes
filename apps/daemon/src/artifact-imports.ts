@@ -131,12 +131,18 @@ const holdingStates = new Set<ArtifactImportState>(["preparing", "pending", "app
 
 const zeroCounts = <K extends string>(keys: readonly K[]) =>
   Object.fromEntries(keys.map((key) => [key, 0])) as Record<K, number>;
-/** Verification failures of downloaded bytes, by the code prepare() reported. */
+/**
+ * Verification failures of downloaded bytes, by the code prepare() reported. prepare() also
+ * re-checks the destination; those failures (FILE_EXISTS, PARENT_NOT_FOUND, WORKSPACE_CHANGED
+ * and the like) are not about the bytes and are not counted here.
+ */
 const verifyFailures: Record<string, ImageImportVerifyFailure> = {
   ARTIFACT_EXTENSION_MISMATCH: "extension_mismatch",
   INVALID_IMAGE: "invalid_image",
   UNSAFE_IMAGE_DIMENSIONS: "dimensions",
   ANIMATED_IMAGE_UNSUPPORTED: "animated",
+  IMPORT_NOT_IMAGE: "other",
+  ARTIFACT_TOO_LARGE: "other",
 };
 
 /** Display text from the host: single line, no control or bidi characters, else null. */
@@ -703,9 +709,11 @@ export class ArtifactImportManager {
         try {
           await this.accept(job, data, abort.signal);
         } catch (error) {
-          const code = error instanceof KairomesError ? error.code : "";
-          this.detail.verify_failed[verifyFailures[code] ?? "other"]++;
-          this.diagnosticsChanged();
+          const failure = verifyFailures[error instanceof KairomesError ? error.code : ""];
+          if (failure) {
+            this.detail.verify_failed[failure]++;
+            this.diagnosticsChanged();
+          }
           throw error;
         }
       } catch (error) {

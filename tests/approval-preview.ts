@@ -31,7 +31,9 @@ import { syntheticFigureFile, syntheticFigurePng } from "./synthetic-image.ts";
 
 // Visual fixture only. This page has no credentials, bridge, or host execution capability.
 // Query flags: ?count=1|3|10, ?study=1, ?open=queue|running|recent|command|terminal|files|
-// reason|truncated, ?controls (state-change buttons). Image imports: ?imports=1 adds one in
+// reason|truncated|folders|revertable|revert-pending, ?controls (state-change buttons).
+// folders adds a pending batch that creates folders; revertable opens an applied batch with
+// 復原這批…; revert-pending opens the review of a pending revert (origin quote and scope note). Image imports: ?imports=1 adds one in
 // every state; ?open=import-awaiting|import-uploaded|import-preparing|import-pending|
 // import-loading|import-mismatch|import-recent|import-applied|import-conflict|
 // import-uncertain|import-denied|import-failed|import-dialog|import-dialog-empty|import-overlay|
@@ -135,6 +137,100 @@ const changes: FileChangeApproval[] = [
   },
 ];
 const command = commands[0] as CommandApproval;
+// An applied batch that created a folder: 最近 offers 復原這批… on it.
+const appliedChange: FileChangeApproval = {
+  ...structuredClone(changes[0] as FileChangeApproval),
+  id: "00000016-0000-4000-8000-000000000016",
+  request_id: "00000016-0000-4000-8000-000000000116",
+  summary: "新增說明文件並建立圖片資料夾。",
+  state: "applied",
+  created_at: now - 300_000,
+  applied_at: now - 290_000,
+  files: [
+    {
+      operation: "mkdir",
+      path: "docs/images",
+      before_version: null,
+      after_version: null,
+      created_folders: ["docs/", "docs/images/"],
+    },
+    {
+      operation: "write",
+      path: "docs/guide.md",
+      before_version: null,
+      after_version: "4".repeat(64),
+    },
+  ],
+  diff: "",
+  diff_available: false,
+  fingerprint: "5".repeat(64),
+};
+// A pending batch whose new file creates its parent folders, and an empty folder of its own.
+const folderChange: FileChangeApproval = {
+  ...structuredClone(changes[0] as FileChangeApproval),
+  id: "00000017-0000-4000-8000-000000000017",
+  request_id: "00000017-0000-4000-8000-000000000117",
+  summary: "建立素材資料夾並加入說明。",
+  files: [
+    {
+      operation: "mkdir",
+      path: "assets/2026",
+      before_version: null,
+      after_version: null,
+      created_folders: ["assets/", "assets/2026/"],
+    },
+    {
+      operation: "write",
+      path: "assets/2026/README.md",
+      before_version: null,
+      after_version: "6".repeat(64),
+    },
+  ],
+  diff: [
+    "--- /dev/null",
+    "+++ b/assets/",
+    "@@ create folder @@",
+    "",
+    "--- /dev/null",
+    "+++ b/assets/2026/",
+    "@@ create folder @@",
+    "",
+    "--- /dev/null",
+    "+++ b/assets/2026/README.md",
+    "@@ create file @@",
+    "+# 2026 素材",
+  ].join("\n"),
+  fingerprint: "7".repeat(64),
+};
+/** The inverse the Host would propose for an applied batch (stand-in, no files involved). */
+function revertOf(original: FileChangeApproval, index: number): FileChangeApproval {
+  const id = `000000${(0x20 + index).toString(16)}-0000-4000-8000-0000000000${(0x20 + index).toString(16)}`;
+  const files = original.files.filter((file) => file.operation !== "mkdir");
+  return {
+    ...structuredClone(original),
+    id,
+    request_id: id.replace(/.$/, "f"),
+    summary: `復原：${original.summary}`,
+    state: "pending",
+    created_at: Date.now(),
+    applied_at: null,
+    expires_at: Date.now() + 300_000,
+    reverts_change_id: original.id,
+    files: files.map((file) => ({
+      operation: file.before_version ? ("write" as const) : ("delete" as const),
+      path: file.path,
+      before_version: file.after_version,
+      after_version: file.before_version,
+    })),
+    diff: files
+      .map((file) =>
+        [`--- a/${file.path}`, "+++ /dev/null", "@@ delete file @@", "-# 使用說明"].join("\n"),
+      )
+      .join("\n\n"),
+    diff_available: true,
+    fingerprint: String(index % 10).repeat(64),
+  };
+}
 // Work that already ran or finished, for the 執行中 and 最近 tabs (outside study mode).
 const history: ApprovalItem[] = [
   {
@@ -183,6 +279,7 @@ const history: ApprovalItem[] = [
     created_at: now - 1_500_000,
     fingerprint: "3".repeat(64),
   },
+  appliedChange,
 ];
 const query = new URLSearchParams(location.search);
 const study = query.get("study") === "1";
@@ -208,6 +305,9 @@ const pending: ApprovalItem[] = study
 if (open === "truncated")
   for (const item of pending) if ("files" in item) item.diff_truncated = true;
 const items: ApprovalItem[] = study ? pending : [...pending, ...structuredClone(history)];
+if (!study && open === "folders") items.unshift(structuredClone(folderChange));
+let reverts = 0;
+if (!study && open === "revert-pending") items.unshift(revertOf(appliedChange, reverts++));
 const workspaces = study ? [...studyWorkspaces] : [fixture];
 
 // Synthetic image imports: one in every state, served by the in-page stand-in daemon.
@@ -456,6 +556,15 @@ const panel = new ApprovalPanel(container, {
   // The fixture has no workbench: say what would open instead.
   openFile: (item) => showNotice(`會在工作台開啟 ${item.path}`, "neutral"),
   refresh: async () => render(),
+  // Stand-in for the Host's revert route: the inverse becomes a new pending change.
+  revert: async (item) => {
+    const original = items.find((other) => other.id === item.id);
+    if (!original || !("files" in original)) throw new Error("請求未被接受。");
+    const created = revertOf(original, reverts++);
+    items.unshift(created);
+    render();
+    return created.id;
+  },
 });
 const dialog = new ImportDialog({
   client: {
@@ -581,6 +690,13 @@ if (open?.startsWith("import-")) {
   if (open === "terminal") clickRow((item) => "shell" in item);
   if (open === "files" || open === "truncated" || open === "reason")
     clickRow((item) => "files" in item);
+  if (open === "folders") clickRow((item) => item.id === folderChange.id);
+  if (open === "revert-pending")
+    clickRow((item) => "files" in item && Boolean(item.reverts_change_id));
+  if (open === "revertable") {
+    panel.open("recent");
+    clickRow((item) => item.id === appliedChange.id, false);
+  }
   if (open === "reason")
     setTimeout(() => {
       [...container.querySelectorAll<HTMLButtonElement>("button")]

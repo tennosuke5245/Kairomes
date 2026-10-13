@@ -90,13 +90,12 @@ export function importHydrationDetailText(detail: ImageImportHydrationDetail | u
   const results = counted(detail.download_results, downloadLabels);
   if (detail.download_attempts > 0 || results.length)
     parts.push(
-      `下載 ${detail.download_attempts}${results.length ? `（${results.join(" · ")}）` : ""}`,
+      `下載 ${detail.download_attempts}${results.length ? `（${results.join("、")}）` : ""}`,
     );
   const rejected = counted(detail.rejected, rejectionLabels);
   if (rejected.length) parts.push(`被拒：${rejected.join("、")}`);
   const failed = counted(detail.verify_failed, verifyLabels);
   if (failed.length) parts.push(`驗證失敗：${failed.join("、")}`);
   if (!parts.length) return undefined;
-  // A full-width parenthesis already carries its own space before the next separator.
-  return `交付細節：${parts.join(" · ").replaceAll("） · ", "）· ")}`;
+  return `交付細節：${parts.join(" · ")}`;
 }

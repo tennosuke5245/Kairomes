@@ -77,7 +77,7 @@ test("image delivery details list only non-zero counts and stay hidden while all
   detail.rejected.sandbox_path = 1;
   detail.verify_failed.extension_mismatch = 1;
   expect(importHydrationDetailText(detail)).toBe(
-    "交付細節：建立 1 · 重送 1 · 下載 2（成功 1 · HTTP 4xx 1）· 被拒：沙箱路徑 1 · 驗證失敗：副檔名不符 1",
+    "交付細節：建立 1 · 重送 1 · 下載 2（成功 1、HTTP 4xx 1） · 被拒：沙箱路徑 1 · 驗證失敗：副檔名不符 1",
   );
 
   const rejectedOnly = emptyDetail();
@@ -101,6 +101,6 @@ test("image delivery details list only non-zero counts and stay hidden while all
   failures.verify_failed.animated = 1;
   failures.verify_failed.other = 1;
   expect(importHydrationDetailText(failures)).toBe(
-    "交付細節：下載 3（成功 1 · DNS 1 · 逾時 1）· 驗證失敗：動畫 1、其他 1",
+    "交付細節：下載 3（成功 1、DNS 1、逾時 1） · 驗證失敗：動畫 1、其他 1",
   );
 });

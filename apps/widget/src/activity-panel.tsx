@@ -23,6 +23,7 @@ import {
   visibleActivity,
 } from "./activity-model.ts";
 import type { WorkbenchBridge } from "./bridge.ts";
+import { countsText } from "./change-summary.ts";
 import {
   isEditableTarget,
   liveStatus,
@@ -114,7 +115,7 @@ export function ActivityPanel({
   onFiles,
   onSearch,
   onChanges,
-  changeCount = 0,
+  changeCount = { files: 0, folders: 0 },
   onReadingScroll,
   onToggleFollow,
   workspaceName,
@@ -136,7 +137,8 @@ export function ActivityPanel({
   onSearch?(): void;
   /** 變更 N (C2): opens the session change summary; hidden while nothing changed. */
   onChanges?(): void;
-  changeCount?: number;
+  /** Changed paths as files and new folders (change-summary rowCounts). */
+  changeCount?: { files: number; folders: number };
   /** Scrolling the timeline away from the top is reading; the workbench pauses following. */
   onReadingScroll?(): void;
   /** `f` inside the timeline pauses following (resuming goes through onResume). */
@@ -233,17 +235,17 @@ export function ActivityPanel({
           {live.label}
         </span>
         <div className="wb-bar__actions">
-          {onChanges && changeCount > 0 && (
+          {onChanges && changeCount.files + changeCount.folders > 0 && (
             // Changed files, not change entries: the 變更 chip below counts those.
             <button
               type="button"
               className="k-btn k-btn--quiet k-btn--sm wb-changes"
-              aria-label={`本次變更的 ${changeCount} 個檔案`}
+              aria-label={`本次變更的 ${countsText(changeCount)}`}
               title="本次變更的檔案"
               onClick={onChanges}
             >
               <PencilSimpleIcon {...iconProps("md")} />
-              {changeCount} 個檔案
+              {countsText(changeCount)}
             </button>
           )}
           {onSearch && (

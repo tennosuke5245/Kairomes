@@ -1,4 +1,9 @@
-import { type FileChange, type FileChangeResult, fileChangeActive } from "@kairomes/protocol";
+import {
+  type FileChange,
+  type FileChangeResult,
+  fileChangeActive,
+  REVERT_SCOPE_NOTE,
+} from "@kairomes/protocol";
 import { toneFor } from "@kairomes/protocol/ui-state";
 import { PencilSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
@@ -179,7 +184,11 @@ function ChangeDetail({
             <p className="insp-note">套用前核對檔案版本；檔案已變動就停止，不會覆寫。</p>
           </>
         )}
-        {origin && <p className="insp-note">{origin}；只還原檔案內容，新建的資料夾會保留。</p>}
+        {origin && (
+          <p className="insp-note">
+            {change.state === "pending" ? `${origin}；${REVERT_SCOPE_NOTE}` : origin}
+          </p>
+        )}
         {reason && (
           <p className="insp-reason" data-tone={state.dataTone}>
             {reason}

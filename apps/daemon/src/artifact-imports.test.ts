@@ -456,7 +456,7 @@ test("delivery details count a concurrent retry, each URL tried and every verify
     download_results: { ok: 1, http_4xx: 1, cancelled: 0 },
   });
 
-  // Each verify failure has its own category; any other prepare failure counts as other.
+  // Each verify failure has its own category; bytes that are no image count as other.
   for (const [target, data] of [
     ["truncated.png", Buffer.from(onePixelPng.subarray(0, onePixelPng.length - 6))],
     ["bomb.png", pngHeader(5000, 4000)],
@@ -475,6 +475,18 @@ test("delivery details count a concurrent retry, each URL tried and every verify
     animated: 1,
     other: 1,
   });
+
+  // A destination taken during the download is no verification failure of the bytes.
+  respond = async () => {
+    await writeFile(path.join(f.root, "taken.png"), "taken\n");
+    return Buffer.from(onePixelPng);
+  };
+  const taken = await request({ path: "taken.png" });
+  expect(await settled(taken.image_import.id)).toMatchObject({
+    state: "failed",
+    error_code: "FILE_EXISTS",
+  });
+  expect(manager.hydrationDetail().verify_failed).toMatchObject({ other: 1 });
 });
 
 test("the preparing deadline counts a held download as a timeout, not a cancel", async () => {

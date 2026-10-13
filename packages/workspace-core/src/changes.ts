@@ -55,6 +55,12 @@ export type PreparedWorkspaceChange = {
 const digest = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
 const pathKey = (value: string) =>
   process.platform === "win32" ? value.toLocaleLowerCase() : value;
+/**
+ * Whether two resolved targets name the same entry. On Windows a planned folder keeps the
+ * casing of the first operation that named it, so a later path that differs only in case
+ * resolves to the same file under different casing.
+ */
+const sameTarget = (a: string, b: string) => pathKey(a) === pathKey(b);
 const errorCode = (error: unknown) =>
   error && typeof error === "object" && "code" in error ? error.code : undefined;
 
@@ -535,7 +541,7 @@ export class WorkspaceChanges {
               : "的上層資料夾已不存在或已改變",
           );
         }
-        if (target !== file.target || !file.before)
+        if (!sameTarget(target, file.target) || !file.before)
           throw revertConflict(file.path, "的上層資料夾已改變");
         files.push({
           operation: "write",
@@ -559,7 +565,7 @@ export class WorkspaceChanges {
       } catch {
         throw revertConflict(file.path, "在套用後已被移除、移動或無法讀取");
       }
-      if (current.target !== file.target || current.version !== file.afterVersion)
+      if (!sameTarget(current.target, file.target) || current.version !== file.afterVersion)
         throw revertConflict(file.path, "在套用後又被修改");
       if (!file.before) {
         // The batch created this file: the inverse deletes exactly what it wrote.

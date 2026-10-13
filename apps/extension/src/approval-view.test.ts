@@ -40,6 +40,7 @@ import {
   requestFragment,
   requestMetaLabel,
   revertLines,
+  revertOriginSummary,
   riskStrip,
   runningMeta,
   stateView,
@@ -535,6 +536,12 @@ test("復原這批… shows only on an applied change while online and unlocked"
   expect(
     canRevertChange({ ...command, state: "succeeded" } as CommandApproval, [], true, false),
   ).toBe(false);
+  // A batch that only created folders has nothing to revert (the Host answers NO_CHANGES).
+  const foldersOnly: FileChangeApproval = {
+    ...applied,
+    files: [{ operation: "mkdir", path: "assets/2026", before_version: null, after_version: null }],
+  };
+  expect(canRevertChange(foldersOnly, [foldersOnly], true, false)).toBe(false);
   // A revert that still waits or applies hides the button; a finished one does not.
   const revert: FileChangeApproval = {
     ...change,
@@ -569,14 +576,14 @@ test("a revert names what it undoes, and its pending review says what it leaves"
     summary: "復原：更新 README",
     reverts_change_id: original.id,
   };
-  expect(revertLines(revert, [original, revert])).toEqual([
-    "復原自：更新 README",
-    REVERT_SCOPE_NOTE,
-  ]);
+  // Host-authored lines only; the model-written summaries never appear in them.
+  expect(revertLines(revert)).toEqual(["復原先前的變更", REVERT_SCOPE_NOTE]);
   expect(REVERT_SCOPE_NOTE).toBe("只還原檔案內容，不復原命令或其他副作用；新建的資料夾會保留。");
-  expect(revertLines({ ...revert, state: "applied" }, [original])).toEqual(["復原自：更新 README"]);
-  // The original left the retained list.
-  expect(revertLines({ ...revert, state: "applied" }, [revert])).toEqual(["復原先前的變更"]);
-  expect(revertLines(original, [original, revert])).toEqual([]);
-  expect(revertLines(command, [command])).toEqual([]);
+  expect(revertLines({ ...revert, state: "applied" })).toEqual(["復原先前的變更"]);
+  expect(revertLines(original)).toEqual([]);
+  expect(revertLines(command)).toEqual([]);
+  // The original's summary is quoted apart as unverified text, while it is still retained.
+  expect(revertOriginSummary(revert, [original, revert])).toBe("更新 README");
+  expect(revertOriginSummary(revert, [revert])).toBeUndefined();
+  expect(revertOriginSummary(original, [original, revert])).toBeUndefined();
 });

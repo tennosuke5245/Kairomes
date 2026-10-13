@@ -20,7 +20,9 @@ import {
   diffCoversFiles,
   diffStatusPill,
   fileOperationLabel,
+  modelReason,
   requestMetaLabel,
+  revertOriginSummary,
   riskStrip,
   timeLimit,
   workspaceHue,
@@ -58,12 +60,25 @@ export function riskElement(item: ApprovalItem, windows: boolean) {
   return strip;
 }
 
-export function quote(text: string) {
+export function quote(text: string, label = "ChatGPT 的說明（未經驗證）") {
   const figure = el("figure", "k-quote");
   const body = el("blockquote", "k-quote__text");
   appendVisible(body, text);
-  figure.append(el("figcaption", "k-quote__label", "ChatGPT 的說明（未經驗證）"), body);
+  figure.append(el("figcaption", "k-quote__label", label), body);
   return figure;
+}
+
+/**
+ * The unverified text a request shows: its own model summary, or for a revert (whose summary
+ * the Host built from the original's) the original change's model summary, while retained.
+ */
+export function requestQuote(item: ApprovalItem, items: readonly ApprovalItem[]) {
+  if ("files" in item && item.reverts_change_id) {
+    const origin = revertOriginSummary(item, items);
+    return origin ? quote(origin, "原變更的 ChatGPT 說明（未經驗證）") : undefined;
+  }
+  const reason = modelReason(item);
+  return reason ? quote(reason) : undefined;
 }
 
 export function facts(item: ApprovalItem, view: DiffView): HTMLElement[] {
@@ -227,7 +242,7 @@ function fileList(item: ChangeItem) {
   return list;
 }
 
-/** A revert's origin and scope lines (approval-view revertLines); summaries stay visible text. */
+/** A revert's Host-authored origin and scope lines (approval-view revertLines). */
 export function revertNote(lines: readonly string[]) {
   if (!lines.length) return undefined;
   const note = el("div", "rq-revert");
