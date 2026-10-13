@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { type FileChangeApproval, FileChangeResultSchema, FileSchema } from "@kairomes/protocol";
+import {
+  type FileChangeApproval,
+  FileChangeListSchema,
+  FileChangeResultSchema,
+  FileSchema,
+} from "@kairomes/protocol";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { fixture } from "../../../tests/fixtures.ts";
@@ -135,6 +140,72 @@ test("MCP file changes expose review data only to the trusted native approval ch
       openWorldHint: false,
       idempotentHint: true,
     });
+    expect((await client.listTools()).tools).toHaveLength(34);
+
+    // Revert: only the paired panel creates one, and only for the record it was shown.
+    const appliedReview = (
+      (
+        await (
+          await post("/api/panel/approvals", panel.panelToken, { action: "list" }, extensionOrigin)
+        ).json()
+      ).changes as FileChangeApproval[]
+    ).find((change) => change.id === pending.change.id);
+    const revert = {
+      action: "revert",
+      change_id: pending.change.id,
+      request_id: crypto.randomUUID(),
+      fingerprint: appliedReview?.fingerprint,
+    };
+    for (const token of [connection.uiToken, connection.mcpToken, connection.adminToken])
+      expect((await post("/api/panel/approvals", token, revert, extensionOrigin)).status).toBe(401);
+    expect(
+      (await post("/api/panel/approvals", panel.panelToken, revert, connection.origin)).status,
+    ).toBe(403);
+    const wrong = await post(
+      "/api/panel/approvals",
+      panel.panelToken,
+      { ...revert, fingerprint: "0".repeat(64) },
+      extensionOrigin,
+    );
+    expect(wrong.status).toBe(400);
+    expect((await wrong.json()).code).toBe("APPROVAL_MISMATCH");
+    const admin = await post("/api/approvals", connection.adminToken, revert);
+    expect(admin.status).toBe(400);
+    expect((await admin.json()).code).toBe("REVERT_PANEL_ONLY");
+    const listed = FileChangeListSchema.parse(
+      (await client.callTool({ name: "file_change_list", arguments: {} })).structuredContent,
+    );
+    expect(listed.changes).toHaveLength(1);
+
+    const created = await post("/api/panel/approvals", panel.panelToken, revert, extensionOrigin);
+    expect(created.status).toBe(200);
+    const snapshot = await created.json();
+    const inverse = (snapshot.changes as FileChangeApproval[]).find(
+      (change) => change.id === snapshot.revert_change_id,
+    );
+    expect(inverse).toMatchObject({
+      state: "pending",
+      reverts_change_id: pending.change.id,
+      summary: "復原：更新 README",
+    });
+    expect(inverse?.diff).toContain("-Hello reviewed change\n+Hello Kairomes");
+    // Creating the revert approves nothing; the same request_id returns the same change.
+    expect(await Bun.file(`${f.root}/README.md`).text()).toContain("Hello reviewed change");
+    const retried = await (
+      await post("/api/panel/approvals", panel.panelToken, revert, extensionOrigin)
+    ).json();
+    expect(retried.revert_change_id).toBe(snapshot.revert_change_id);
+    expect(
+      (
+        await post(
+          "/api/panel/approvals",
+          panel.panelToken,
+          { action: "approve", change_id: inverse?.id, fingerprint: inverse?.fingerprint },
+          extensionOrigin,
+        )
+      ).status,
+    ).toBe(200);
+    expect(await Bun.file(`${f.root}/README.md`).text()).toContain("Hello Kairomes");
   } finally {
     await client.close();
     await app.close();

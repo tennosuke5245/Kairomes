@@ -352,6 +352,29 @@ function operationDiff(
   return focusedDiff(operation.path, before, after ?? "");
 }
 
+/** Display text of retained bytes: no BOM, LF line endings, as readSource shows a file. */
+function displayText(data: Buffer) {
+  const bom = data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf;
+  return (bom ? data.subarray(3) : data).toString("utf8").replace(/\r\n/g, "\n");
+}
+
+/** The batch review text: each new folder first, in creation order, then the file diffs. */
+function reviewDiff(folders: PlannedFolder[], files: PreparedFileChange[]) {
+  const full = [
+    ...folders.map(folderDiff),
+    ...files.filter((file) => file.operation !== "mkdir").map((file) => file.diff),
+  ].join("\n\n");
+  if (Buffer.byteLength(full) > 192 * 1024)
+    throw new KairomesError(
+      "CHANGE_REVIEW_TOO_LARGE",
+      "這批差異超過本機完整審查上限；請拆成較小批次。",
+    );
+  return full;
+}
+
+const revertConflict = (relative: string, detail: string) =>
+  new KairomesError("REVERT_CONFLICT", `檔案 ${relative} ${detail}，無法復原這批。`);
+
 async function writeTemp(file: PreparedFileChange) {
   if (!file.after) throw new Error("missing staged content");
   const temporary = path.join(
@@ -474,23 +497,103 @@ export class WorkspaceChanges {
       });
     }
     const folders = [...planned.values()];
-    // Each new folder is its own entry, before the file diffs and in creation order.
-    const full = [
-      ...folders.map(folderDiff),
-      ...files.filter((file) => file.operation !== "mkdir").map((file) => file.diff),
-    ].join("\n\n");
-    if (Buffer.byteLength(full) > 192 * 1024)
-      throw new KairomesError(
-        "CHANGE_REVIEW_TOO_LARGE",
-        "這批差異超過本機完整審查上限；請拆成較小批次。",
-      );
     return {
       workspaceId,
       folders,
       files,
-      diff: full,
+      diff: reviewDiff(folders, files),
       diffTruncated: false,
     };
+  }
+
+  /**
+   * Builds the inverse of an applied batch from its retained bytes, never from model input:
+   * overwritten files get their previous bytes back, created files are deleted and deleted
+   * files are recreated. Every file must still be exactly what the batch left behind, so a
+   * later edit makes the whole revert a REVERT_CONFLICT before anything is written. Folders
+   * the batch created are kept. apply() re-checks the versions immediately before mutation.
+   */
+  async prepareRevert(original: PreparedWorkspaceChange): Promise<PreparedWorkspaceChange> {
+    const workspaceId = original.workspaceId;
+    this.registry.get(workspaceId);
+    const items = original.files.filter((file) => file.operation !== "mkdir");
+    if (items.length === 0)
+      throw new KairomesError("NO_CHANGES", "這批只建立了資料夾，沒有可復原的檔案內容。");
+    const files: PreparedFileChange[] = [];
+    for (const file of items) {
+      if (file.after === null) {
+        // The batch deleted this file: recreate it only where nothing has appeared since,
+        // inside a parent that still exists (a revert never creates folders).
+        let target: string;
+        try {
+          target = await newTarget(this.registry, workspaceId, file.path);
+        } catch (error) {
+          throw revertConflict(
+            file.path,
+            error instanceof KairomesError && error.code === "FILE_EXISTS"
+              ? "在刪除後又被建立"
+              : "的上層資料夾已不存在或已改變",
+          );
+        }
+        if (target !== file.target || !file.before)
+          throw revertConflict(file.path, "的上層資料夾已改變");
+        files.push({
+          operation: "write",
+          path: file.path,
+          target,
+          before: null,
+          after: file.before,
+          beforeVersion: null,
+          afterVersion: file.beforeVersion,
+          mode: file.mode,
+          diff: ["--- /dev/null", `+++ b/${file.path}`, "@@ create file @@"]
+            .concat(prefixed("+", displayText(file.before)))
+            .join("\n"),
+          folders: [],
+        });
+        continue;
+      }
+      let current: SourceFile;
+      try {
+        current = await readSource(this.registry, workspaceId, file.path);
+      } catch {
+        throw revertConflict(file.path, "在套用後已被移除、移動或無法讀取");
+      }
+      if (current.target !== file.target || current.version !== file.afterVersion)
+        throw revertConflict(file.path, "在套用後又被修改");
+      if (!file.before) {
+        // The batch created this file: the inverse deletes exactly what it wrote.
+        files.push({
+          operation: "delete",
+          path: file.path,
+          target: current.target,
+          before: current.data,
+          after: null,
+          beforeVersion: current.version,
+          afterVersion: null,
+          mode: current.mode,
+          diff: [`--- a/${file.path}`, "+++ /dev/null", "@@ delete file @@"]
+            .concat(prefixed("-", current.text))
+            .join("\n"),
+          folders: [],
+        });
+        continue;
+      }
+      // An edit or overwrite: write the exact previous bytes back (BOM and CRLF included).
+      files.push({
+        operation: "write",
+        path: file.path,
+        target: current.target,
+        before: current.data,
+        after: file.before,
+        beforeVersion: current.version,
+        afterVersion: file.beforeVersion,
+        mode: current.mode,
+        diff: focusedDiff(file.path, current.text, displayText(file.before)),
+        folders: [],
+      });
+    }
+    return { workspaceId, folders: [], files, diff: reviewDiff([], files), diffTruncated: false };
   }
 
   async apply(change: PreparedWorkspaceChange) {

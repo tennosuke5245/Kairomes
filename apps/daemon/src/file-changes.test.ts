@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, writeFile } from "node:fs/promises";
-import { FileChangeInputs } from "@kairomes/protocol";
+import { lstat, readFile, writeFile } from "node:fs/promises";
+import { FileChangeInputs, FileChangeResultSchema } from "@kairomes/protocol";
 import { WorkspaceFiles } from "@kairomes/workspace-core";
 import { fixture } from "../../../tests/fixtures.ts";
 import { FileChangeManager } from "./file-changes.ts";
@@ -348,6 +348,182 @@ test("folder limits are request-time errors", async () => {
       }),
     ).rejects.toMatchObject({ code: "FOLDER_LIMIT" });
     expect(service.changes.list()).toEqual([]);
+  } finally {
+    await service.close();
+    await f.dispose();
+  }
+});
+
+/** Approves one pending change the way the trusted panel does, with its current fingerprint. */
+async function approve(manager: FileChangeManager, id: string) {
+  const approval = manager.approvals().find((item) => item.id === id);
+  await manager.decide(id, approval?.fingerprint ?? "", true);
+  return manager.poll(id).change;
+}
+
+test("a revert is an ordinary pending change that restores the applied batch once approved", async () => {
+  const f = await fixture();
+  const manager = new FileChangeManager(f.registry, () => undefined);
+  try {
+    const original = await readFile(`${f.root}/README.md`);
+    const applied = await manager.request(await editInput(f), "mcp");
+    expect((await approve(manager, applied.change.id)).state).toBe("applied");
+    const afterApply = await readFile(`${f.root}/README.md`);
+
+    const requestId = crypto.randomUUID();
+    const [revert, retry] = await Promise.all([
+      manager.revert(applied.change.id, requestId, "mcp"),
+      manager.revert(applied.change.id, requestId, "mcp"),
+    ]);
+    expect(retry.change.id).toBe(revert.change.id);
+    expect(revert.change).toMatchObject({
+      state: "pending",
+      workspace_id: f.workspace.id,
+      request_id: requestId,
+      summary: "復原：更新 README 問候語",
+      reverts_change_id: applied.change.id,
+    });
+    expect(revert.change.id).not.toBe(applied.change.id);
+    expect(revert.change.files).toEqual([
+      {
+        operation: "write",
+        path: "README.md",
+        before_version: applied.change.files[0]?.after_version ?? null,
+        after_version: applied.change.files[0]?.before_version ?? null,
+      },
+    ]);
+    expect(revert.diff).toContain("-Hello Kairomes 喵\n+Hello Kairomes");
+    // Nothing is written until the local user approves the inverse batch.
+    expect(await readFile(`${f.root}/README.md`)).toEqual(afterApply);
+    expect(manager.poll(applied.change.id).change.state).toBe("applied");
+    await expect(manager.revert(crypto.randomUUID(), requestId, "mcp")).rejects.toMatchObject({
+      code: "FILE_CHANGE_REQUEST_CONFLICT",
+    });
+    await expect(
+      manager.request({ ...(await editInput(f)), request_id: requestId }),
+    ).rejects.toMatchObject({ code: "FILE_CHANGE_REQUEST_CONFLICT" });
+
+    expect((await approve(manager, revert.change.id)).state).toBe("applied");
+    expect(await readFile(`${f.root}/README.md`)).toEqual(original);
+    expect(manager.poll(applied.change.id).change.state).toBe("applied");
+    // The same request_id still returns the finished revert instead of proposing another.
+    expect((await manager.revert(applied.change.id, requestId)).change.id).toBe(revert.change.id);
+    // The original no longer matches the files, so a second revert of it is refused.
+    await expect(manager.revert(applied.change.id, crypto.randomUUID())).rejects.toMatchObject({
+      code: "REVERT_CONFLICT",
+    });
+
+    // Reverting the revert is a redo.
+    const redo = await manager.revert(revert.change.id, crypto.randomUUID());
+    expect(redo.change.summary).toBe("復原：復原：更新 README 問候語");
+    expect(redo.change.reverts_change_id).toBe(revert.change.id);
+    expect((await approve(manager, redo.change.id)).state).toBe("applied");
+    expect(await readFile(`${f.root}/README.md`)).toEqual(afterApply);
+  } finally {
+    await manager.close();
+    await f.dispose();
+  }
+});
+
+test("only applied changes that are still retained can be reverted", async () => {
+  const f = await fixture();
+  const manager = new FileChangeManager(f.registry, () => undefined);
+  try {
+    const unavailable = { code: "REVERT_UNAVAILABLE" };
+    const pending = await manager.request(await editInput(f));
+    await expect(manager.revert(pending.change.id, crypto.randomUUID())).rejects.toMatchObject(
+      unavailable,
+    );
+    manager.cancel(pending.change.id);
+    await expect(manager.revert(pending.change.id, crypto.randomUUID())).rejects.toMatchObject(
+      unavailable,
+    );
+    const denied = await manager.request(await editInput(f));
+    const deniedApproval = manager.approvals().find((item) => item.id === denied.change.id);
+    await manager.decide(denied.change.id, deniedApproval?.fingerprint ?? "", false);
+    await expect(manager.revert(denied.change.id, crypto.randomUUID())).rejects.toMatchObject(
+      unavailable,
+    );
+    const conflict = await manager.request(await editInput(f));
+    await writeFile(`${f.root}/README.md`, "# Human edit\n");
+    expect((await approve(manager, conflict.change.id)).state).toBe("conflict");
+    await expect(manager.revert(conflict.change.id, crypto.randomUUID())).rejects.toMatchObject(
+      unavailable,
+    );
+    await expect(manager.revert(crypto.randomUUID(), crypto.randomUUID())).rejects.toMatchObject({
+      code: "FILE_CHANGE_NOT_FOUND",
+    });
+
+    await writeFile(`${f.root}/README.md`, "# Fixture\nHello Kairomes\n");
+    const applied = await manager.request(await editInput(f));
+    expect((await approve(manager, applied.change.id)).state).toBe("applied");
+    // A wrong fingerprint from the panel proposes nothing.
+    await expect(
+      manager.revert(applied.change.id, crypto.randomUUID(), "local-ui", "0".repeat(64)),
+    ).rejects.toMatchObject({ code: "APPROVAL_MISMATCH" });
+    expect(manager.list()).toHaveLength(4);
+    // Later changes evict it from the 24 retained, after which it is unknown.
+    for (let index = 0; index < 24; index++)
+      manager.cancel((await manager.request(await editInput(f))).change.id);
+    await expect(manager.revert(applied.change.id, crypto.randomUUID())).rejects.toMatchObject({
+      code: "FILE_CHANGE_NOT_FOUND",
+    });
+  } finally {
+    await manager.close();
+    await f.dispose();
+  }
+});
+
+test("creating a revert never evicts the change it reverts", async () => {
+  const f = await fixture();
+  const manager = new FileChangeManager(f.registry, () => undefined);
+  try {
+    const applied = await manager.request(await editInput(f));
+    expect((await approve(manager, applied.change.id)).state).toBe("applied");
+    // The original is the oldest of 24 retained changes.
+    for (let index = 0; index < 23; index++)
+      manager.cancel((await manager.request(await editInput(f))).change.id);
+    expect(manager.list()).toHaveLength(24);
+    const revert = await manager.revert(applied.change.id, crypto.randomUUID());
+    expect(manager.list().some((change) => change.id === applied.change.id)).toBe(true);
+    const approval = manager.approvals().find((item) => item.id === revert.change.id);
+    await manager.decide(revert.change.id, approval?.fingerprint ?? "", false);
+    const retry = await manager.revert(applied.change.id, crypto.randomUUID());
+    expect(retry.change).toMatchObject({ state: "pending", reverts_change_id: applied.change.id });
+    expect(manager.list()).toHaveLength(24);
+  } finally {
+    await manager.close();
+    await f.dispose();
+  }
+});
+
+test("a revert auto-applies under a files grant and works through the MCP tool", async () => {
+  const f = await fixture();
+  const service = new ToolService(f.registry, true);
+  try {
+    const original = await readFile(`${f.root}/README.md`);
+    await service.enableAccess(f.workspace.id, "files", null, "owner", () => true);
+    const applied = await service.changes.request(await editInput(f), "mcp");
+    expect(applied.change.state).toBe("applied");
+    const result = await service.call(
+      "file_change_revert",
+      { change_id: applied.change.id, request_id: crypto.randomUUID() },
+      "mcp",
+    );
+    expect(result.isError).not.toBe(true);
+    const revert = FileChangeResultSchema.parse(result.structuredContent);
+    expect(revert.change).toMatchObject({
+      state: "applied",
+      reverts_change_id: applied.change.id,
+    });
+    expect(await readFile(`${f.root}/README.md`)).toEqual(original);
+    const refused = await service.call(
+      "file_change_revert",
+      { change_id: applied.change.id, request_id: crypto.randomUUID() },
+      "mcp",
+    );
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.content)).toContain("REVERT_CONFLICT");
   } finally {
     await service.close();
     await f.dispose();

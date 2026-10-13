@@ -21,7 +21,7 @@ import {
 } from "./access-mutation.ts";
 import { readAccessMutationSnapshot } from "./access-mutation-snapshot.ts";
 import { AccessPanel } from "./access-panel.ts";
-import { ApprovalMutationTracker } from "./approval-mutation.ts";
+import { ApprovalMutationTracker, RevertRequests } from "./approval-mutation.ts";
 import { ApprovalPanel } from "./approval-panel.ts";
 import {
   type ApprovalItem,
@@ -44,7 +44,7 @@ import { NoticeSlot } from "./notice-slot.ts";
 import { parsePairingUrl, parseWorkbenchUrl } from "./pairing.ts";
 import { PanelAnnouncements } from "./panel-announcements.ts";
 import { type NoticeTone, panelRecoveryNotice, STALE_NOTICE } from "./panel-error.ts";
-import { PanelRequestError, panelRequestError } from "./panel-request-error.ts";
+import { PanelRequestError, panelRequestError, revertRefusal } from "./panel-request-error.ts";
 import { PanelStreamAvailability } from "./panel-stream-availability.ts";
 import {
   importHydrationDetailText,
@@ -143,6 +143,8 @@ let catalogReadGeneration = 0;
 let selectedWorkspace: string | null = null;
 let needsPairing = false;
 const approvalMutations = new ApprovalMutationTracker();
+/** 復原這批… request_ids, kept per record until the daemon confirms the revert. */
+const revertRequests = new RevertRequests();
 /** Upload identities for image imports, scoped to the paired instance like decisions. */
 const uploads = new ImageUploadTracker();
 const accessMutations = new AccessMutationTracker();
@@ -633,6 +635,48 @@ async function decideApproval(
     }, 0);
   }
 }
+/**
+ * 復原這批…: asks the daemon for the inverse of one applied file change, bound to the record's
+ * fingerprint. It only proposes a pending change; approving it is a separate, reviewed step.
+ * An uncertain answer is never retried automatically, and a manual retry reuses the request_id.
+ */
+async function revertChange(item: ApprovalItem): Promise<string> {
+  const target = connection;
+  if (!target || !available || needsPairing) throw new Error("等待核准連線恢復後再試。");
+  const source = approvalSource(target);
+  if (!source || !("files" in item) || approvalMutations.isLocked(source, item))
+    throw new Error("結果待確認。");
+  const before = latest;
+  let response: PanelSnapshot & { revert_change_id?: unknown };
+  try {
+    response = await api(target, "approvals", {
+      action: "revert",
+      change_id: item.id,
+      request_id: revertRequests.idFor(source, item.id),
+      fingerprint: item.fingerprint,
+    });
+  } catch (cause) {
+    // The same request_id is kept until a snapshot shows the revert, so pressing again returns
+    // a revert that may already exist instead of proposing a second one.
+    throw cause instanceof PanelRequestError
+      ? revertRefusal(cause)
+      : new Error("結果待確認；請先查看清單中是否已有這批的復原，沒有再按一次「復原這批…」。");
+  }
+  const { revert_change_id: created, ...snapshot } = response;
+  if (connection !== target) throw new Error("結果待確認。");
+  if (snapshot.instanceId !== target.instanceId) {
+    invalidatePairing(target);
+    throw new Error("配對已失效。");
+  }
+  if (typeof created !== "string") throw new Error("結果待確認。");
+  revertRequests.settle(source, item.id);
+  // A stream frame that already holds the new change is newer than this response.
+  if (latest === before || !latest?.changes?.some((change) => change.id === created))
+    latest = snapshot;
+  showPanelError("");
+  renderApprovals();
+  return created;
+}
 const reportApprovalError = (message: string) => {
   if (!needsPairing) showPanelError(available ? message : "結果待確認。");
 };
@@ -741,6 +785,7 @@ const approvals = new ApprovalPanel(approvalContainer, {
   startImport: () => openImportDialog(),
   canStartImport,
   openFile: (item) => openWorkbenchFile(item.workspace_id, item.path),
+  revert: revertChange,
   refresh: async () => {
     const target = connection;
     if (!target || needsPairing || !available) throw new Error("offline");
@@ -1033,6 +1078,7 @@ function renderApprovals(snapshot = latest, connected = available) {
   const source = approvalSource();
   if (snapshot && connected && source && snapshot.instanceId === connection?.instanceId) {
     approvalMutations.observe(source, approvalItems(snapshot));
+    revertRequests.observe(source, snapshot.changes ?? []);
     uploads.observe(source, snapshot.imports ?? []);
   }
   const items = [

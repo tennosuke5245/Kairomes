@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
-import { lstat, mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseUnifiedDiff } from "@kairomes/protocol";
 import { fixture } from "../../../tests/fixtures.ts";
@@ -551,6 +551,285 @@ test("the review diff names new folders, so the same file without them differs",
     // The folder now exists, so the earlier review still applies without creating it.
     await engine.apply(before);
     expect(await readFile(`${f.root}/later/a.ts`, "utf8")).toBe("export {};\n");
+  } finally {
+    await f.dispose();
+  }
+});
+
+/** Exact bytes of every listed path, or null for a missing one. */
+async function snapshotBytes(root: string, paths: string[]) {
+  return Promise.all(
+    paths.map(async (relative) =>
+      existsSync(`${root}/${relative}`) ? await readFile(`${root}/${relative}`) : null,
+    ),
+  );
+}
+
+test("reverting a batch restores exact bytes, modes and versions, and redo reapplies it", async () => {
+  const f = await fixture();
+  try {
+    const bomCrlf = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from("first line\r\nsecond line\r\n"),
+    ]);
+    await writeFile(`${f.root}/crlf.txt`, bomCrlf);
+    if (process.platform !== "win32") {
+      await chmod(`${f.root}/crlf.txt`, 0o640);
+      await chmod(`${f.root}/src/main.ts`, 0o600);
+    }
+    const files = new WorkspaceFiles(f.registry);
+    const crlf = await files.read(f.workspace.id, "crlf.txt");
+    const readme = await files.read(f.workspace.id, "README.md");
+    const main = await files.read(f.workspace.id, "src/main.ts");
+    const paths = ["crlf.txt", "README.md", "src/main.ts", "src/new.ts"];
+    const original = await snapshotBytes(f.root, paths);
+    const engine = new WorkspaceChanges(f.registry);
+    const applied = await engine.prepare(f.workspace.id, [
+      {
+        operation: "edit",
+        path: "crlf.txt",
+        expected_version: crlf.version,
+        replacements: [{ old_text: "second line", new_text: "changed line", replace_all: false }],
+      },
+      {
+        operation: "write",
+        path: "README.md",
+        expected_version: readme.version,
+        content: "# Rewritten\n",
+      },
+      { operation: "delete", path: "src/main.ts", expected_version: main.version },
+      newFile("src/new.ts", "export const created = true;\n"),
+    ]);
+    await engine.apply(applied);
+    const afterApply = await snapshotBytes(f.root, paths);
+
+    const revert = await engine.prepareRevert(applied);
+    expect(revert.folders).toEqual([]);
+    expect(
+      revert.files.map((file) => [
+        file.operation,
+        file.path,
+        file.beforeVersion,
+        file.afterVersion,
+      ]),
+    ).toEqual(
+      applied.files.map((file) => [
+        file.before === null ? "delete" : "write",
+        file.path,
+        file.afterVersion,
+        file.beforeVersion,
+      ]),
+    );
+    expect(revert.diff).toContain("-changed line\n+second line");
+    expect(revert.diff).toContain("+++ b/src/main.ts\n@@ create file @@");
+    expect(revert.diff).toContain("+++ /dev/null\n@@ delete file @@\n-export const created");
+    // The review shows text without BOM or CR, like file_read.
+    expect(revert.diff).not.toContain("\r");
+    expect(revert.diff).not.toContain("﻿");
+    await engine.apply(revert);
+    expect(await snapshotBytes(f.root, paths)).toEqual(original);
+    expect((await files.read(f.workspace.id, "crlf.txt")).version).toBe(crlf.version);
+    if (process.platform !== "win32") {
+      expect((await lstat(`${f.root}/crlf.txt`)).mode & 0o777).toBe(0o640);
+      expect((await lstat(`${f.root}/src/main.ts`)).mode & 0o777).toBe(0o600);
+    }
+
+    // Reverting the revert is a redo: the applied state comes back byte for byte.
+    await engine.apply(await engine.prepareRevert(revert));
+    expect(await snapshotBytes(f.root, paths)).toEqual(afterApply);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("a file changed after apply blocks the whole revert before anything is written", async () => {
+  const f = await fixture();
+  try {
+    const files = new WorkspaceFiles(f.registry);
+    const readme = await files.read(f.workspace.id, "README.md");
+    const main = await files.read(f.workspace.id, "src/main.ts");
+    const engine = new WorkspaceChanges(f.registry);
+    const applied = await engine.prepare(f.workspace.id, [
+      newFile("created.ts"),
+      { operation: "write", path: "README.md", expected_version: readme.version, content: "# A\n" },
+      {
+        operation: "edit",
+        path: "src/main.ts",
+        expected_version: main.version,
+        replacements: [{ old_text: "Kairomes", new_text: "Edited", replace_all: false }],
+      },
+    ]);
+    await engine.apply(applied);
+    await writeFile(`${f.root}/src/main.ts`, 'export const message = "someone else";\n');
+    const paths = ["created.ts", "README.md", "src/main.ts"];
+    const before = await snapshotBytes(f.root, paths);
+    const conflict = engine.prepareRevert(applied);
+    await expect(conflict).rejects.toMatchObject({ code: "REVERT_CONFLICT" });
+    await expect(conflict).rejects.toThrow("檔案 src/main.ts 在套用後又被修改，無法復原這批。");
+    expect(await snapshotBytes(f.root, paths)).toEqual(before);
+
+    // A created file that was removed afterwards is a conflict too.
+    await writeFile(`${f.root}/src/main.ts`, 'export const message = "Edited";\n');
+    await rm(`${f.root}/created.ts`);
+    await expect(engine.prepareRevert(applied)).rejects.toThrow(
+      "檔案 created.ts 在套用後已被移除、移動或無法讀取，無法復原這批。",
+    );
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("a deleted path that was recreated, or lost its parent, cannot be reverted", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(`${f.root}/docs`);
+    await writeFile(`${f.root}/docs/old.md`, "old\n");
+    const files = new WorkspaceFiles(f.registry);
+    const main = await files.read(f.workspace.id, "src/main.ts");
+    const old = await files.read(f.workspace.id, "docs/old.md");
+    const engine = new WorkspaceChanges(f.registry);
+    const applied = await engine.prepare(f.workspace.id, [
+      { operation: "delete", path: "src/main.ts", expected_version: main.version },
+      { operation: "delete", path: "docs/old.md", expected_version: old.version },
+    ]);
+    await engine.apply(applied);
+    await writeFile(`${f.root}/src/main.ts`, "recreated\n");
+    await expect(engine.prepareRevert(applied)).rejects.toThrow(
+      "檔案 src/main.ts 在刪除後又被建立，無法復原這批。",
+    );
+    expect(await readFile(`${f.root}/src/main.ts`, "utf8")).toBe("recreated\n");
+
+    // A revert never creates folders, so a removed parent is a conflict as well.
+    await rm(`${f.root}/src/main.ts`);
+    await rm(`${f.root}/docs`, { recursive: true });
+    await expect(engine.prepareRevert(applied)).rejects.toMatchObject({
+      code: "REVERT_CONFLICT",
+      message: "檔案 docs/old.md 的上層資料夾已不存在或已改變，無法復原這批。",
+    });
+    expect(existsSync(`${f.root}/src/main.ts`)).toBe(false);
+    expect(existsSync(`${f.root}/docs`)).toBe(false);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test.skipIf(process.platform === "win32")(
+  "a revert never writes through a link that replaced a parent or a file",
+  async () => {
+    const f = await fixture();
+    try {
+      await mkdir(`${f.root}/docs`);
+      await writeFile(`${f.root}/docs/old.md`, "old\n");
+      const files = new WorkspaceFiles(f.registry);
+      const old = await files.read(f.workspace.id, "docs/old.md");
+      const readme = await files.read(f.workspace.id, "README.md");
+      const engine = new WorkspaceChanges(f.registry);
+      const outside = path.join(f.directory, "outside");
+      await mkdir(outside);
+      const deleted = await engine.prepare(f.workspace.id, [
+        { operation: "delete", path: "docs/old.md", expected_version: old.version },
+      ]);
+      await engine.apply(deleted);
+
+      // The parent of a deleted file became a link out of the workspace before the revert.
+      await rm(`${f.root}/docs`, { recursive: true });
+      await symlink(outside, `${f.root}/docs`);
+      await expect(engine.prepareRevert(deleted)).rejects.toMatchObject({
+        code: "REVERT_CONFLICT",
+      });
+      expect(await readdir(outside)).toEqual([]);
+
+      // ...or between the revert's review and its apply.
+      await rm(`${f.root}/docs`);
+      await mkdir(`${f.root}/docs`);
+      const revert = await engine.prepareRevert(deleted);
+      await rm(`${f.root}/docs`, { recursive: true });
+      await symlink(outside, `${f.root}/docs`);
+      await expect(engine.apply(revert)).rejects.toMatchObject({
+        code: expect.stringMatching(/^(LINK_BLOCKED|WORKSPACE_CHANGED)$/),
+      });
+      expect(await readdir(outside)).toEqual([]);
+
+      // An overwritten file replaced by a link to identical bytes outside is not the same file.
+      const written = await engine.prepare(f.workspace.id, [
+        {
+          operation: "write",
+          path: "README.md",
+          expected_version: readme.version,
+          content: "# A\n",
+        },
+      ]);
+      await engine.apply(written);
+      const target = path.join(outside, "readme.md");
+      await writeFile(target, "# A\n");
+      await rm(`${f.root}/README.md`);
+      await symlink(target, `${f.root}/README.md`);
+      await expect(engine.prepareRevert(written)).rejects.toMatchObject({
+        code: "REVERT_CONFLICT",
+      });
+      expect(await readFile(target, "utf8")).toBe("# A\n");
+      expect(await readdir(outside)).toEqual(["readme.md"]);
+    } finally {
+      await f.dispose();
+    }
+  },
+);
+
+test("reverting a batch that created folders deletes its files but keeps the folders", async () => {
+  const f = await fixture();
+  try {
+    const engine = new WorkspaceChanges(f.registry);
+    const applied = await engine.prepare(f.workspace.id, [
+      newFile("a/b/c.ts"),
+      { operation: "mkdir", path: "empty" },
+    ]);
+    await engine.apply(applied);
+    const revert = await engine.prepareRevert(applied);
+    expect(revert.files.map((file) => [file.operation, file.path])).toEqual([
+      ["delete", "a/b/c.ts"],
+    ]);
+    expect(revert.diff).not.toContain("folder");
+    await engine.apply(revert);
+    expect(existsSync(`${f.root}/a/b/c.ts`)).toBe(false);
+    expect((await lstat(`${f.root}/a/b`)).isDirectory()).toBe(true);
+    expect((await lstat(`${f.root}/empty`)).isDirectory()).toBe(true);
+
+    const onlyFolders = await engine.prepare(f.workspace.id, [{ operation: "mkdir", path: "x" }]);
+    await engine.apply(onlyFolders);
+    await expect(engine.prepareRevert(onlyFolders)).rejects.toMatchObject({
+      code: "NO_CHANGES",
+      message: "這批只建立了資料夾，沒有可復原的檔案內容。",
+    });
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("a revert whose inverse diff exceeds the full review cap is refused", async () => {
+  const f = await fixture();
+  try {
+    // Two small replacements at both ends make the inverse rewrite span the whole file.
+    const middle = Array.from({ length: 120 }, () => "y".repeat(1024)).join("\n");
+    await writeFile(`${f.root}/large.txt`, `head\n${middle}\ntail\n`);
+    const current = await new WorkspaceFiles(f.registry).read(f.workspace.id, "large.txt");
+    const engine = new WorkspaceChanges(f.registry);
+    const applied = await engine.prepare(f.workspace.id, [
+      {
+        operation: "edit",
+        path: "large.txt",
+        expected_version: current.version,
+        replacements: [
+          { old_text: "head\n", new_text: "HEAD\n", replace_all: false },
+          { old_text: "\ntail", new_text: "\nTAIL", replace_all: false },
+        ],
+      },
+    ]);
+    expect(Buffer.byteLength(applied.diff)).toBeLessThan(1024);
+    await engine.apply(applied);
+    await expect(engine.prepareRevert(applied)).rejects.toMatchObject({
+      code: "CHANGE_REVIEW_TOO_LARGE",
+    });
+    expect(await readFile(`${f.root}/large.txt`, "utf8")).toStartWith("HEAD\n");
   } finally {
     await f.dispose();
   }

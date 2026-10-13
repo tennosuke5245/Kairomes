@@ -2,7 +2,12 @@ import { expect, test } from "bun:test";
 import { MCP_COMMAND_RELATIVE_MESSAGE, MCP_CWD_INVALID_MESSAGE } from "@kairomes/protocol";
 import { importErrorText } from "./image-file.ts";
 import { mcpCwdRefusal, settleMcpMutation } from "./mcp-mutation.ts";
-import { PanelRequestError, panelErrorCode, panelRequestError } from "./panel-request-error.ts";
+import {
+  PanelRequestError,
+  panelErrorCode,
+  panelRequestError,
+  revertRefusal,
+} from "./panel-request-error.ts";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -103,4 +108,37 @@ test("an image approval refused for a missing preview shows the import sentence,
   expect((await panelRequestError(json(403, { code: "IMPORT_PREVIEW_REQUIRED" }))).message).toBe(
     "配對已失效。",
   );
+});
+
+test("a refused revert shows fixed text for its code, never the daemon's message", async () => {
+  const conflict = revertRefusal(
+    await panelRequestError(
+      json(400, { code: "REVERT_CONFLICT", message: "檔案 private/a.ts 在套用後又被修改" }),
+    ),
+  );
+  expect(conflict).toBeInstanceOf(PanelRequestError);
+  expect(conflict.code).toBe("REVERT_CONFLICT");
+  expect(conflict.message).toBe("這批有檔案在套用後又被修改、移除或重新建立，無法復原。");
+  expect(
+    revertRefusal(await panelRequestError(json(400, { code: "REVERT_UNAVAILABLE" }))).message,
+  ).toBe("只有仍在保留清單內、已套用的檔案變更可以復原。");
+  expect(
+    revertRefusal(await panelRequestError(json(400, { code: "CHANGE_REVIEW_TOO_LARGE" }))).message,
+  ).toBe("復原的差異超過本機完整審查上限，無法復原這批。");
+  expect(revertRefusal(await panelRequestError(json(400, { code: "toString" }))).message).toBe(
+    "請求未被接受。",
+  );
+  // A server failure stays uncertain whatever its code says.
+  expect(
+    revertRefusal(await panelRequestError(json(503, { code: "REVERT_CONFLICT" }))).message,
+  ).toBe("結果待確認。");
+});
+
+test("an approve or deny refused with a revert code keeps the generic text", async () => {
+  // A decision on a change that has left the list says nothing about reverting.
+  for (const code of ["FILE_CHANGE_NOT_FOUND", "REVERT_CONFLICT", "NO_CHANGES"]) {
+    const error = await panelRequestError(json(400, { code }));
+    expect(error.code).toBe(code);
+    expect(error.message).toBe("請求未被接受。");
+  }
 });

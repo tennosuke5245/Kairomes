@@ -12,7 +12,7 @@ test("relay check sees the full attached tool surface without invoking a tool", 
   try {
     const result = await relayCheck(f.state);
     expect(result.ok).toBe(true);
-    expect(result.tools).toHaveLength(33);
+    expect(result.tools).toHaveLength(34);
     expect(result.tools).toContain("command_request");
     expect(result.tools).toContain("file_change_request");
     expect(result.tools).toContain("artifact_preview");

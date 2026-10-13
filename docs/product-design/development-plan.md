@@ -157,7 +157,7 @@ setup 保留 Extension ID、配對輸入、一個主動作與一個短說明入�
 | H2 發布包讀取 | H1 成功且複製成為瓶頸 | digest、workspace 綁定、期限、撤回、失敗 schema |
 | 合作式 writer lease | 多 writer 都能加入協定 | 外部 Codex／自由主機 shell 不受強制約束 |
 | Worktree 管理 | Git 並行衝突常見 | dirty／未追蹤檔、搬移衝突、非 Git fallback、可信管理面 |
-| 結構化變更回復 | 人需要撤回批次 | current hash 等於 after version；不復原外部副作用 |
+| 結構化變更回復 | 人需要撤回批次 | current hash 等於 after version；不復原外部副作用。未發佈版已實作：側欄「復原這批…」與 `file_change_revert` |
 | MCP App 傳接續文字 | 真實宿主 capability 與 E2E 成功 | 人主動送出、未知收件不重送、保留草稿 |
 
 ## 8. 技術責任與安全邊界

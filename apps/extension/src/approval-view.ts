@@ -200,6 +200,56 @@ export function modelReason(item: ApprovalItem) {
   return "summary" in item && item.summary.trim() ? item.summary : undefined;
 }
 
+/**
+ * 復原這批… is offered on an applied file change while the panel is online and no unconfirmed
+ * decision locks it, unless a revert of it is already waiting or applying.
+ */
+export function canRevertChange(
+  item: ApprovalItem,
+  items: readonly ApprovalItem[],
+  online: boolean,
+  locked: boolean,
+) {
+  return (
+    online &&
+    !locked &&
+    "files" in item &&
+    item.state === "applied" &&
+    !items.some(
+      (other) =>
+        "files" in other &&
+        other.reverts_change_id === item.id &&
+        (other.state === "pending" || other.state === "applying"),
+    ) &&
+    !undone(item, items)
+  );
+}
+
+/**
+ * Whether an applied revert still undoes this change: one that no applied redo has undone in
+ * turn. The files then hold the change's old contents, so reverting it again could only conflict.
+ */
+function undone(item: ApprovalItem, items: readonly ApprovalItem[]): boolean {
+  return items.some(
+    (other) =>
+      "files" in other &&
+      other.reverts_change_id === item.id &&
+      other.state === "applied" &&
+      !undone(other, items),
+  );
+}
+
+export const REVERT_SCOPE_NOTE = "只還原檔案內容，不復原命令或其他副作用；新建的資料夾會保留。";
+
+/** A revert's short lines: what it undoes and, while it awaits a decision, what it leaves. */
+export function revertLines(item: ApprovalItem, items: readonly ApprovalItem[]): string[] {
+  if (!("files" in item) || !item.reverts_change_id) return [];
+  const original = items.find((other) => other.id === item.reverts_change_id);
+  const origin =
+    original && "summary" in original ? `復原自：${original.summary}` : "復原先前的變更";
+  return item.state === "pending" ? [origin, REVERT_SCOPE_NOTE] : [origin];
+}
+
 /** Below this, a pending request's countdown takes the warning style. */
 export const APPROVAL_SOON_MS = 60_000;
 

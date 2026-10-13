@@ -60,6 +60,8 @@ function singleTarget(input: {
  * Body of the trusted decision routes: `/api/panel/approvals` (paired Extension) and
  * `/api/approvals` (admin token). Exactly one target ID is required for a decision or stop.
  * `reason` is accepted only with `deny`; approve and stop reject it as an unknown key.
+ * `revert` proposes the inverse of an applied file change and is accepted only on the panel
+ * route; its fingerprint is the applied change's, and the new change still needs approval.
  */
 export const ApprovalInputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("list") }).strict(),
@@ -80,8 +82,21 @@ export const ApprovalInputSchema = z.discriminatedUnion("action", [
     .object({ action: z.literal("stop"), ...Target, fingerprint: z.string().optional() })
     .strict()
     .refine(singleTarget, "請指定一個停止目標"),
+  z
+    .object({
+      action: z.literal("revert"),
+      change_id: z.string().uuid(),
+      request_id: z.string().uuid(),
+      fingerprint: Fingerprint,
+    })
+    .strict(),
 ]);
 /** What a trusted client sends. */
 export type ApprovalInput = z.input<typeof ApprovalInputSchema>;
 /** A validated approve, deny or stop; `reason` is already trimmed. */
-export type ApprovalDecision = Exclude<z.output<typeof ApprovalInputSchema>, { action: "list" }>;
+export type ApprovalDecision = Exclude<
+  z.output<typeof ApprovalInputSchema>,
+  { action: "list" | "revert" }
+>;
+/** A validated panel request to revert one applied file change. */
+export type ApprovalRevert = Extract<z.output<typeof ApprovalInputSchema>, { action: "revert" }>;

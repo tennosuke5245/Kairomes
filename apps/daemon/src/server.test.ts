@@ -162,7 +162,7 @@ describe("MCP contracts", () => {
     const c = await connect();
     try {
       const { tools } = await c.client.listTools();
-      expect(tools.length).toBe(33);
+      expect(tools.length).toBe(34);
       expect(
         tools
           .filter(
@@ -173,6 +173,7 @@ describe("MCP contracts", () => {
                 "command_cancel",
                 "file_change_request",
                 "file_change_cancel",
+                "file_change_revert",
                 "mcp_tool_call",
                 "image_import_request",
                 "image_import_cancel",
@@ -191,6 +192,13 @@ describe("MCP contracts", () => {
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true,
+      });
+      // A revert rewrites files through the reviewed path; its request_id deduplicates retries.
+      expect(tools.find((tool) => tool.name === "file_change_revert")?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
       });
       for (const name of ["command_poll", "terminal_poll", "workspace_list", "workbench_open"])
         expect(tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
@@ -422,7 +430,7 @@ describe("MCP contracts", () => {
     transport.stderr?.on("data", () => undefined);
     try {
       await client.connect(transport, { timeout: 5000 });
-      expect((await client.listTools()).tools.length).toBe(33);
+      expect((await client.listTools()).tools.length).toBe(34);
       const result = await client.callTool({ name: "kairomes_status", arguments: {} });
       expect(result.isError).not.toBe(true);
       expect(StatusSchema.parse(result.structuredContent).mounted_workspaces).toBe(1);

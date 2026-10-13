@@ -530,6 +530,20 @@ function startLocalServer(
             return Response.json(await service.mcp.panelState(), { headers: panelHeaders });
           }
           const input = ApprovalInputSchema.parse(await request.json());
+          if (input.action === "revert") {
+            // The fingerprint proves this panel saw the applied record. Creating the inverse
+            // change never approves it; that still needs its own approve (or a grant).
+            const revert = await service.changes.revert(
+              input.change_id,
+              input.request_id,
+              "local-ui",
+              input.fingerprint,
+            );
+            return Response.json(
+              { ...panelSnapshot(service, workbench), revert_change_id: revert.change.id },
+              { headers: panelHeaders },
+            );
+          }
           if (input.action !== "list") await service.decideApproval(input, panelToken);
           return Response.json(panelSnapshot(service, workbench), { headers: panelHeaders });
         } catch (error) {
@@ -713,6 +727,12 @@ function startLocalServer(
             throw new KairomesError(
               "IMPORT_APPROVAL_PANEL_ONLY",
               "圖片匯入只能在已配對的瀏覽器側欄核准。",
+            );
+          // The legacy page has no revert flow; reverts start only from the paired panel.
+          if (input.action === "revert")
+            throw new KairomesError(
+              "REVERT_PANEL_ONLY",
+              "復原檔案變更只能在已配對的瀏覽器側欄進行。",
             );
           if (input.action !== "list") await service.decideApproval(input);
           return Response.json(

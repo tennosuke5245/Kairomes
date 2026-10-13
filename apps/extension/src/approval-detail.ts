@@ -227,6 +227,14 @@ function fileList(item: ChangeItem) {
   return list;
 }
 
+/** A revert's origin and scope lines (approval-view revertLines); summaries stay visible text. */
+export function revertNote(lines: readonly string[]) {
+  if (!lines.length) return undefined;
+  const note = el("div", "rq-revert");
+  for (const line of lines) note.append(appendVisible(el("p", "rq-revert__line"), line));
+  return note;
+}
+
 export function requestMeta(item: ApprovalItem, now: number) {
   const meta = el("p", "rq-meta sp-meta");
   const id = requestMetaLabel(item);

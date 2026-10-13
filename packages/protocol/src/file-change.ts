@@ -80,6 +80,8 @@ const FileChangeSchema = z.object({
   message: z.string().nullable(),
   /** Present only on a denied change whose local user typed a reason. */
   denial_reason: DenialReasonSchema.optional(),
+  /** Present only on a change that reverts an earlier applied change of this Host session. */
+  reverts_change_id: z.string().uuid().optional(),
   files: z.array(FileChangeItemSchema),
 });
 export type FileChange = z.infer<typeof FileChangeSchema>;
@@ -119,6 +121,17 @@ export const FileChangeInputs = {
   file_change_list: z.object({}).strict(),
   file_change_poll: z.object({ change_id: z.string().uuid() }).strict(),
   file_change_cancel: z.object({ change_id: z.string().uuid() }).strict(),
+  file_change_revert: z
+    .object({
+      change_id: z.string().uuid().describe("The applied change to revert."),
+      request_id: z
+        .string()
+        .uuid()
+        .describe(
+          "New UUID per logical revert; reuse it only to retry the identical revert after an uncertain response.",
+        ),
+    })
+    .strict(),
 } as const;
 
 export const fileChangeLabels: Record<FileChange["state"], string> = {

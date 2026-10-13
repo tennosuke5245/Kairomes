@@ -11,6 +11,7 @@ import {
   approvalRisk,
   approvalTitle,
   argvPreview,
+  canRevertChange,
   changeCounts,
   clockTime,
   countdown,
@@ -33,10 +34,12 @@ import {
   primaryLabel,
   queueRow,
   quoteArgument,
+  REVERT_SCOPE_NOTE,
   recentTime,
   relativeTime,
   requestFragment,
   requestMetaLabel,
+  revertLines,
   riskStrip,
   runningMeta,
   stateView,
@@ -510,4 +513,70 @@ test("a finished import offers its file read-only: written, blocking, or of unkn
   for (const state of ["pending", "denied", "expired", "cancelled", "applying"] as const)
     expect(at({ state })).toBeUndefined();
   expect(at({ state: "failed", write_outcome: "not_written" })).toBeUndefined();
+});
+
+test("復原這批… shows only on an applied change while online and unlocked", () => {
+  const applied: FileChangeApproval = { ...change, state: "applied", applied_at: 2_000 };
+  expect(canRevertChange(applied, [applied], true, false)).toBe(true);
+  expect(canRevertChange(applied, [applied], false, false)).toBe(false);
+  expect(canRevertChange(applied, [applied], true, true)).toBe(false);
+  for (const state of [
+    "pending",
+    "applying",
+    "denied",
+    "cancelled",
+    "expired",
+    "conflict",
+    "failed",
+  ])
+    expect(
+      canRevertChange({ ...applied, state } as FileChangeApproval, [applied], true, false),
+    ).toBe(false);
+  expect(
+    canRevertChange({ ...command, state: "succeeded" } as CommandApproval, [], true, false),
+  ).toBe(false);
+  // A revert that still waits or applies hides the button; a finished one does not.
+  const revert: FileChangeApproval = {
+    ...change,
+    id: "00000001-0000-4000-8000-0000000000ff",
+    reverts_change_id: applied.id,
+  };
+  expect(canRevertChange(applied, [applied, revert], true, false)).toBe(false);
+  expect(canRevertChange(applied, [applied, { ...revert, state: "applying" }], true, false)).toBe(
+    false,
+  );
+  expect(canRevertChange(applied, [applied, { ...revert, state: "denied" }], true, false)).toBe(
+    true,
+  );
+  // An applied revert already undid it; an applied redo of that revert makes it revertible again.
+  const reverted: FileChangeApproval = { ...revert, state: "applied", applied_at: 3_000 };
+  expect(canRevertChange(applied, [applied, reverted], true, false)).toBe(false);
+  expect(canRevertChange(reverted, [applied, reverted], true, false)).toBe(true);
+  const redo: FileChangeApproval = {
+    ...reverted,
+    id: "00000001-0000-4000-8000-0000000000fe",
+    reverts_change_id: reverted.id,
+  };
+  expect(canRevertChange(applied, [applied, reverted, redo], true, false)).toBe(true);
+  expect(canRevertChange(reverted, [applied, reverted, redo], true, false)).toBe(false);
+});
+
+test("a revert names what it undoes, and its pending review says what it leaves", () => {
+  const original: FileChangeApproval = { ...change, state: "applied", summary: "更新 README" };
+  const revert: FileChangeApproval = {
+    ...change,
+    id: "00000001-0000-4000-8000-0000000000ff",
+    summary: "復原：更新 README",
+    reverts_change_id: original.id,
+  };
+  expect(revertLines(revert, [original, revert])).toEqual([
+    "復原自：更新 README",
+    REVERT_SCOPE_NOTE,
+  ]);
+  expect(REVERT_SCOPE_NOTE).toBe("只還原檔案內容，不復原命令或其他副作用；新建的資料夾會保留。");
+  expect(revertLines({ ...revert, state: "applied" }, [original])).toEqual(["復原自：更新 README"]);
+  // The original left the retained list.
+  expect(revertLines({ ...revert, state: "applied" }, [revert])).toEqual(["復原先前的變更"]);
+  expect(revertLines(original, [original, revert])).toEqual([]);
+  expect(revertLines(command, [command])).toEqual([]);
 });

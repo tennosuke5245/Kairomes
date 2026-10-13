@@ -137,7 +137,15 @@ export const toolDefinitions: ToolDefinition[] = [
     input: Inputs.file_change_cancel,
     output: FileChangeResultSchema,
     description:
-      "Cancel a pending structured file-change request. Applying or completed changes are not rolled back. Idempotent and requires no new approval.",
+      "Cancel a pending structured file-change request. Applying or completed changes are not rolled back by cancel; use file_change_revert to undo an applied batch. Idempotent and requires no new approval.",
+  },
+  {
+    name: "file_change_revert",
+    title: "復原檔案變更",
+    input: Inputs.file_change_revert,
+    output: FileChangeResultSchema,
+    description:
+      "Revert one applied Kairomes structured file change from this Host session by proposing the inverse batch: it restores the previous contents of edited or overwritten files, deletes files the batch created and recreates files it deleted, using the exact bytes Kairomes kept, so do not hand-write reverse edits. The inverse is a new file change with reverts_change_id set and goes through the same local review and approval mode as file_change_request. Only changes still retained (the recent 24, see file_change_list) since the Kairomes Host started can be reverted, and only in state applied; otherwise REVERT_UNAVAILABLE or FILE_CHANGE_NOT_FOUND. REVERT_CONFLICT means a file was changed, removed or recreated after the batch was applied, and nothing is proposed; re-read the files instead. Folders the batch created are kept. It never undoes commands, terminals, downstream MCP calls or network effects. Use a new UUID request_id per logical revert and reuse it only for an uncertain identical retry. Request acceptance is not success: poll the returned change with file_change_poll until applied or a terminal state.",
   },
   {
     name: "command_request",
@@ -421,6 +429,10 @@ export class ToolService {
         return this.changes.poll(Inputs.file_change_poll.parse(args).change_id);
       case "file_change_cancel":
         return this.changes.cancel(Inputs.file_change_cancel.parse(args).change_id);
+      case "file_change_revert": {
+        const input = Inputs.file_change_revert.parse(args);
+        return this.changes.revert(input.change_id, input.request_id, source);
+      }
       case "command_request":
         return this.commands.request(Inputs.command_request.parse(args), source);
       case "command_list":

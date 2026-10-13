@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { FileChange, FileChangeResult } from "@kairomes/protocol";
-import { changeFacts, currentFileChange } from "./file-change-panel.tsx";
+import { changeFacts, currentFileChange, revertOrigin } from "./file-change-panel.tsx";
 
 const pending: FileChange = {
   id: "change",
@@ -108,4 +108,21 @@ test("change facts count new folders apart from files", () => {
     { label: "檔案", value: "1 個" },
     { label: "新資料夾", value: "2 個" },
   ]);
+});
+
+test("a revert names the change it undoes, or an earlier one once that left the list", () => {
+  const original: FileChange = {
+    ...pending,
+    id: "original",
+    state: "applied",
+    summary: "更新 README",
+  };
+  const revert: FileChange = {
+    ...pending,
+    summary: "復原：更新 README",
+    reverts_change_id: "original",
+  };
+  expect(revertOrigin(revert, [original, revert])).toBe("復原自：更新 README");
+  expect(revertOrigin(revert, [revert])).toBe("復原先前的變更");
+  expect(revertOrigin(original, [original, revert])).toBeUndefined();
 });

@@ -771,6 +771,16 @@ body.sp {
   color: var(--k-ink-2);
   font-variant-numeric: tabular-nums;
 }
+/* A revert's origin and scope, under the outcome or the risk strip. */
+.rq-revert {
+  display: grid;
+  gap: 4px;
+  color: var(--k-ink-2);
+}
+.rq-revert__line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .rq-files {
   margin: 0;
   padding: 0;

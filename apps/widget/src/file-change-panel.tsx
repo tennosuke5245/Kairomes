@@ -75,6 +75,16 @@ export function currentFileChange(selected?: FileChange, result?: FileChangeResu
   return result?.change.id === selected.id ? result.change : selected;
 }
 
+/**
+ * A revert (reverts_change_id) names the change it undoes, or says it undoes an earlier one once
+ * that change has left the retained list. The workbench shows it but cannot start a revert.
+ */
+export function revertOrigin(change: FileChange, all: readonly FileChange[]) {
+  if (!change.reverts_change_id) return;
+  const original = all.find((item) => item.id === change.reverts_change_id);
+  return original ? `復原自：${original.summary}` : "復原先前的變更";
+}
+
 const shortVersion = (version: string | null) => (version ? version.slice(0, 12) : "不存在");
 
 /**
@@ -110,8 +120,11 @@ function ChangeDetail({
   cancelBusy,
   onCancel,
   focusPath,
+  origin,
 }: {
   change: FileChange;
+  /** revertOrigin(): set only on a revert. */
+  origin?: string;
   /** The file chosen in the 變更 list: the diff opens at its section. */
   focusPath?: string;
   result?: FileChangeResult;
@@ -166,6 +179,7 @@ function ChangeDetail({
             <p className="insp-note">套用前核對檔案版本；檔案已變動就停止，不會覆寫。</p>
           </>
         )}
+        {origin && <p className="insp-note">{origin}；只還原檔案內容，新建的資料夾會保留。</p>}
         {reason && (
           <p className="insp-reason" data-tone={state.dataTone}>
             {reason}
@@ -363,6 +377,7 @@ export function FileChangePanel({
               cancelBusy={!!busyId}
               onCancel={current.state === "pending" ? () => void cancel() : undefined}
               focusPath={selectedPath}
+              origin={revertOrigin(current, all)}
             />
           )}
         </>

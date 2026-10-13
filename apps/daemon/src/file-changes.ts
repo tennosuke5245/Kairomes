@@ -92,8 +92,8 @@ export class FileChangeManager {
     return job;
   }
 
-  private replay(input: Input, inputHash: string) {
-    const previous = this.requests.get(input.request_id);
+  private replay(requestId: string, inputHash: string) {
+    const previous = this.requests.get(requestId);
     if (!previous) return;
     if (previous.hash !== inputHash)
       throw new KairomesError(
@@ -106,13 +106,81 @@ export class FileChangeManager {
   async request(raw: Input, source: ActivitySource = "local-ui"): Promise<FileChangeResult> {
     const input = FileChangeInputs.file_change_request.parse(raw);
     const inputHash = hash(input);
-    const prior = this.replay(input, inputHash);
+    const prior = this.replay(input.request_id, inputHash);
     if (prior) return this.result(prior);
     if (Buffer.byteLength(JSON.stringify(input)) > 256 * 1024)
       throw new KairomesError("FILE_CHANGE_SIZE", "單批檔案變更請求不能超過 256 KiB。");
 
     const prepared = await this.engine.prepare(input.workspace_id, input.changes);
-    const raced = this.replay(input, inputHash);
+    return this.create(
+      {
+        requestId: input.request_id,
+        workspaceId: input.workspace_id,
+        summary: input.summary,
+        inputHash,
+      },
+      prepared,
+      source,
+    );
+  }
+
+  /**
+   * Proposes the inverse of an applied change that is still retained. The inverse is built
+   * from the bytes kept in memory, never from model input, and becomes an ordinary pending
+   * change: it is reviewed and approved (or auto-applied under a file grant) like any other.
+   * The original change keeps its state, and a revert can itself be reverted (redo).
+   * `fingerprint`, sent by the trusted panel, must be the applied change's own.
+   */
+  async revert(
+    changeId: string,
+    requestId: string,
+    source: ActivitySource = "local-ui",
+    fingerprint?: string,
+  ): Promise<FileChangeResult> {
+    const input = FileChangeInputs.file_change_revert.parse({
+      change_id: changeId,
+      request_id: requestId,
+    });
+    const inputHash = hash({ revert: input.change_id });
+    const retained = this.jobs.get(input.change_id);
+    if (fingerprint !== undefined && retained && fingerprint !== retained.fingerprint)
+      throw new KairomesError("APPROVAL_MISMATCH", "要復原的變更內容不一致，請更新狀態後再試。");
+    const prior = this.replay(input.request_id, inputHash);
+    if (prior) return this.result(prior);
+    const original = this.get(input.change_id);
+    if (original.view.state !== "applied")
+      throw new KairomesError(
+        "REVERT_UNAVAILABLE",
+        "只有仍在保留清單內、已套用的檔案變更可以復原。",
+      );
+
+    const prepared = await this.engine.prepareRevert(original.prepared);
+    return this.create(
+      {
+        requestId: input.request_id,
+        workspaceId: original.view.workspace_id,
+        summary: [...`復原：${original.view.summary}`].slice(0, 200).join(""),
+        inputHash,
+        revertsChangeId: original.view.id,
+      },
+      prepared,
+      source,
+    );
+  }
+
+  /** Registers a prepared batch as a pending change; a matching grant applies it at once. */
+  private async create(
+    input: {
+      requestId: string;
+      workspaceId: string;
+      summary: string;
+      inputHash: string;
+      revertsChangeId?: string;
+    },
+    prepared: PreparedWorkspaceChange,
+    source: ActivitySource,
+  ): Promise<FileChangeResult> {
+    const raced = this.replay(input.requestId, input.inputHash);
     if (raced) return this.result(raced);
     if (this.closed) throw new KairomesError("FILE_CHANGE_CLOSED", "檔案變更服務已關閉。");
     if ([...this.jobs.values()].filter((job) => fileChangeActive(job.view)).length >= limits.active)
@@ -123,7 +191,10 @@ export class FileChangeManager {
         "本次服務的檔案變更數量已達上限，請重新啟動工作台。",
       );
     while (this.jobs.size >= limits.retained) {
-      const retired = [...this.jobs.values()].find((job) => !fileChangeActive(job.view));
+      // The change being reverted stays retained so a denied or expired revert can be retried.
+      const retired = [...this.jobs.values()].find(
+        (job) => !fileChangeActive(job.view) && job.view.id !== input.revertsChangeId,
+      );
       if (!retired) throw new KairomesError("FILE_CHANGE_LIMIT", "檔案變更仍在清理，請稍後再試。");
       this.jobs.delete(retired.view.id);
     }
@@ -131,14 +202,15 @@ export class FileChangeManager {
     const createdAt = this.now();
     const view: FileChange = {
       id: crypto.randomUUID(),
-      request_id: input.request_id,
-      workspace_id: input.workspace_id,
+      request_id: input.requestId,
+      workspace_id: input.workspaceId,
       summary: input.summary,
       state: "pending",
       created_at: createdAt,
       applied_at: null,
       expires_at: createdAt + limits.pending,
       message: null,
+      ...(input.revertsChangeId ? { reverts_change_id: input.revertsChangeId } : {}),
       files: prepared.files.map((file) => ({
         operation: file.operation,
         path: file.path,
@@ -151,19 +223,19 @@ export class FileChangeManager {
     };
     const fingerprint = hash({
       id: view.id,
-      inputHash,
+      inputHash: input.inputHash,
       files: view.files,
       diff: prepared.diff,
       diffTruncated: prepared.diffTruncated,
     });
-    const job: Job = { view, source, inputHash, fingerprint, prepared };
+    const job: Job = { view, source, inputHash: input.inputHash, fingerprint, prepared };
     this.jobs.set(view.id, job);
-    this.requests.set(input.request_id, { hash: inputHash, id: view.id });
+    this.requests.set(input.requestId, { hash: input.inputHash, id: view.id });
     this.notify(job);
     this.sweep ??= setInterval(() => void this.maintain(), 250);
     this.sweep.unref();
 
-    const grant = this.access(input.workspace_id);
+    const grant = this.access(input.workspaceId);
     if (grant) {
       job.grantId = grant.id;
       await this.decide(view.id, fingerprint, true);

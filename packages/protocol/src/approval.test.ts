@@ -114,6 +114,20 @@ test("decision bodies accept a reason only together with deny", () => {
     expect(ApprovalInputSchema.safeParse(body).success).toBe(false);
 });
 
+test("a revert body names one change, a new request_id and the applied change's fingerprint", () => {
+  const request_id = crypto.randomUUID();
+  expect(
+    ApprovalInputSchema.parse({ action: "revert", change_id: id, request_id, fingerprint }),
+  ).toEqual({ action: "revert", change_id: id, request_id, fingerprint });
+  for (const body of [
+    { action: "revert", change_id: id, fingerprint },
+    { action: "revert", change_id: id, request_id, fingerprint: "bad" },
+    { action: "revert", command_id: id, request_id, fingerprint },
+    { action: "revert", change_id: id, request_id, fingerprint, reason: "x" },
+  ])
+    expect(ApprovalInputSchema.safeParse(body).success).toBe(false);
+});
+
 test("model-facing results declare the optional denial reason", () => {
   const change = {
     id,

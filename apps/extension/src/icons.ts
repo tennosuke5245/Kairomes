@@ -7,6 +7,7 @@ import { iconSpriteId, type UiStateIcon } from "@kairomes/protocol/ui-state";
  */
 export const PANEL_ICONS = [
   "ArrowClockwise",
+  "ArrowCounterClockwise",
   "ArrowLeft",
   "ArrowSquareOut",
   "ArrowUDownLeft",

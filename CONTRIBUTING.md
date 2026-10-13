@@ -22,7 +22,7 @@ bun run check
 
 ## 模型工具與上限
 
-目前公開 33 個 MCP 工具。新增或修改工具時，同步更新 `packages/protocol` 的 schema 與 `LIMITS`、工具描述、測試、README（英文版 [README.md](README.md)、[繁中版](README.zh-TW.md)、[日文版](README.ja.md)）、[操作指南](docs/usage.md) 與 [SECURITY.md](SECURITY.md)。
+目前公開 34 個 MCP 工具。新增或修改工具時，同步更新 `packages/protocol` 的 schema 與 `LIMITS`、工具描述、測試、README（英文版 [README.md](README.md)、[繁中版](README.zh-TW.md)、[日文版](README.ja.md)）、[操作指南](docs/usage.md) 與 [SECURITY.md](SECURITY.md)。
 
 | 範圍 | 工具 | 主要上限 |
 | --- | --- | --- |

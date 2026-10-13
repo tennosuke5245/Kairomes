@@ -3,7 +3,14 @@ import {
   artifactImportDisplayState,
   DENIAL_REASON_MAX_LENGTH,
 } from "@kairomes/protocol";
-import { type DiffView, facts, quote, requestMeta, riskElement } from "./approval-detail.ts";
+import {
+  type DiffView,
+  facts,
+  quote,
+  requestMeta,
+  revertNote,
+  riskElement,
+} from "./approval-detail.ts";
 import {
   diffStatElement,
   el,
@@ -35,6 +42,7 @@ import {
 import {
   type ApprovalTab,
   approvalTitle,
+  canRevertChange,
   countdown,
   countdownMilestone,
   decisionNotice,
@@ -47,6 +55,7 @@ import {
   primaryLabel,
   queueRow,
   type RowMeta,
+  revertLines,
   runningMeta,
   sortForTab,
   stateView,
@@ -81,6 +90,11 @@ export interface ApprovalPanelOptions {
   openFile?: (item: ArtifactImportApproval) => void;
   /** 查詢狀態: re-reads the authoritative snapshot (never resends a decision). */
   refresh?: () => Promise<void>;
+  /**
+   * 復原這批…: asks the daemon for the inverse of an applied file change and resolves with the
+   * new pending change's id once the snapshot holds it. It never approves anything.
+   */
+  revert?: (item: ApprovalItem) => Promise<string>;
 }
 
 const TABS: readonly { id: ApprovalTab; label: string; empty: string; text?: string }[] = [
@@ -184,6 +198,7 @@ export class ApprovalPanel {
   private readonly openFile?: (item: ArtifactImportApproval) => void;
   private readonly canStartImport: () => boolean;
   private readonly refreshState?: () => Promise<void>;
+  private readonly revertChange?: (item: ApprovalItem) => Promise<string>;
 
   private items: ApprovalItem[] = [];
   private available = false;
@@ -216,6 +231,8 @@ export class ApprovalPanel {
   private approvedImport?: string;
   /** The daemon wanted this panel's own read of the image first; it is being read again. */
   private previewRecheck?: string;
+  /** The applied change whose 復原這批… request is in flight. */
+  private reverting?: string;
 
   constructor(
     private readonly container: HTMLElement,
@@ -229,6 +246,7 @@ export class ApprovalPanel {
     this.announce = options.announce ?? (() => {});
     this.now = options.now ?? Date.now;
     this.refreshState = options.refresh;
+    this.revertChange = options.revert;
     this.startImport = options.startImport;
     this.openFile = options.openFile;
     this.canStartImport = options.canStartImport ?? (() => Boolean(options.startImport));
@@ -782,6 +800,8 @@ export class ApprovalPanel {
       return;
     }
     const parts: HTMLElement[] = [riskElement(item, this.windows)];
+    const revert = revertNote(revertLines(item, this.items));
+    if (revert) parts.push(revert);
     const reason = modelReason(item);
     if (reason) parts.push(quote(reason));
     parts.push(...facts(item, this.diffView), requestMeta(item, this.now()));
@@ -1013,7 +1033,11 @@ export class ApprovalPanel {
       this.openReview(item, false);
       return;
     }
-    const key = JSON.stringify([item, justApproved]);
+    const revertable =
+      Boolean(this.revertChange) &&
+      canRevertChange(item, this.items, this.available, this.uncertain(item));
+    const lines = revertLines(item, this.items);
+    const key = JSON.stringify([item, justApproved, revertable, lines, this.reverting]);
     if (key !== this.recordKey) {
       this.recordKey = key;
       // The write this panel approved has finished: say how, once.
@@ -1064,9 +1088,12 @@ export class ApprovalPanel {
         button.addEventListener("click", () => open(item));
         actions.append(button);
       }
+      if (revertable) actions.append(this.revertButton(item));
       if (actions.firstChild) outcome.append(actions);
+      const revert = revertNote(lines);
       this.detail.replaceChildren(
         outcome,
+        ...(revert ? [revert] : []),
         ...(isImportItem(item)
           ? [this.importView.show(item, "record")]
           : facts(item, this.diffView)),
@@ -1074,6 +1101,70 @@ export class ApprovalPanel {
       );
     }
     this.updateRecordMeta();
+  }
+
+  /** 復原這批…: proposes the inverse batch, then opens it for the usual review. */
+  private revertButton(item: ApprovalItem) {
+    const button = textButton(
+      "復原這批…",
+      "k-btn k-btn--secondary k-btn--sm",
+      "ArrowCounterClockwise",
+    );
+    button.dataset.role = "revert";
+    button.disabled = this.reverting !== undefined;
+    if (this.reverting === item.id) button.setAttribute("aria-busy", "true");
+    button.addEventListener("click", (event) => {
+      if (event.isTrusted) void this.revert(item);
+    });
+    return button;
+  }
+
+  private async revert(item: ApprovalItem) {
+    const current = this.find(item.id);
+    if (
+      !this.revertChange ||
+      this.reverting !== undefined ||
+      !current ||
+      !canRevertChange(current, this.items, this.available, this.uncertain(current))
+    )
+      return;
+    this.reverting = item.id;
+    this.renderRecord();
+    let created: string | undefined;
+    try {
+      created = await this.revertChange(current);
+    } catch (cause) {
+      this.report(cause instanceof Error ? cause.message : "結果待確認；請查詢狀態。");
+    } finally {
+      this.reverting = undefined;
+    }
+    if (!this.openState) return;
+    if (this.recordId !== item.id) {
+      // Another record opened meanwhile was drawn with its button disabled.
+      if (this.recordId) this.renderRecord();
+      return;
+    }
+    const revert = created ? this.find(created) : undefined;
+    if (revert) {
+      this.openItem(revert.id);
+      // A files or full grant applies it before the answer, and a retry may return a finished one.
+      this.announce(
+        awaitingDecision(revert)
+          ? "已建立復原請求，請核對差異後再套用。"
+          : revert.state === "applied"
+            ? "已復原這批檔案變更。"
+            : `復原：${stateView(revert).label}`,
+      );
+      return;
+    }
+    this.renderRecord();
+    // The pressed button was disabled while busy, so focus fell to <body>; give it back.
+    const active = document.activeElement;
+    if (!active || active === document.body)
+      (
+        this.detail.querySelector<HTMLButtonElement>("[data-role='revert']:not(:disabled)") ??
+        this.title
+      ).focus({ preventScroll: true });
   }
 
   private refreshButton() {

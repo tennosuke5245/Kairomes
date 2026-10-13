@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { FileChangeApproval } from "@kairomes/protocol";
-import { ApprovalMutationTracker } from "./approval-mutation.ts";
+import { ApprovalMutationTracker, RevertRequests } from "./approval-mutation.ts";
 import { approvalDecisionBlock } from "./approval-state.ts";
 
 const source = "http://127.0.0.1:4000:instance-one";
@@ -102,4 +102,36 @@ test("terminal requests without a separate request ID remain locked until their 
   expect(tracker.isLocked(source, terminal)).toBe(true);
   tracker.observe(source, [{ ...terminal, state: "stopped" }], 50);
   expect(tracker.hasUnknown).toBe(false);
+});
+
+test("a revert keeps one request_id per record until it is confirmed", () => {
+  let next = 0;
+  const requests = new RevertRequests(() => `request-${++next}`);
+  const first = requests.idFor(source, "change-1");
+  // A lost or refused answer: the manual retry reuses the same id.
+  expect(requests.idFor(source, "change-1")).toBe(first);
+  expect(requests.idFor(source, "change-2")).not.toBe(first);
+  requests.settle(source, "change-1");
+  expect(requests.idFor(source, "change-1")).not.toBe(first);
+  // Another paired instance starts empty, and settling a stale source changes nothing.
+  const other = "http://127.0.0.1:4000:instance-two";
+  const fresh = requests.idFor(other, "change-2");
+  expect(fresh).toBe(`request-${next}`);
+  requests.settle(source, "change-2");
+  expect(requests.idFor(other, "change-2")).toBe(fresh);
+});
+
+test("a revert seen in a snapshot frees its record for a new 復原這批…", () => {
+  let next = 0;
+  const requests = new RevertRequests(() => `request-${++next}`);
+  const first = requests.idFor(source, "change-1");
+  const second = requests.idFor(source, "change-2");
+  // The response was lost, but the stream shows the revert (later denied or expired).
+  const revert = { ...request, id: "revert-1", request_id: first, reverts_change_id: "change-1" };
+  // Another instance's snapshot changes nothing.
+  requests.observe("http://127.0.0.1:4000:instance-two", [revert]);
+  expect(requests.idFor(source, "change-1")).toBe(first);
+  requests.observe(source, [request, revert]);
+  expect(requests.idFor(source, "change-1")).not.toBe(first);
+  expect(requests.idFor(source, "change-2")).toBe(second);
 });

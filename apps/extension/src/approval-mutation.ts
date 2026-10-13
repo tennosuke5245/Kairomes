@@ -51,3 +51,37 @@ export class ApprovalMutationTracker {
     }
   }
 }
+
+/**
+ * One request_id per 復原這批… of a record, kept until the daemon confirms the revert. A lost
+ * response is retried by hand with the same id, so the daemon returns the revert it may already
+ * have created instead of proposing a second one.
+ */
+export class RevertRequests {
+  private source: string | undefined;
+  private ids = new Map<string, string>();
+
+  constructor(private readonly create: () => string = () => crypto.randomUUID()) {}
+
+  idFor(source: string, changeId: string) {
+    if (this.source !== source) this.ids.clear();
+    this.source = source;
+    let id = this.ids.get(changeId);
+    if (!id) {
+      id = this.create();
+      this.ids.set(changeId, id);
+    }
+    return id;
+  }
+
+  settle(source: string, changeId: string) {
+    if (source === this.source) this.ids.delete(changeId);
+  }
+
+  /** A snapshot that holds the revert confirms it too, so a later 復原這批… proposes anew. */
+  observe(source: string, changes: readonly { request_id: string }[]) {
+    if (source !== this.source) return;
+    for (const [changeId, id] of this.ids)
+      if (changes.some((change) => change.request_id === id)) this.ids.delete(changeId);
+  }
+}
