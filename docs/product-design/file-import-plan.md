@@ -80,6 +80,8 @@
 | D6 | 寫入 | 只建立新檔、父資料夾須已存在、不自動改名 | 沿用 create-only 核心，結果不明時不會覆寫或多存一份 |
 | D7 | 網路來源標記 | Windows 上替匯入檔附加 `Zone.Identifier`（ZoneId=3） | 讓 Office 受保護的檢視等 Windows 機制把它當網路下載檔；待驗證後定案 |
 
+註：D6 不變；資料夾不存在時，模型可先以 `file_change_request` 的 `mkdir` 建立（照檔案變更核准）。
+
 ## 6. 檔案類型政策
 
 ### 6.1 白名單

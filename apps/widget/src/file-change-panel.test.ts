@@ -86,3 +86,26 @@ test("change facts: files, +A −D once loaded, then the review deadline or the 
     value: "下午 3:12",
   });
 });
+
+test("change facts count new folders apart from files", () => {
+  const folders: FileChange = {
+    ...change,
+    files: [
+      {
+        operation: "mkdir",
+        path: "a/b",
+        before_version: null,
+        after_version: null,
+        created_folders: ["a/", "a/b/"],
+      },
+    ],
+  };
+  expect(changeFacts(folders, undefined, now).slice(0, -1)).toEqual([
+    { label: "新資料夾", value: "2 個" },
+  ]);
+  const mixed = { ...folders, files: [...folders.files, ...pending.files] };
+  expect(changeFacts(mixed, undefined, now).slice(0, -1)).toEqual([
+    { label: "檔案", value: "1 個" },
+    { label: "新資料夾", value: "2 個" },
+  ]);
+});

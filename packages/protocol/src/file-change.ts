@@ -3,6 +3,8 @@ import { DenialReasonSchema } from "./approval.ts";
 
 const FileVersion = z.string().regex(/^[a-f0-9]{64}$/);
 const FilePath = z.string().min(1).max(1024);
+/** A FilePath plus its trailing slash, so one char longer. */
+const FolderPath = z.string().min(2).max(1025).regex(/\/$/);
 const ReplacementSchema = z
   .object({
     old_text: z.string().min(1).max(32768),
@@ -35,6 +37,12 @@ const FileChangeOperationSchema = z.discriminatedUnion("operation", [
       expected_version: FileVersion,
     })
     .strict(),
+  z
+    .object({
+      operation: z.literal("mkdir"),
+      path: FilePath,
+    })
+    .strict(),
 ]);
 export type FileChangeOperation = z.infer<typeof FileChangeOperationSchema>;
 
@@ -49,10 +57,15 @@ const FileChangeStateSchema = z.enum([
   "failed",
 ]);
 const FileChangeItemSchema = z.object({
-  operation: z.enum(["edit", "write", "delete"]),
+  operation: z.enum(["edit", "write", "delete", "mkdir"]),
   path: FilePath,
   before_version: FileVersion.nullable(),
   after_version: FileVersion.nullable(),
+  /**
+   * New folders this item introduces, shallow to deep, each with a trailing slash (a/, a/b/).
+   * Present only when non-empty; a mkdir item lists its own folder last.
+   */
+  created_folders: z.array(FolderPath).max(16).optional(),
 });
 const FileChangeSchema = z.object({
   id: z.string().uuid(),

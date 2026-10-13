@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Command, FileChange, TerminalSession } from "@kairomes/protocol";
-import { summarizeChanges } from "./change-summary.ts";
+import { changeCounts, countsText, summarizeChanges } from "./change-summary.ts";
 import { changeReason, commandRecord, terminalRecord } from "./record-model.ts";
 
 const now = new Date(2026, 9, 6, 15, 30).getTime();
@@ -138,6 +138,33 @@ test("the change summary has one row per path with the latest state and a change
   expect(rows[0]?.name).toBe("main.ts");
   expect(summarizeChanges([applied, change, other], two).length).toBe(1);
   expect(summarizeChanges(undefined)).toEqual([]);
+});
+
+test("a folder created by mkdir is its own row labelled 建立資料夾", () => {
+  const folder: FileChange = {
+    ...change,
+    id: "30000000-0000-4000-8000-000000000006",
+    files: [
+      {
+        operation: "mkdir",
+        path: "assets/images",
+        before_version: null,
+        after_version: null,
+        created_folders: ["assets/", "assets/images/"],
+      },
+    ],
+  };
+  expect(summarizeChanges([folder]).map((row) => [row.path, row.name, row.operation])).toEqual([
+    ["assets/images", "images", "建立資料夾"],
+  ]);
+  // Counted as the side panel does: a mkdir item is folders, not a file.
+  expect(countsText(changeCounts(folder.files))).toBe("2 個新資料夾");
+  const mixed = [
+    ...folder.files,
+    { operation: "write" as const, path: "a/x.ts", before_version: null, after_version: null },
+  ];
+  expect(countsText(changeCounts(mixed))).toBe("1 個檔案 · 2 個新資料夾");
+  expect(countsText(changeCounts([]))).toBe("0 個檔案");
 });
 
 test("a newer pending change is never hidden behind an older change applied later", () => {

@@ -39,9 +39,24 @@ const kindIcons: Record<ApprovalKind, PanelIcon> = {
 
 export const approvalKindIcon = (item: ApprovalItem) => kindIcons[approvalKind(item)];
 
+type ChangeFile = Extract<ApprovalItem, { files: unknown }>["files"][number];
+
+/** Files a batch writes or deletes, and the new folders it creates (each listed once). */
+export function changeCounts(files: readonly ChangeFile[]) {
+  return {
+    files: files.filter((file) => file.operation !== "mkdir").length,
+    folders: files.reduce((sum, file) => sum + (file.created_folders?.length ?? 0), 0),
+  };
+}
+
 export function approvalTitle(item: ApprovalItem) {
   if ("source_file_id" in item) return "匯入圖片";
-  if ("files" in item) return `修改 ${item.files.length} 個檔案`;
+  if ("files" in item) {
+    const counts = changeCounts(item.files);
+    if (!counts.folders) return `修改 ${counts.files} 個檔案`;
+    const folders = `建立 ${counts.folders} 個資料夾`;
+    return counts.files ? `修改 ${counts.files} 個檔案、${folders}` : folders;
+  }
   return "argv" in item ? "執行命令" : "開啟終端機";
 }
 
@@ -450,16 +465,36 @@ export function diffStat(item: ApprovalItem) {
   return { additions: parsed.additions, deletions: parsed.deletions };
 }
 
-const operationLabels = { edit: "修改", write: "寫入", delete: "刪除" } as const;
+const operationLabels: Record<ChangeFile["operation"], string> = {
+  edit: "修改",
+  write: "寫入",
+  delete: "刪除",
+  mkdir: "建立資料夾",
+};
 
-export const fileOperationLabel = (operation: keyof typeof operationLabels) =>
+export const fileOperationLabel = (operation: ChangeFile["operation"]) =>
   operationLabels[operation];
 
+/**
+ * The one meta line under a reviewed file that brings new folders: 會建立資料夾：a/、a/b/.
+ * A mkdir item already names its own folder, so only its new ancestors are listed.
+ */
+export function createdFoldersLine(file: ChangeFile) {
+  const folders = file.created_folders ?? [];
+  const shown = file.operation === "mkdir" ? folders.slice(0, -1) : folders;
+  return shown.length ? `會建立資料夾：${shown.join("、")}` : undefined;
+}
+
 /** Kind pill for a diff section: 刪除 is the only warning; the rest stay neutral. */
-export function diffStatusPill(status: "modified" | "added" | "deleted" | "renamed"): {
+export function diffStatusPill(
+  status: "modified" | "added" | "deleted" | "renamed",
+  path = "",
+): {
   label: string;
   tone: UiDataTone;
 } {
+  // A new folder's section path keeps its trailing slash (diff-lines.ts).
+  if (status === "added" && path.endsWith("/")) return { label: "新資料夾", tone: "neutral" };
   if (status === "added") return { label: "新檔案", tone: "neutral" };
   if (status === "deleted") return { label: "刪除", tone: "warning" };
   if (status === "renamed") return { label: "重新命名", tone: "neutral" };
@@ -472,10 +507,16 @@ export function diffStatusPill(status: "modified" | "added" | "deleted" | "renam
  */
 export function diffCoversFiles(
   parsedPaths: readonly string[],
-  files: readonly { path: string }[],
+  files: readonly Pick<ChangeFile, "operation" | "path" | "created_folders">[],
 ) {
-  if (parsedPaths.length !== files.length) return false;
-  const expected = files.map((file) => file.path).sort();
+  // Each new folder is its own section (a/b/); a mkdir item's folder is listed there too.
+  const expected = files
+    .flatMap((file) => [
+      ...(file.operation === "mkdir" ? [] : [file.path]),
+      ...(file.created_folders ?? []),
+    ])
+    .sort();
+  if (parsedPaths.length !== expected.length) return false;
   return [...parsedPaths].sort().every((path, index) => path === expected[index]);
 }
 

@@ -10,6 +10,8 @@ export {
   WorkspaceArtifacts,
 } from "./artifacts.ts";
 export {
+  MAX_NEW_FOLDER_LEVELS,
+  MAX_NEW_FOLDERS,
   type PreparedWorkspaceChange,
   WorkspaceChanges,
 } from "./changes.ts";

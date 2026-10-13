@@ -6,8 +6,10 @@
 //   --- a/<path> / +++ b/<path>, --- /dev/null, +++ /dev/null
 //   @@ exact replacement N @@, @@ exact replacement N · all matches @@  (no line numbers)
 //   @@ create file @@, @@ delete file @@                              (whole file)
+//   @@ create folder @@ after --- /dev/null / +++ b/<folder>/         (new folder, no lines)
 //   @@ N @@                                                           (first changed line)
-// Files are joined with a blank line. A truncated diff stays marked as truncated so the
+// Files are joined with a blank line; new folders come first, each as its own section whose
+// path keeps the trailing slash. A truncated diff stays marked as truncated so the
 // caller can keep it non-approvable.
 //
 // Review hunks prefix every element of text.split("\n"), so a text that ends in a newline
@@ -63,9 +65,12 @@ const focusedHunk = /^@@ (\d+) @@$/;
 const replacementHunk = /^@@ exact replacement (\d+)( · all matches)? @@$/;
 const gitHeader = /^diff --git (?:"?a\/)(.+?)"? (?:"?b\/)(.+?)"?$/;
 
-/** Splits a diff path for display: the directory (meta colour) and the file name (strong). */
+/**
+ * Splits a diff path for display: the directory (meta colour) and the file name (strong). A
+ * new folder's path ends with a slash, which stays on its name: a/b/ → a/ and b/.
+ */
 export function diffPathParts(path: string) {
-  const slash = path.lastIndexOf("/");
+  const slash = path.endsWith("/") ? path.lastIndexOf("/", path.length - 2) : path.lastIndexOf("/");
   return { directory: path.slice(0, slash + 1), name: path.slice(slash + 1) };
 }
 
@@ -105,6 +110,7 @@ function hunkLabel(row: string) {
   const replacement = replacementHunk.exec(row);
   if (replacement) return `替換 ${replacement[1]}${replacement[2] ? " · 全部相符處" : ""}`;
   if (row === "@@ create file @@") return "新檔案";
+  if (row === "@@ create folder @@") return "新資料夾";
   if (row === "@@ delete file @@") return "刪除檔案";
   const focused = focusedHunk.exec(row);
   if (focused) return `第 ${focused[1]} 行起`;
@@ -113,7 +119,8 @@ function hunkLabel(row: string) {
   return undefined;
 }
 
-const reviewHunk = /^@@ (?:exact replacement \d+(?: · all matches)?|create file|delete file) @@$/;
+const reviewHunk =
+  /^@@ (?:exact replacement \d+(?: · all matches)?|create file|create folder|delete file) @@$/;
 
 /**
  * Drops the final newline row of each workspace-core review hunk and returns how many add and
@@ -140,7 +147,9 @@ function withoutReviewNewlines(file: DiffFile) {
       if (lines[index]?.kind === "add") lastAdd = index;
       else if (lines[index]?.kind === "del") lastDel = index;
     }
-    if (header.text === "@@ create file @@") {
+    if (header.text === "@@ create folder @@") {
+      // A new folder has no content rows to drop.
+    } else if (header.text === "@@ create file @@") {
       if (lastAdd === end - 1 && bare(lastAdd)) drop.add(lastAdd);
     } else if (header.text === "@@ delete file @@") {
       if (lastDel === end - 1 && bare(lastDel)) drop.add(lastDel);
@@ -254,7 +263,7 @@ export function parseUnifiedDiff(text: string, options: { truncated?: boolean } 
           while (rows[index + 1 + leading]?.startsWith(" ")) leading++;
           const start = Math.max(1, Number(focused[1]) - leading);
           hunk = { counted: false, oldLeft: 0, newLeft: 0, old: start, new: start };
-        } else if (row === "@@ create file @@") {
+        } else if (row === "@@ create file @@" || row === "@@ create folder @@") {
           target.status = "added";
           hunk = { counted: false, oldLeft: 0, newLeft: 0, new: 1 };
         } else if (row === "@@ delete file @@") {

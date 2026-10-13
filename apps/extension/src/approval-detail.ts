@@ -13,7 +13,9 @@ import {
 } from "./approval-dom.ts";
 import type { ApprovalItem } from "./approval-state.ts";
 import {
+  changeCounts,
   clockTime,
+  createdFoldersLine,
   cwdNote,
   diffCoversFiles,
   diffStatusPill,
@@ -89,8 +91,16 @@ function changeFacts(item: ChangeItem, view: DiffView): HTMLElement[] {
   const bar = el("div", "rq-diffbar");
   const toggle = textButton("自動換行", "k-btn k-btn--quiet k-btn--sm", "ArrowUDownLeft");
   toggle.setAttribute("aria-pressed", String(view.wrap));
+  const counts = changeCounts(item.files);
   bar.append(
-    el("span", "rq-diffbar__title", `${item.files.length} 個檔案`),
+    el(
+      "span",
+      "rq-diffbar__title",
+      [
+        ...(counts.files || !counts.folders ? [`${counts.files} 個檔案`] : []),
+        ...(counts.folders ? [`${counts.folders} 個新資料夾`] : []),
+      ].join("、"),
+    ),
     diffStatElement(parsed.additions, parsed.deletions),
     toggle,
   );
@@ -99,7 +109,12 @@ function changeFacts(item: ChangeItem, view: DiffView): HTMLElement[] {
     parsed.files.map((file) => file.path),
     item.files,
   )
-    ? parsed.files.map((file) => diffSection(file))
+    ? parsed.files.map((file) =>
+        diffSection(
+          file,
+          item.files.find((entry) => entry.operation !== "mkdir" && entry.path === file.path),
+        ),
+      )
     : [rawDiff(item.diff, item.diff_truncated)];
   const applyWrap = () => {
     toggle.setAttribute("aria-pressed", String(view.wrap));
@@ -117,7 +132,7 @@ function changeFacts(item: ChangeItem, view: DiffView): HTMLElement[] {
   return [bar, group];
 }
 
-function diffSection(file: DiffFile) {
+function diffSection(file: DiffFile, reviewed?: ChangeItem["files"][number]) {
   const section = el("section", "k-diff");
   section.setAttribute("aria-label", file.path);
   const head = el("div", "k-diff__head");
@@ -132,7 +147,9 @@ function diffSection(file: DiffFile) {
     appendVisible(from, file.previousPath);
     path.append(from);
   }
-  const status = diffStatusPill(file.status);
+  const folders = reviewed && createdFoldersLine(reviewed);
+  if (folders) path.append(appendVisible(el("span", "rq-files__folders"), folders));
+  const status = diffStatusPill(file.status, file.path);
   const collapse = el("button", "k-btn k-btn--quiet k-btn--icon k-btn--sm rq-diff__toggle");
   collapse.type = "button";
   collapse.setAttribute("aria-expanded", "true");
@@ -201,10 +218,10 @@ function fileList(item: ChangeItem) {
   list.setAttribute("aria-label", "檔案");
   for (const file of item.files) {
     const entry = el("li", "rq-files__item");
-    entry.append(
-      appendVisible(el("span", "rq-files__path"), file.path),
-      pill("neutral", undefined, fileOperationLabel(file.operation)),
-    );
+    const path = appendVisible(el("span", "rq-files__path"), file.path);
+    const folders = createdFoldersLine(file);
+    if (folders) path.append(appendVisible(el("span", "rq-files__folders"), folders));
+    entry.append(path, pill("neutral", undefined, fileOperationLabel(file.operation)));
     list.append(entry);
   }
   return list;

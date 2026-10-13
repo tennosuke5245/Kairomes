@@ -38,6 +38,9 @@ const conflictCodes = new Set([
   "FILE_EXISTS",
   "WORKSPACE_CHANGED",
   "OUTSIDE_WORKSPACE",
+  // A planned folder or a new file's parent was replaced after review.
+  "NOT_DIRECTORY",
+  "LINK_BLOCKED",
 ]);
 
 function boundedDiff(value: string) {
@@ -141,6 +144,9 @@ export class FileChangeManager {
         path: file.path,
         before_version: file.beforeVersion,
         after_version: file.afterVersion,
+        ...(file.folders.length
+          ? { created_folders: file.folders.map((folder) => `${folder}/`) }
+          : {}),
       })),
     };
     const fingerprint = hash({

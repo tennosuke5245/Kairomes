@@ -11,13 +11,16 @@ import {
   approvalRisk,
   approvalTitle,
   argvPreview,
+  changeCounts,
   clockTime,
   countdown,
   countdownMilestone,
+  createdFoldersLine,
   cwdNote,
   diffCoversFiles,
   diffStat,
   diffStatusPill,
+  fileOperationLabel,
   formatDuration,
   importFileAction,
   importOutcomeReason,
@@ -319,6 +322,48 @@ test("diff stats, section pills and the parsed-coverage check", () => {
   expect(diffCoversFiles(["tests/main.test.ts", "src/main.ts"], change.files)).toBe(true);
   expect(diffCoversFiles(["src/main.ts"], change.files)).toBe(false);
   expect(diffCoversFiles(["src/main.ts", "other.ts"], change.files)).toBe(false);
+});
+
+test("new folders: labels, the meta line, counts and the parsed-coverage check", () => {
+  const files: FileChangeApproval["files"] = [
+    {
+      operation: "write",
+      path: "a/b/c.ts",
+      before_version: null,
+      after_version: null,
+      created_folders: ["a/", "a/b/"],
+    },
+    {
+      operation: "mkdir",
+      path: "logs/2026",
+      before_version: null,
+      after_version: null,
+      created_folders: ["logs/", "logs/2026/"],
+    },
+    {
+      operation: "mkdir",
+      path: "a/b/d",
+      before_version: null,
+      after_version: null,
+      created_folders: ["a/b/d/"],
+    },
+  ];
+  expect(fileOperationLabel("mkdir")).toBe("建立資料夾");
+  expect(files.map(createdFoldersLine)).toEqual([
+    "會建立資料夾：a/、a/b/",
+    "會建立資料夾：logs/",
+    undefined,
+  ]);
+  expect(change.files.map(createdFoldersLine)).toEqual([undefined, undefined]);
+  expect(changeCounts(files)).toEqual({ files: 1, folders: 5 });
+  expect(approvalTitle({ ...change, files })).toBe("修改 1 個檔案、建立 5 個資料夾");
+  expect(approvalTitle({ ...change, files: files.slice(1) })).toBe("建立 3 個資料夾");
+  expect(diffStatusPill("added", "a/b/")).toEqual({ label: "新資料夾", tone: "neutral" });
+  expect(diffStatusPill("added", "a/b/c.ts").label).toBe("新檔案");
+  const sections = ["a/", "a/b/", "logs/", "logs/2026/", "a/b/d/", "a/b/c.ts"];
+  expect(diffCoversFiles(sections, files)).toBe(true);
+  expect(diffCoversFiles(["a/b/c.ts", "logs/2026", "a/b/d"], files)).toBe(false);
+  expect(diffCoversFiles(sections.slice(1), files)).toBe(false);
 });
 
 test("workspace hues are stable and within the five tokens", () => {

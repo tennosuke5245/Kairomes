@@ -833,7 +833,8 @@ body.sp {
 .k-diff[data-collapsed] .k-diff__head {
   border-bottom: 0;
 }
-.rq-diff__from {
+.rq-diff__from,
+.rq-files__folders {
   display: block;
   color: var(--k-ink-3);
   font-size: var(--k-text-meta);

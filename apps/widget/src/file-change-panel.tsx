@@ -3,7 +3,7 @@ import { toneFor } from "@kairomes/protocol/ui-state";
 import { PencilSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
-import { summarizeChanges } from "./change-summary.ts";
+import { changeCounts, summarizeChanges } from "./change-summary.ts";
 import type { Fact } from "./command-model.ts";
 import {
   FactsStrip,
@@ -78,7 +78,7 @@ export function currentFileChange(selected?: FileChange, result?: FileChangeResu
 const shortVersion = (version: string | null) => (version ? version.slice(0, 12) : "不存在");
 
 /**
- * 檔案 N, +A −D once the diff is loaded (至少 +A −D when it was cut), then the review deadline
+ * 檔案 N (and 新資料夾 M; folders only when nothing else changes), +A −D once the diff is loaded (至少 +A −D when it was cut), then the review deadline
  * or the applied time.
  */
 export function changeFacts(
@@ -86,7 +86,11 @@ export function changeFacts(
   diff: { additions: number; deletions: number; truncated?: boolean } | undefined,
   now: number,
 ): Fact[] {
-  const facts: Fact[] = [{ label: "檔案", value: `${change.files.length} 個` }];
+  const counts = changeCounts(change.files);
+  const facts: Fact[] = [
+    ...(counts.files || !counts.folders ? [{ label: "檔案", value: `${counts.files} 個` }] : []),
+    ...(counts.folders ? [{ label: "新資料夾", value: `${counts.folders} 個` }] : []),
+  ];
   if (diff) facts.push({ label: "差異", value: diffCounts(diff), mono: true });
   if (change.state === "pending") {
     const left = countdown(change.expires_at, now);

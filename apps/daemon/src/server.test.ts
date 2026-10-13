@@ -313,8 +313,9 @@ describe("MCP contracts", () => {
           MCP_RESULT_URI,
         );
       }
-      // The shared ui-tokens layer changed both resources incompatibly (0.3.0 visual wave).
-      expect(WIDGET_URI).toBe("ui://kairomes/workbench/v8.html");
+      // v9: FileChange items gained the mkdir operation, which a v8 workbench's strict enum
+      // rejects. The result card (v4) does not parse file changes, so it stays.
+      expect(WIDGET_URI).toBe("ui://kairomes/workbench/v9.html");
       expect(MCP_RESULT_URI).toBe("ui://kairomes/mcp-result/v4.html");
       const resource = await c.client.readResource({ uri: WIDGET_URI });
       expect(resource.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");

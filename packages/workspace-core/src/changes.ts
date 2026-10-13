@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, open, realpath, rename, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, realpath, rename, rmdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { type FileChangeOperation, KairomesError, LIMITS } from "@kairomes/protocol";
 import { redactKnownSecrets } from "./files.ts";
-import { isWithin, resolveChecked, validateRelativePath } from "./paths.ts";
+import { isWithin, type RootIdentity, resolveChecked, validateRelativePath } from "./paths.ts";
 import type { WorkspaceRegistry } from "./registry.ts";
 
 type SourceFile = {
@@ -17,26 +17,46 @@ type SourceFile = {
   newline: "lf" | "crlf";
 };
 
+/** New folder levels one path may add, and new folders one batch may add. */
+export const MAX_NEW_FOLDER_LEVELS = 4;
+export const MAX_NEW_FOLDERS = 16;
+
+type PlannedFolder = {
+  /** Workspace-relative path without a trailing slash. */
+  path: string;
+  target: string;
+};
+
 type PreparedFileChange = {
   operation: FileChangeOperation["operation"];
   path: string;
+  /** For mkdir, the folder itself; it has no content and is never a delete. */
   target: string;
   before: Buffer | null;
   after: Buffer | null;
   beforeVersion: string | null;
   afterVersion: string | null;
   mode: number;
+  /** Empty for mkdir: every new folder has its own entry in the batch diff. */
   diff: string;
+  /** Relative paths of the planned folders this operation introduced, shallow to deep. */
+  folders: string[];
 };
 
 export type PreparedWorkspaceChange = {
   workspaceId: string;
+  /** Created by apply() in this order (shallow to deep) before any file is written. */
+  folders: PlannedFolder[];
   files: PreparedFileChange[];
   diff: string;
   diffTruncated: boolean;
 };
 
 const digest = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
+const pathKey = (value: string) =>
+  process.platform === "win32" ? value.toLocaleLowerCase() : value;
+const errorCode = (error: unknown) =>
+  error && typeof error === "object" && "code" in error ? error.code : undefined;
 
 function normalizeInput(text: string) {
   if (text.includes("\0")) throw new KairomesError("BINARY_FILE", "檔案內容不能包含 NUL。");
@@ -146,6 +166,122 @@ async function newTarget(registry: WorkspaceRegistry, workspaceId: string, relat
   return target;
 }
 
+/**
+ * Resolves the folder `parts` (a new file's parent, or a mkdir target). Existing ancestors go
+ * through resolveChecked, so links and junctions stay blocked; missing ones are planned shallow
+ * to deep and only apply() creates them. A folder another operation of the batch already
+ * planned is reused, not planned twice.
+ */
+async function planFolders(
+  root: RootIdentity,
+  parts: string[],
+  planned: Map<string, PlannedFolder>,
+  claimed: Set<string>,
+) {
+  let target = root.root;
+  let existing = true;
+  let levels = 0;
+  const folders: PlannedFolder[] = [];
+  for (const [index, part] of parts.entries()) {
+    const relative = parts.slice(0, index + 1).join("/");
+    validateRelativePath(relative);
+    const key = pathKey(relative);
+    const known = planned.get(key);
+    if (existing && !known) {
+      try {
+        target = await resolveChecked(root, relative);
+        if (!(await lstat(target)).isDirectory())
+          throw new KairomesError(
+            "NOT_DIRECTORY",
+            "路徑上已有同名的非資料夾項目，無法建立資料夾。",
+          );
+        continue;
+      } catch (error) {
+        if (errorCode(error) !== "ENOENT") throw error;
+      }
+    }
+    existing = false;
+    levels++;
+    if (known) {
+      target = known.target;
+      continue;
+    }
+    // An earlier operation of the batch already uses this path for a file.
+    if (claimed.has(key))
+      throw new KairomesError("CHANGE_DUPLICATE", "同一批變更不能把同一路徑同時當作檔案與資料夾。");
+    target = path.join(target, part);
+    if (!isWithin(root.root, target))
+      throw new KairomesError("OUTSIDE_WORKSPACE", "路徑超出掛載工作區。");
+    const folder = { path: relative, target };
+    planned.set(key, folder);
+    folders.push(folder);
+  }
+  if (levels > MAX_NEW_FOLDER_LEVELS)
+    throw new KairomesError(
+      "FOLDER_LIMIT",
+      `一次最多建立 ${MAX_NEW_FOLDER_LEVELS} 層新資料夾；請先建立較淺的資料夾。`,
+    );
+  if (planned.size > MAX_NEW_FOLDERS)
+    throw new KairomesError(
+      "FOLDER_LIMIT",
+      `同一批最多建立 ${MAX_NEW_FOLDERS} 個新資料夾；請拆成較小批次。`,
+    );
+  return { target, folders, existing };
+}
+
+type CreatedFolder = { target: string; dev: bigint; ino: bigint };
+
+/**
+ * Creates one planned folder without following links. A real folder someone else created
+ * inside the workspace meanwhile is used but not owned; anything else is a conflict.
+ */
+async function createFolder(root: RootIdentity, folder: PlannedFolder, created: CreatedFolder[]) {
+  const parent = await resolveChecked(root, folder.path.split("/").slice(0, -1).join("/"));
+  if (
+    !(await lstat(parent)).isDirectory() ||
+    (await realpath(parent)) !== parent ||
+    path.join(parent, path.basename(folder.target)) !== folder.target
+  )
+    throw new KairomesError("WORKSPACE_CHANGED", "新資料夾的上層路徑已改變，沒有套用變更。");
+  let owned = true;
+  try {
+    await mkdir(folder.target, { mode: 0o755 });
+  } catch (error) {
+    if (errorCode(error) !== "EEXIST") throw error;
+    owned = false;
+  }
+  const info = await lstat(folder.target, { bigint: true });
+  if (info.isSymbolicLink())
+    throw new KairomesError(
+      "LINK_BLOCKED",
+      `資料夾 ${folder.path} 已被換成符號連結或 junction，沒有套用變更。`,
+    );
+  if (!info.isDirectory())
+    throw new KairomesError("NOT_DIRECTORY", `${folder.path} 已被其他項目佔用，沒有套用變更。`);
+  if (owned) created.push({ target: folder.target, dev: info.dev, ino: info.ino });
+  const canonical = await realpath(folder.target);
+  if (canonical !== folder.target || !isWithin(root.root, canonical))
+    throw new KairomesError(
+      "LINK_BLOCKED",
+      `資料夾 ${folder.path} 的實際路徑已改變，沒有套用變更。`,
+    );
+}
+
+/** Rollback: removes only the empty folders this apply created, deepest first. */
+async function removeFolders(created: CreatedFolder[]) {
+  for (const folder of created.reverse()) {
+    try {
+      const info = await lstat(folder.target, { bigint: true });
+      // A folder that now holds other files, or was replaced, is left alone.
+      if (info.isDirectory() && info.dev === folder.dev && info.ino === folder.ino)
+        await rmdir(folder.target);
+    } catch {}
+  }
+}
+
+const folderDiff = (folder: PlannedFolder) =>
+  ["--- /dev/null", `+++ b/${folder.path}/`, "@@ create folder @@"].join("\n");
+
 function encode(text: string, source?: SourceFile) {
   const normalized = normalizeInput(text);
   const serialized = source?.newline === "crlf" ? normalized.replace(/\n/g, "\r\n") : normalized;
@@ -240,16 +376,36 @@ export class WorkspaceChanges {
     workspaceId: string,
     operations: FileChangeOperation[],
   ): Promise<PreparedWorkspaceChange> {
-    this.registry.get(workspaceId);
+    const root = this.registry.get(workspaceId);
     const seen = new Set<string>();
+    // Insertion order is creation order: a folder's parent is always planned before it.
+    const planned = new Map<string, PlannedFolder>();
     const files: PreparedFileChange[] = [];
     for (const operation of operations) {
-      validateRelativePath(operation.path);
-      const key =
-        process.platform === "win32" ? operation.path.toLocaleLowerCase() : operation.path;
+      const parts = validateRelativePath(operation.path);
+      const key = pathKey(operation.path);
       if (seen.has(key))
         throw new KairomesError("CHANGE_DUPLICATE", "同一批變更不能重複指定同一個檔案。");
-      seen.add(key);
+      if (planned.has(key))
+        throw new KairomesError("CHANGE_DUPLICATE", "同一批變更已會在此路徑建立資料夾。");
+      if (operation.operation === "mkdir") {
+        const plan = await planFolders(root, parts, planned, seen);
+        if (plan.existing) throw new KairomesError("NO_CHANGES", "資料夾已存在，不需要建立。");
+        seen.add(key);
+        files.push({
+          operation: "mkdir",
+          path: operation.path,
+          target: plan.target,
+          before: null,
+          after: null,
+          beforeVersion: null,
+          afterVersion: null,
+          mode: 0o755,
+          diff: "",
+          folders: plan.folders.map((folder) => folder.path),
+        });
+        continue;
+      }
       let source: SourceFile | undefined;
       if (operation.operation !== "write" || operation.expected_version)
         source = await readSource(this.registry, workspaceId, operation.path);
@@ -260,6 +416,7 @@ export class WorkspaceChanges {
       )
         throw new KairomesError("VERSION_CONFLICT", "檔案版本已改變，請重新讀取後再提出變更。");
       let next: string | null;
+      let created: { target: string; folders: string[] } | undefined;
       if (operation.operation === "edit") {
         next = source?.text ?? "";
         for (const replacement of operation.replacements) {
@@ -280,8 +437,15 @@ export class WorkspaceChanges {
         }
       } else if (operation.operation === "write") {
         next = normalizeInput(operation.content);
-        if (!operation.expected_version)
-          await newTarget(this.registry, workspaceId, operation.path);
+        if (!operation.expected_version) {
+          const plan = await planFolders(root, parts.slice(0, -1), planned, seen);
+          created = {
+            target: plan.existing
+              ? await newTarget(this.registry, workspaceId, operation.path)
+              : path.join(plan.target, parts.at(-1) ?? ""),
+            folders: plan.folders.map((folder) => folder.path),
+          };
+        }
       } else next = null;
       if (next !== null && redactKnownSecrets(next) !== next)
         throw new KairomesError(
@@ -293,8 +457,9 @@ export class WorkspaceChanges {
         throw new KairomesError("FILE_TOO_LARGE", "變更後的檔案超過 1 MiB 上限。");
       if (source && after?.equals(source.data))
         throw new KairomesError("NO_CHANGES", "變更後的檔案內容與目前版本相同。");
-      const target =
-        source?.target ?? (await newTarget(this.registry, workspaceId, operation.path));
+      const target = source?.target ?? created?.target;
+      if (!target) throw new Error("missing change target");
+      seen.add(key);
       files.push({
         operation: operation.operation,
         path: operation.path,
@@ -305,9 +470,15 @@ export class WorkspaceChanges {
         afterVersion: after ? digest(after) : null,
         mode: source?.mode ?? 0o644,
         diff: operationDiff(operation, source?.text ?? null, next),
+        folders: created?.folders ?? [],
       });
     }
-    const full = files.map((file) => file.diff).join("\n\n");
+    const folders = [...planned.values()];
+    // Each new folder is its own entry, before the file diffs and in creation order.
+    const full = [
+      ...folders.map(folderDiff),
+      ...files.filter((file) => file.operation !== "mkdir").map((file) => file.diff),
+    ].join("\n\n");
     if (Buffer.byteLength(full) > 192 * 1024)
       throw new KairomesError(
         "CHANGE_REVIEW_TOO_LARGE",
@@ -315,6 +486,7 @@ export class WorkspaceChanges {
       );
     return {
       workspaceId,
+      folders,
       files,
       diff: full,
       diffTruncated: false,
@@ -322,8 +494,12 @@ export class WorkspaceChanges {
   }
 
   async apply(change: PreparedWorkspaceChange) {
-    this.registry.get(change.workspaceId);
+    const root = this.registry.get(change.workspaceId);
+    const plannedTargets = new Set(change.folders.map((folder) => folder.target));
     for (const file of change.files) {
+      // A mkdir target, and a new file inside a planned folder, are checked when that folder
+      // is created below, still before any file is written.
+      if (file.operation === "mkdir") continue;
       if (file.beforeVersion) {
         const current = await readSource(this.registry, change.workspaceId, file.path);
         if (current.target !== file.target || current.version !== file.beforeVersion)
@@ -331,17 +507,20 @@ export class WorkspaceChanges {
             "VERSION_CONFLICT",
             `檔案 ${file.path} 已在核准前改變，沒有套用任何變更。`,
           );
-      } else {
+      } else if (!plannedTargets.has(path.dirname(file.target))) {
         await newTarget(this.registry, change.workspaceId, file.path);
       }
     }
     const applied: Array<{ file: PreparedFileChange; trash?: string }> = [];
     const staged: string[] = [];
+    const created: CreatedFolder[] = [];
     try {
+      for (const folder of change.folders) await createFolder(root, folder, created);
       for (const file of change.files) {
         if (file.after) staged.push(await writeTemp(file));
       }
       for (const file of change.files) {
+        if (file.operation === "mkdir") continue;
         // Staging can take time. Re-check the exact target immediately before
         // each mutation; if a later file conflicts, the already applied files
         // below are rolled back from their in-memory originals.
@@ -406,6 +585,7 @@ export class WorkspaceChanges {
         }
       }
       for (const temporary of staged) await unlink(temporary).catch(() => {});
+      await removeFolders(created);
       if (rollbackFailed)
         throw new KairomesError(
           "ROLLBACK_FAILED",

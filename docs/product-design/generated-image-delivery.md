@@ -81,7 +81,7 @@ H5 的幾種擋法：
 
 - 宿主送來字串、陣列或多出欄位的物件時，MCP SDK 在 handler 之前就以 `Input validation error` 擋下（`file` 是 `.strict()` 物件）。這時 `importHydration` 不計數，活動也沒有紀錄。
 - 宿主丟掉整個鍵時，看起來和「模型照文案省略」一樣，都是「未附圖」。如果宿主和 Codex 一樣，讀不到路徑時整個呼叫會在 ChatGPT 端失敗，Kairomes 完全收不到（推論）。
-- 「附圖」只代表物件通過長度與網域檢查（[`openai-file-download.ts`](../../apps/daemon/src/openai-file-download.ts) 的 `checkFileReference`），**模型自己編的 OpenAI 網域網址也會算進去**。另外三種情況也會算進去：目的資料夾不存在、名額已滿（計數在名額檢查之前就加了），以及工作台「從 ChatGPT 選擇圖片」。
+- 「附圖」只代表物件通過長度與網域檢查（[`openai-file-download.ts`](../../apps/daemon/src/openai-file-download.ts) 的 `checkFileReference`），**模型自己編的 OpenAI 網域網址也會算進去**。另外三種情況也會算進去：目的資料夾不存在、名額已滿（計數在名額檢查之前就加了），以及工作台「從 ChatGPT 選擇圖片」。目的資料夾不存在（`PARENT_NOT_FOUND`）時，模型現在可先以 `file_change_request` 的 `mkdir` 建立資料夾（照檔案變更核准），匯入本身的行為不變。
 - （0.3.0）「被拒」不分原因。下載失敗中，`FILE_DOWNLOAD_FAILED` 同時涵蓋 DNS 解析失敗、HTTP 非 200、空內容與網路錯誤，HTTP 狀態只在訊息字串裡；其他下載失敗已有獨立錯誤碼。C2、C3 實作後，`importHydrationDetail` 已分出被拒原因與下載結果類別；錯誤碼本身不變。
 
 ## 4. 現在就能做的檢查（0.3.0，不改程式）

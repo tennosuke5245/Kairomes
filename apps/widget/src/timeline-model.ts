@@ -1,6 +1,7 @@
 import type { ActivityEntry, ActivitySnapshot } from "@kairomes/protocol";
 import { type UiState, workspaceHue } from "@kairomes/protocol/ui-state";
 import { activityState, activityTitle } from "./activity-model.ts";
+import { changeCounts, countsText } from "./change-summary.ts";
 import { commandMeta, commandReason, formatArgv } from "./command-model.ts";
 import { type CountdownUrgency, countdown, formatDuration, relativeTime } from "./time-format.ts";
 
@@ -154,7 +155,7 @@ function rowMeta(entry: ActivityEntry, snapshot: ActivitySnapshot | undefined, n
     ? snapshot?.changes?.find((item) => item.id === entry.changeId)
     : undefined;
   if (change?.files.length)
-    return { kind: "files", text: `${change.files.length} 個檔案` } satisfies TimelineMeta;
+    return { kind: "files", text: countsText(changeCounts(change.files)) } satisfies TimelineMeta;
   return undefined;
 }
 

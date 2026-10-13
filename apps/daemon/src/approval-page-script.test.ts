@@ -15,9 +15,13 @@ type ParsedFile = {
 };
 type Helpers = {
   parseDiff(text: string, truncated?: boolean): ParsedFile[];
-  diffRows(text: string, files: readonly { path: string }[], truncated?: boolean): Row[];
+  diffRows(
+    text: string,
+    files: readonly { path: string; operation?: string; created_folders?: string[] }[],
+    truncated?: boolean,
+  ): Row[];
   quoted(value: string): string;
-  fileLine(file: { operation: string; path: string }): string;
+  fileLine(file: { operation: string; path: string; created_folders?: string[] }): string;
   visibleSegments(text: string): { text: string; escape?: true }[];
 };
 
@@ -139,12 +143,28 @@ test("the inline parser stays in parity with the shared diff parser", () => {
       "+",
       "+",
     ].join("\n"),
+    // New folders: their own sections with no rows, before the files.
+    [
+      "--- /dev/null",
+      "+++ b/a/",
+      "@@ create folder @@",
+      "",
+      "--- /dev/null",
+      "+++ b/a/b/",
+      "@@ create folder @@",
+      "",
+      "--- /dev/null",
+      "+++ b/a/b/c.md",
+      "@@ create file @@",
+      "+c",
+      "+",
+    ].join("\n"),
   ];
   for (const text of corpus) {
     expect(helpers.parseDiff(text)).toEqual(shared(text));
     expect(helpers.parseDiff(text, true)).toEqual(shared(text, true));
   }
-  const created = helpers.parseDiff(corpus.at(-1) ?? "").at(-1);
+  const created = helpers.parseDiff(corpus.at(-2) ?? "").at(-1);
   expect(created?.lines.map((line) => line.text)).toEqual(["@@ create file @@", "# New", ""]);
 });
 
@@ -203,6 +223,48 @@ test("every content row of a real review diff is shown, with its file", async ()
         .filter((row) => ["add", "del", "context"].includes(row.kind))
         .map((row) => `${row.kind === "add" ? "+" : row.kind === "del" ? "-" : " "}${row.text}`),
     ).toEqual(content);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("new folders are shown as their own rows and matched to the reviewed items", async () => {
+  const f = await fixture();
+  try {
+    const prepared = await new WorkspaceChanges(f.registry).prepare(f.workspace.id, [
+      { operation: "write", path: "a/b/c.md", expected_version: null, content: "c\n" },
+      { operation: "mkdir", path: "logs" },
+    ]);
+    const files = prepared.files.map((file) => ({
+      operation: file.operation,
+      path: file.path,
+      created_folders: file.folders.map((folder) => `${folder}/`),
+    }));
+    const rows = helpers.diffRows(prepared.diff, files);
+    expect(rows.filter((row) => row.kind === "file").map((row) => row.text)).toEqual([
+      "a/ · 新資料夾",
+      "a/b/ · 新資料夾",
+      "logs/ · 新資料夾",
+      "a/b/c.md · 新檔案",
+    ]);
+    expect(rows.filter((row) => row.kind === "hunk").map((row) => row.text)).toEqual([
+      "新資料夾",
+      "新資料夾",
+      "新資料夾",
+      "新檔案",
+    ]);
+    // Without the folder list the sections no longer match, so every raw line is shown.
+    expect(helpers.diffRows(prepared.diff, [{ path: "a/b/c.md" }, { path: "logs" }])[0]).toEqual({
+      kind: "raw",
+      text: "--- /dev/null",
+    });
+    expect(helpers.fileLine(files[0] ?? { operation: "", path: "" })).toBe(
+      "寫入 a/b/c.md · 會建立資料夾：a/、a/b/",
+    );
+    expect(helpers.fileLine(files[1] ?? { operation: "", path: "" })).toBe("建立資料夾 logs");
+    expect(
+      helpers.fileLine({ operation: "mkdir", path: "x/y", created_folders: ["x/", "x/y/"] }),
+    ).toBe("建立資料夾 x/y · 會建立資料夾：x/");
   } finally {
     await f.dispose();
   }

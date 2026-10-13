@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { lstat, writeFile } from "node:fs/promises";
+import { FileChangeInputs } from "@kairomes/protocol";
 import { WorkspaceFiles } from "@kairomes/workspace-core";
 import { fixture } from "../../../tests/fixtures.ts";
 import { FileChangeManager } from "./file-changes.ts";
@@ -170,6 +173,181 @@ test("file autonomy applies structured edits but never grants commands or host t
       rows: 24,
     });
     expect(terminal.session.state).toBe("pending");
+  } finally {
+    await service.close();
+    await f.dispose();
+  }
+});
+
+const folderInput = (f: Awaited<ReturnType<typeof fixture>>, folder = "assets/new") => ({
+  workspace_id: f.workspace.id,
+  request_id: crypto.randomUUID(),
+  summary: "建立圖片資料夾與說明",
+  changes: [
+    { operation: "mkdir" as const, path: `${folder}/images` },
+    {
+      operation: "write" as const,
+      path: `${folder}/README.md`,
+      expected_version: null,
+      content: "# New\n",
+    },
+  ],
+});
+
+test("new folders wait for approval, are shown in the view and bound to the fingerprint", async () => {
+  const f = await fixture();
+  const service = new ToolService(f.registry, true);
+  try {
+    const input = folderInput(f);
+    const requested = await service.changes.request(input, "mcp");
+    expect(requested.change.state).toBe("pending");
+    expect(requested.change.files).toEqual([
+      {
+        operation: "mkdir",
+        path: "assets/new/images",
+        before_version: null,
+        after_version: null,
+        created_folders: ["assets/", "assets/new/", "assets/new/images/"],
+      },
+      expect.objectContaining({ operation: "write", path: "assets/new/README.md" }),
+    ]);
+    expect(requested.change.files[1]).not.toHaveProperty("created_folders");
+    expect(requested.diff).toContain("+++ b/assets/new/images/\n@@ create folder @@");
+    expect(existsSync(`${f.root}/assets`)).toBe(false);
+
+    // Recompute the fingerprint from the same fields; dropping the folders must not verify.
+    const approval = service.changes.approvals().find((item) => item.id === requested.change.id);
+    if (!approval) throw new Error("missing approval");
+    const sha = (value: unknown) =>
+      createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    const inputHash = sha(FileChangeInputs.file_change_request.parse(input));
+    const bind = (files: typeof approval.files, diff: string) =>
+      sha({ id: approval.id, inputHash, files, diff, diffTruncated: approval.diff_truncated });
+    expect(bind(approval.files, approval.diff)).toBe(approval.fingerprint);
+    const withoutFolderDiff = approval.diff
+      .split("\n\n")
+      .filter((entry) => !entry.includes("@@ create folder @@"))
+      .join("\n\n");
+    const withoutFolderFiles = approval.files.map(({ created_folders: _, ...file }) => file);
+    expect(withoutFolderDiff).not.toBe(approval.diff);
+    for (const forged of [
+      bind(approval.files, withoutFolderDiff),
+      bind(withoutFolderFiles, approval.diff),
+    ])
+      await expect(service.changes.decide(requested.change.id, forged, true)).rejects.toMatchObject(
+        { code: "APPROVAL_MISMATCH" },
+      );
+    expect(existsSync(`${f.root}/assets`)).toBe(false);
+
+    await service.changes.decide(requested.change.id, approval.fingerprint, true);
+    expect(service.changes.poll(requested.change.id).change.state).toBe("applied");
+    expect((await lstat(`${f.root}/assets/new/images`)).isDirectory()).toBe(true);
+    expect(await Bun.file(`${f.root}/assets/new/README.md`).text()).toBe("# New\n");
+  } finally {
+    await service.close();
+    await f.dispose();
+  }
+});
+
+test("denied, cancelled and expired folder changes create nothing; files autonomy applies", async () => {
+  const f = await fixture();
+  let now = Date.now();
+  let grant = false;
+  const manager = new FileChangeManager(
+    f.registry,
+    () =>
+      grant
+        ? {
+            id: "grant",
+            workspace_id: f.workspace.id,
+            workspace_name: "測試專案",
+            level: "files" as const,
+            expires_at: now + 60_000,
+          }
+        : undefined,
+    () => {},
+    () => now,
+  );
+  try {
+    const denied = await manager.request(folderInput(f, "denied"));
+    const approval = manager.approvals().find((item) => item.id === denied.change.id);
+    await manager.decide(denied.change.id, approval?.fingerprint ?? "", false);
+    const cancelled = await manager.request(folderInput(f, "cancelled"));
+    manager.cancel(cancelled.change.id);
+    const expired = await manager.request(folderInput(f, "expired"));
+    now += 300_001;
+    manager.maintain();
+    expect(manager.poll(expired.change.id).change.state).toBe("expired");
+    for (const folder of ["denied", "cancelled", "expired"])
+      expect(existsSync(`${f.root}/${folder}`)).toBe(false);
+
+    grant = true;
+    const automatic = await manager.request(folderInput(f, "automatic"));
+    expect(automatic.change.state).toBe("applied");
+    expect((await lstat(`${f.root}/automatic/images`)).isDirectory()).toBe(true);
+  } finally {
+    await manager.close();
+    await f.dispose();
+  }
+});
+
+test("a planned folder replaced after review ends as a conflict without writing", async () => {
+  const f = await fixture();
+  const service = new ToolService(f.registry, true);
+  try {
+    const requested = await service.changes.request(folderInput(f, "taken"), "mcp");
+    await writeFile(`${f.root}/taken`, "a file now\n");
+    const approval = service.changes.approvals().find((item) => item.id === requested.change.id);
+    await service.changes.decide(requested.change.id, approval?.fingerprint ?? "", true);
+    expect(service.changes.poll(requested.change.id).change.state).toBe("conflict");
+    expect(await Bun.file(`${f.root}/taken`).text()).toBe("a file now\n");
+  } finally {
+    await service.close();
+    await f.dispose();
+  }
+});
+
+test("a mkdir path at the 1024-character limit keeps request and list output valid", async () => {
+  const f = await fixture();
+  const service = new ToolService(f.registry, true);
+  try {
+    const folder = ["src", "a".repeat(254), "b".repeat(255), "c".repeat(255), "d".repeat(253)].join(
+      "/",
+    );
+    expect(folder).toHaveLength(1024);
+    const requested = await service.call(
+      "file_change_request",
+      {
+        workspace_id: f.workspace.id,
+        request_id: crypto.randomUUID(),
+        summary: "建立很長的資料夾",
+        changes: [{ operation: "mkdir", path: folder }],
+      },
+      "mcp",
+    );
+    expect(requested.isError).toBeUndefined();
+    const listed = await service.call("file_change_list", {}, "mcp");
+    expect(listed.isError).toBeUndefined();
+    expect(JSON.stringify(listed.structuredContent)).toContain(`${folder}/`);
+  } finally {
+    await service.close();
+    await f.dispose();
+  }
+});
+
+test("folder limits are request-time errors", async () => {
+  const f = await fixture();
+  const service = new ToolService(f.registry, true);
+  try {
+    await expect(
+      service.changes.request({
+        workspace_id: f.workspace.id,
+        request_id: crypto.randomUUID(),
+        summary: "太深",
+        changes: [{ operation: "mkdir", path: "a/b/c/d/e" }],
+      }),
+    ).rejects.toMatchObject({ code: "FOLDER_LIMIT" });
+    expect(service.changes.list()).toEqual([]);
   } finally {
     await service.close();
     await f.dispose();

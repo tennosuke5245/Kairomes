@@ -6,7 +6,9 @@ import {
   diffNumbered,
   diffSections,
   diffSign,
+  diffStatus,
   diffTotals,
+  focusSectionKey,
   MIN_ROWS_PER_FILE,
   parseChangeDiff,
 } from "./diff-model.ts";
@@ -88,6 +90,32 @@ test("counts from a cut diff read as a minimum and take the file count from the 
   expect(diffCounts(cut.files[0] ?? cut)).toBe("+1 −1");
   // A complete diff states its own counts.
   expect(diffTotals(parseUnifiedDiff(twoFiles), 4)).toBe("2 個檔案 · +31 −1");
+});
+
+test("a new folder section reads 新資料夾 and is counted apart from files", () => {
+  const parsed = parseUnifiedDiff(
+    `--- /dev/null\n+++ b/src/lib/\n@@ create folder @@\n\n${twoFiles.replace(
+      "src/new.ts",
+      "src/lib/new.ts",
+    )}`,
+  );
+  expect(parsed.files.map((file) => diffStatus(file).label)).toEqual([
+    "新資料夾",
+    "修改",
+    "新檔案",
+  ]);
+  expect(diffTotals(parsed)).toBe("2 個檔案 · 1 個新資料夾 · +31 −1");
+  // A mkdir row names its folder without the slash the folder's section ends with.
+  const sections = diffSections(
+    parseUnifiedDiff(`${twoFiles}\n\n--- /dev/null\n+++ b/logs/\n@@ create folder @@`),
+    200,
+  );
+  expect(focusSectionKey(sections, "logs")).toBe(sections.at(-1)?.key);
+  expect(focusSectionKey(sections, "src/new.ts")).toBe(sections[1]?.key);
+  expect(focusSectionKey(sections, sections[0]?.file.path)).toBeUndefined();
+  expect(diffTotals(parseUnifiedDiff("--- /dev/null\n+++ b/logs/\n@@ create folder @@"))).toBe(
+    "1 個新資料夾 · +0 −0",
+  );
 });
 
 // Captured from WorkspaceChanges.prepare: an edit of "-- dash item\n" to "-- dashed item\n",

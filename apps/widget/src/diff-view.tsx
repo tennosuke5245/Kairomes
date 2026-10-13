@@ -5,11 +5,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { WorkbenchBridge } from "./bridge.ts";
 import { StatusLine } from "./detail-parts.tsx";
 import {
-  DIFF_STATUS,
   diffNumbered,
   diffSections,
   diffSign,
+  diffStatus,
   diffTotals,
+  focusSectionKey,
   parseChangeDiff,
 } from "./diff-model.ts";
 import { friendlyError } from "./errors.ts";
@@ -46,10 +47,7 @@ export function DiffView({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const sections = diffSections(parsed, budget, expanded);
   const focused = useRef<HTMLElement>(null);
-  // The first file already sits under the change's head, so only later files scroll.
-  const focusKey = sections.find(
-    (section, index) => index > 0 && section.file.path === focusPath,
-  )?.key;
+  const focusKey = focusSectionKey(sections, focusPath);
   useEffect(() => {
     if (focusKey) focused.current?.scrollIntoView?.({ block: "start" });
   }, [focusKey]);
@@ -74,7 +72,7 @@ export function DiffView({
         </p>
       )}
       {sections.map(({ key, file, lines, hidden }) => {
-        const status = DIFF_STATUS[file.status];
+        const status = diffStatus(file);
         const path = diffPathParts(file.path);
         return (
           <section
@@ -214,7 +212,7 @@ export function DiffPreview({
       diff={current.diff}
       truncated={current.truncated}
       budget={budget}
-      fileCount={change.files.length}
+      fileCount={change.files.filter((file) => file.operation !== "mkdir").length}
     />
   );
 }

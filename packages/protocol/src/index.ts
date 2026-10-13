@@ -37,7 +37,7 @@ export * from "./panel-access.ts";
 export * from "./ui-state.ts";
 export { z };
 export const VERSION = "0.3.0";
-export const WIDGET_URI = "ui://kairomes/workbench/v8.html";
+export const WIDGET_URI = "ui://kairomes/workbench/v9.html";
 export const MCP_RESULT_URI = "ui://kairomes/mcp-result/v4.html";
 export const LIMITS = {
   concurrentCalls: 4,

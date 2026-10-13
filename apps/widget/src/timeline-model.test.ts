@@ -220,6 +220,13 @@ test("terminal and file-change rows show the shell, session length and file coun
             files: [
               { operation: "edit", path: "a.ts", before_version: null, after_version: null },
               { operation: "write", path: "b.ts", before_version: null, after_version: null },
+              {
+                operation: "mkdir",
+                path: "logs",
+                before_version: null,
+                after_version: null,
+                created_folders: ["logs/"],
+              },
             ],
           },
         ],
@@ -231,7 +238,7 @@ test("terminal and file-change rows show the shell, session length and file coun
     "調整設定",
     undefined,
     "change",
-    "2 個檔案",
+    "2 個檔案 · 1 個新資料夾",
   ]);
   const unknown = timelineRow(
     {

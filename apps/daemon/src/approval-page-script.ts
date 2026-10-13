@@ -30,10 +30,15 @@ function visibleSegments(text) {
   return segments;
 }
 const statusLabels = {modified: '修改', added: '新檔案', deleted: '刪除', renamed: '重新命名'};
-const operationLabels = {edit: '修改', write: '寫入', delete: '刪除'};
-// One reviewed file per line, labelled like the side panel: 「寫入 src/new.ts」.
+const operationLabels = {edit: '修改', write: '寫入', delete: '刪除', mkdir: '建立資料夾'};
+// One reviewed file per line, labelled like the side panel: 「寫入 src/new.ts」, plus the new
+// folders it brings: 「寫入 a/b/c.ts · 會建立資料夾：a/、a/b/」. A mkdir line already names
+// its own folder, so only its new ancestors are added.
 function fileLine(file) {
-  return (Object.hasOwn(operationLabels, file.operation) ? operationLabels[file.operation] : String(file.operation)) + ' ' + file.path;
+  const line = (Object.hasOwn(operationLabels, file.operation) ? operationLabels[file.operation] : String(file.operation)) + ' ' + file.path;
+  const all = Array.isArray(file.created_folders) ? file.created_folders : [];
+  const folders = file.operation === 'mkdir' ? all.slice(0, -1) : all;
+  return folders.length ? line + ' · 會建立資料夾：' + folders.join('、') : line;
 }
 function parseDiff(text, truncated) {
   const rows = String(text || '').split(/\r?\n/);
@@ -66,6 +71,7 @@ function parseDiff(text, truncated) {
     const replacement = /^@@ exact replacement (\d+)( · all matches)? @@$/.exec(row);
     if (replacement) return '替換 ' + replacement[1] + (replacement[2] ? ' · 全部相符處' : '');
     if (row === '@@ create file @@') return '新檔案';
+    if (row === '@@ create folder @@') return '新資料夾';
     if (row === '@@ delete file @@') return '刪除檔案';
     const focused = /^@@ (\d+) @@$/.exec(row);
     if (focused) return '第 ' + focused[1] + ' 行起';
@@ -123,7 +129,7 @@ function parseDiff(text, truncated) {
         const standard = standardHunk.exec(row);
         if (standard) hunk = {counted: true, oldLeft: standard[2] === undefined ? 1 : Number(standard[2]), newLeft: standard[4] === undefined ? 1 : Number(standard[4])};
         else {
-          if (row === '@@ create file @@') target.status = 'added';
+          if (row === '@@ create file @@' || row === '@@ create folder @@') target.status = 'added';
           else if (row === '@@ delete file @@') target.status = 'deleted';
           hunk = {counted: false, oldLeft: 0, newLeft: 0};
         }
@@ -166,7 +172,7 @@ function parseDiff(text, truncated) {
   // A review hunk's final bare +/- row is the text's last newline, not an empty line (the same
   // rule as withoutReviewNewlines in diff-lines.ts). A replacement keeps both rows unless the
   // old and new text both end in a newline; the last row of a cut diff is always kept.
-  const reviewHunk = /^@@ (?:exact replacement \d+(?: · all matches)?|create file|delete file) @@$/;
+  const reviewHunk = /^@@ (?:exact replacement \d+(?: · all matches)?|create file|create folder|delete file) @@$/;
   files.forEach((entry, fileIndex) => {
     const lines = entry.lines;
     const cut = truncated === true && fileIndex === files.length - 1;
@@ -182,7 +188,8 @@ function parseDiff(text, truncated) {
         else if (lines[index].kind === 'del') lastDel = index;
       }
       const header = lines[start].text;
-      if (header === '@@ create file @@') { if (lastAdd === end - 1 && bare(lastAdd)) drop.add(lastAdd); }
+      if (header === '@@ create folder @@') { /* a new folder has no content rows */ }
+      else if (header === '@@ create file @@') { if (lastAdd === end - 1 && bare(lastAdd)) drop.add(lastAdd); }
       else if (header === '@@ delete file @@') { if (lastDel === end - 1 && bare(lastDel)) drop.add(lastDel); }
       else if (bare(lastDel) && bare(lastAdd)) { drop.add(lastDel); drop.add(lastAdd); }
       start = end - 1;
@@ -193,7 +200,11 @@ function parseDiff(text, truncated) {
 }
 function diffRows(text, reviewed, truncated) {
   const files = parseDiff(text, truncated);
-  const expected = (reviewed || []).map((entry) => entry.path).sort();
+  // Each new folder is its own section (a/b/); a mkdir item lists its folder there too.
+  const expected = (reviewed || []).flatMap((entry) => [
+    ...(entry.operation === 'mkdir' ? [] : [entry.path]),
+    ...(Array.isArray(entry.created_folders) ? entry.created_folders : []),
+  ]).sort();
   const parsed = files.map((entry) => entry.path).sort();
   // The sections must cover exactly the reviewed files; otherwise show every raw line.
   if (parsed.length !== expected.length || parsed.some((path, index) => path !== expected[index]))
@@ -201,7 +212,7 @@ function diffRows(text, reviewed, truncated) {
   const rows = [];
   for (const entry of files) {
     const path = entry.previousPath ? entry.previousPath + ' → ' + entry.path : entry.path;
-    rows.push({kind: 'file', text: path + ' · ' + statusLabels[entry.status]});
+    rows.push({kind: 'file', text: path + ' · ' + (entry.path.endsWith('/') ? '新資料夾' : statusLabels[entry.status])});
     if (entry.binary) rows.push({kind: 'note', text: '二進位檔案，無法顯示內容。'});
     for (const line of entry.lines)
       rows.push(line.kind === 'hunk' ? {kind: 'hunk', text: line.label || line.text} : {kind: line.kind, text: line.text});

@@ -114,7 +114,7 @@ Day-to-day operation is covered in the [usage guide](docs/usage.md) (Traditional
 
 ## Security
 
-ChatGPT cannot add folders or approve actions on its own. Only you can do that, on your own machine.
+ChatGPT cannot add project folders to Kairomes or approve actions on its own. Only you can do that, on your own machine.
 
 One thing to keep in mind: commands and terminals run with your own Windows account's permissions. They are not sandboxed. A command you approve, or one run in autonomous mode, can reach files outside the project or connect to the network.
 

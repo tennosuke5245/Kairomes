@@ -275,3 +275,42 @@ test("paths split into directory and file name for display", () => {
   });
   expect(diffPathParts("README.md")).toEqual({ directory: "", name: "README.md" });
 });
+
+test("new folders are review sections of their own, before the files", () => {
+  const parsed = parseUnifiedDiff(
+    [
+      "--- /dev/null",
+      "+++ b/assets/",
+      "@@ create folder @@",
+      "",
+      "--- /dev/null",
+      "+++ b/assets/2026/",
+      "@@ create folder @@",
+      "",
+      "--- /dev/null",
+      "+++ b/assets/2026/notes.md",
+      "@@ create file @@",
+      "+# Notes",
+      "+",
+    ].join("\n"),
+  );
+  expect(
+    parsed.files.map(({ path, status, additions, deletions }) => [
+      path,
+      status,
+      additions,
+      deletions,
+    ]),
+  ).toEqual([
+    ["assets/", "added", 0, 0],
+    ["assets/2026/", "added", 0, 0],
+    ["assets/2026/notes.md", "added", 1, 0],
+  ]);
+  expect(parsed.files[1]?.lines).toEqual([
+    { kind: "hunk", text: "@@ create folder @@", label: "新資料夾" },
+  ]);
+  expect(parsed).toMatchObject({ additions: 1, deletions: 0 });
+  // A folder keeps its trailing slash on its name.
+  expect(diffPathParts("assets/2026/")).toEqual({ directory: "assets/", name: "2026/" });
+  expect(diffPathParts("assets/")).toEqual({ directory: "", name: "assets/" });
+});

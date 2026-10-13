@@ -23,10 +23,27 @@ export interface ChangedPath {
 }
 
 function operationLabel(item: FileChange["files"][number]) {
+  if (item.operation === "mkdir") return "建立資料夾";
   if (item.operation === "delete") return "刪除";
   if (item.operation === "write" && item.before_version === null) return "新檔案";
   if (item.operation === "write") return "覆寫";
   return "修改";
+}
+
+/** Files and new folders, counted as the side panel does: a mkdir item is not a file. */
+export function changeCounts(files: FileChange["files"]) {
+  return {
+    files: files.filter((file) => file.operation !== "mkdir").length,
+    folders: files.reduce((sum, file) => sum + (file.created_folders?.length ?? 0), 0),
+  };
+}
+
+/** 2 個檔案 · 1 個新資料夾; a change that only creates folders names just its folders. */
+export function countsText(counts: { files: number; folders: number }) {
+  return [
+    ...(counts.files || !counts.folders ? [`${counts.files} 個檔案`] : []),
+    ...(counts.folders ? [`${counts.folders} 個新資料夾`] : []),
+  ].join(" · ");
 }
 
 const changedAt = (change: FileChange) => change.applied_at ?? change.created_at;

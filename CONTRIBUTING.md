@@ -29,7 +29,7 @@ bun run check
 | 專案與檔案 | `workspace_list`、`workspace_snapshot`、`file_read`、`file_read_many`、`file_search`、`file_find` | 單檔 1 MiB，每頁 48 KiB／300 行；`file_read_many` 1～8 個檔案共用 48 KiB；搜尋與尋找每次走訪 4000 個項目、3 秒、8 MiB，`include` 最多 8 個 glob，`context_lines` 0～3，樣式 200 字；`file_find` 最多 200 筆；`workspace_snapshot` 讀 1000 個項目 |
 | Git（唯讀） | `git_status`、`git_diff`、`git_log` | status 500 筆；diff 每頁 48 KiB、列 300 個檔案、總量 1 MiB、最多 1000 個檔案分 8 批；log 1～50 筆；路徑 1024 字元；每次 Git 5 秒、輸出 256 KiB |
 | 圖片 | `artifact_preview`、`image_import_request`、`image_import_poll`、`image_import_cancel` | 25 MiB；預覽 80 MP，匯入 16 MP 且每邊 16,384 px；未完成匯入模型 4 件、側欄 2 件，記憶體最多 3 張；等待圖片與等待核准各 10 分鐘 |
-| 變更、命令、終端機 | `file_change_*`、`command_*`、`terminal_*` | 拒絕原因單行 1～200 字；`wait_ms` 0～20000，每個服務最多 2 個等待者，不佔並行呼叫的 4 個名額 |
+| 變更、命令、終端機 | `file_change_*`、`command_*`、`terminal_*` | 新資料夾每個路徑最多 4 層、每批 16 個；拒絕原因單行 1～200 字；`wait_ms` 0～20000，每個服務最多 2 個等待者，不佔並行呼叫的 4 個名額 |
 | 下游 MCP | `mcp_catalog_search`、`mcp_tool_describe`、`mcp_tool_call`、`mcp_read_call` | `request_id` 紀錄 4096 筆／24 小時；結果快取 40 筆、5 分鐘、媒體 32 MiB |
 | 狀態 | `kairomes_status`、`workbench_open` | — |
 
