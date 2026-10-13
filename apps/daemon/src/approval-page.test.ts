@@ -62,6 +62,13 @@ test("the legacy approval page neither lists nor decides image imports", async (
     await settled(pending.id);
     const list = await (await post({ action: "list" })).json();
     expect(list.importHydration).toEqual({ hydrated: 1, omitted: 0, rejected: 0 });
+    // The admin list also carries the delivery details: fixed categories, never the URL.
+    expect(list.importHydrationDetail).toMatchObject({
+      created: 1,
+      download_attempts: 1,
+      download_results: { ok: 1 },
+    });
+    expect(JSON.stringify(list.importHydrationDetail)).not.toContain("oaiusercontent");
     const review = (list.imports as ArtifactImportApproval[]).find(
       (item) => item.id === pending.id,
     );

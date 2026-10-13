@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import type https from "node:https";
-import { LIMITS } from "@kairomes/protocol";
+import { LIMITS, publicError } from "@kairomes/protocol";
 import { onePixelPng, streamOf } from "./__fixtures__/images.ts";
 import {
   checkFileReference,
   downloadOpenAIFile,
+  FileDownloadError,
   type FileLookup,
   type FileTransport,
   type PinnedFileRequest,
@@ -353,4 +354,197 @@ test("the default transport connects only to the checked address and keeps TLS n
   expect(answers[0]).toEqual([null, [{ address: "93.184.216.34", family: 4 }]]);
   expect(answers[1]).toEqual([null, "93.184.216.34", 4]);
   expect((answers[2] as unknown[])[0]).toBeInstanceOf(Error);
+});
+
+/** The error a call threw, or undefined when it returned. */
+async function failure(run: () => unknown) {
+  try {
+    await run();
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
+
+/**
+ * Each failure keeps the code and message callers saw before diagnostics existed; only the
+ * trusted `reason` is new, and it never appears in the serialized or public error.
+ */
+function expectReason(
+  error: unknown,
+  code: string,
+  message: string,
+  reason: FileDownloadError["reason"],
+) {
+  expect(error).toBeInstanceOf(FileDownloadError);
+  expect(publicError(error)).toEqual({ code, message });
+  expect((error as FileDownloadError).reason).toBe(reason);
+  expect(JSON.stringify(error)).not.toContain(reason);
+  expect(Object.keys(error as object)).not.toContain("reason");
+}
+
+const sandboxMessage =
+  "這是 ChatGPT 執行環境內的路徑，不是 ChatGPT 交付的檔案；請改由使用者在 Kairomes 側欄放入圖片。";
+const hostMessage =
+  "只接受 ChatGPT 交付的 OpenAI 檔案下載網址，不下載任意網址或 Base64；請改由使用者在 Kairomes 側欄放入圖片。";
+
+test("refused file references keep their public error and report a fixed rejection reason", async () => {
+  for (const [value, message, reason] of [
+    ["/mnt/data/x.png", sandboxMessage, "sandbox_path"],
+    ["sandbox:/x", sandboxMessage, "sandbox_path"],
+    ["http://files.oaiusercontent.com/x", hostMessage, "non_https"],
+    ["https://example.invalid/x", hostMessage, "host_not_allowed"],
+    ["https://127.0.0.1/x", hostMessage, "host_not_allowed"],
+    ["https://user:secret@files.oaiusercontent.com/x", hostMessage, "malformed"],
+    ["not a url", "圖片下載網址格式不正確；請改由使用者在 Kairomes 側欄放入圖片。", "malformed"],
+  ] as const) {
+    expectReason(
+      await failure(() => parseOpenAIFileUrl(value)),
+      "IMPORT_SOURCE_REJECTED",
+      message,
+      reason,
+    );
+    expectReason(
+      await failure(() => checkFileReference({ ...reference, download_url: value })),
+      "IMPORT_SOURCE_REJECTED",
+      message,
+      reason,
+    );
+  }
+  for (const invalid of [
+    { ...reference, download_url: `${reference.download_url}${"x".repeat(4096)}` },
+    { ...reference, file_id: "f".repeat(513) },
+    { ...reference, file_name: "n".repeat(256) },
+  ])
+    expectReason(
+      await failure(() => checkFileReference(invalid)),
+      "IMPORT_SOURCE_REJECTED",
+      "圖片檔案參照的欄位長度不正確；請改由使用者在 Kairomes 側欄放入圖片。",
+      "length",
+    );
+});
+
+test("failed downloads keep their public error and report a fixed download reason", async () => {
+  const lookup = lookupOf({}).lookup;
+  const download = (transport: FileTransport, options: { lookup?: FileLookup } = {}) =>
+    failure(() => downloadOpenAIFile(reference, { lookup, transport, ...options }));
+
+  expectReason(
+    await download(transportOf(() => new Response("forbidden", { status: 403 })).transport),
+    "FILE_DOWNLOAD_FAILED",
+    "ChatGPT 檔案下載失敗（HTTP 403）；短效網址可能已過期。",
+    "http_4xx",
+  );
+  expectReason(
+    await download(transportOf(() => new Response("busy", { status: 503 })).transport),
+    "FILE_DOWNLOAD_FAILED",
+    "ChatGPT 檔案下載失敗（HTTP 503）；短效網址可能已過期。",
+    "http_5xx",
+  );
+  expectReason(
+    await download(
+      transportOf(ok("<!doctype html><html>", { headers: { "Content-Type": "image/png" } }))
+        .transport,
+    ),
+    "IMPORT_NOT_IMAGE",
+    "下載內容不是 PNG、JPEG 或 WebP 圖片（可能是網頁或錯誤訊息）。",
+    "not_image",
+  );
+  const unsafe = transportOf(ok());
+  expectReason(
+    await download(unsafe.transport, {
+      lookup: lookupOf({ "files.oaiusercontent.com": ["198.18.0.1"] }).lookup,
+    }),
+    "UNSAFE_FILE_HOST",
+    "圖片下載位置解析到不允許的網路位址，已停止下載。",
+    "unsafe_address",
+  );
+  expect(unsafe.requests).toHaveLength(0);
+  expectReason(
+    await download(transportOf(ok()).transport, {
+      lookup: async () => {
+        throw new Error("getaddrinfo ENOTFOUND files.oaiusercontent.com");
+      },
+    }),
+    "FILE_DOWNLOAD_FAILED",
+    "無法解析圖片下載位置，請稍後重試。",
+    "dns",
+  );
+  expectReason(
+    await download(transportOf(redirect("https://example.invalid/x"), ok()).transport),
+    "FILE_REDIRECT_BLOCKED",
+    "圖片下載網址重新導向到不允許的位置，已停止下載。",
+    "redirect",
+  );
+  expectReason(
+    await download(transportOf(() => new Response(null, { status: 302 })).transport),
+    "FILE_REDIRECT_BLOCKED",
+    "圖片下載網址的重新導向未通過安全檢查，已停止下載。",
+    "redirect",
+  );
+  expectReason(
+    await download(
+      transportOf(
+        redirect("https://files.oaiusercontent.com/a"),
+        redirect("https://files.oaiusercontent.com/b"),
+        redirect("https://files.oaiusercontent.com/c"),
+      ).transport,
+    ),
+    "FILE_REDIRECT_BLOCKED",
+    "圖片下載網址的重新導向未通過安全檢查，已停止下載。",
+    "redirect",
+  );
+  expectReason(
+    await download(transportOf(ok(new Uint8Array())).transport),
+    "FILE_DOWNLOAD_FAILED",
+    "ChatGPT 檔案內容是空的。",
+    "empty",
+  );
+  expectReason(
+    await download(transportOf(ok(null)).transport),
+    "FILE_DOWNLOAD_FAILED",
+    "ChatGPT 檔案下載回應沒有內容。",
+    "empty",
+  );
+  expectReason(
+    await download(
+      transportOf(ok("x", { headers: { "Content-Length": String(LIMITS.artifactBytes + 1) } }))
+        .transport,
+    ),
+    "ARTIFACT_TOO_LARGE",
+    "圖片超過 25 MiB 匯入上限。",
+    "too_large",
+  );
+  expectReason(
+    await download(transportOf(ok(streamOf(LIMITS.artifactBytes + 1024 * 1024).stream)).transport),
+    "ARTIFACT_TOO_LARGE",
+    "圖片超過 25 MiB 匯入上限。",
+    "too_large",
+  );
+  const hanging: FileTransport = ({ signal }) =>
+    new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("abort"))));
+  expectReason(
+    await failure(() =>
+      downloadOpenAIFile(reference, { lookup, transport: hanging, timeoutMs: 5 }),
+    ),
+    "FILE_DOWNLOAD_TIMEOUT",
+    "下載 ChatGPT 檔案逾時，請稍後重試。",
+    "timeout",
+  );
+  const cancel = new AbortController();
+  const cancelled = failure(() =>
+    downloadOpenAIFile(reference, { lookup, transport: hanging, signal: cancel.signal }),
+  );
+  cancel.abort();
+  expectReason(await cancelled, "IMPORT_CANCELLED", "匯入已取消，下載已停止。", "cancelled");
+  const network = await download(async () => {
+    throw new Error("connect ECONNREFUSED 93.184.216.34:443");
+  });
+  expectReason(
+    network,
+    "FILE_DOWNLOAD_FAILED",
+    "無法下載 ChatGPT 提供的圖片；短效網址可能已失效。",
+    "network",
+  );
+  expect(JSON.stringify(network)).not.toContain("93.184.216.34");
 });

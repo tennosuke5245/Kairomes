@@ -49,6 +49,7 @@ function panelSnapshot(
     changes: service.changes.approvals(),
     imports: service.imports.approvals(),
     importHydration: service.imports.hydration(),
+    importHydrationDetail: service.imports.hydrationDetail(),
   };
 }
 
@@ -721,6 +722,7 @@ function startLocalServer(
               changes: service.changes.approvals(),
               imports: service.imports.approvals(),
               importHydration: service.imports.hydration(),
+              importHydrationDetail: service.imports.hydrationDetail(),
             },
             { headers },
           );

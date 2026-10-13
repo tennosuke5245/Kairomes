@@ -8,11 +8,18 @@ import {
   type ArtifactImportOrigin,
   type ArtifactImportState,
   artifactImportActive,
+  IMAGE_IMPORT_DOWNLOAD_RESULTS,
+  IMAGE_IMPORT_REJECTION_REASONS,
   IMAGE_IMPORT_UPLOAD_TYPES,
+  IMAGE_IMPORT_VERIFY_FAILURES,
   type ImageImport,
+  type ImageImportDownloadResult,
   type ImageImportHydration,
+  type ImageImportHydrationDetail,
   ImageImportInputs,
+  type ImageImportRejectionReason,
   type ImageImportResult,
+  type ImageImportVerifyFailure,
   KairomesError,
   LIMITS,
   type OpenAIFileReference,
@@ -26,7 +33,11 @@ import {
   type WorkspaceRegistry,
 } from "@kairomes/workspace-core";
 import { denialReason } from "./approval-decision.ts";
-import { checkFileReference, downloadOpenAIFile } from "./openai-file-download.ts";
+import {
+  checkFileReference,
+  downloadOpenAIFile,
+  FileDownloadError,
+} from "./openai-file-download.ts";
 
 /** Fetches one host file parameter; injected in tests so no real network is used. */
 export type ArtifactDownload = (
@@ -117,6 +128,16 @@ const sourceCodes = new Set([
   "ANIMATED_IMAGE_UNSUPPORTED",
 ]);
 const holdingStates = new Set<ArtifactImportState>(["preparing", "pending", "applying"]);
+
+const zeroCounts = <K extends string>(keys: readonly K[]) =>
+  Object.fromEntries(keys.map((key) => [key, 0])) as Record<K, number>;
+/** Verification failures of downloaded bytes, by the code prepare() reported. */
+const verifyFailures: Record<string, ImageImportVerifyFailure> = {
+  ARTIFACT_EXTENSION_MISMATCH: "extension_mismatch",
+  INVALID_IMAGE: "invalid_image",
+  UNSAFE_IMAGE_DIMENSIONS: "dimensions",
+  ANIMATED_IMAGE_UNSUPPORTED: "animated",
+};
 
 /** Display text from the host: single line, no control or bidi characters, else null. */
 function displayText(value: string | undefined, max: number) {
@@ -322,6 +343,14 @@ export class ArtifactImportManager {
   >();
   private readonly reserving = new Map<string, { identity: string; promise: Promise<Job> }>();
   private readonly counts: ImageImportHydration = { hydrated: 0, omitted: 0, rejected: 0 };
+  private readonly detail: ImageImportHydrationDetail = {
+    rejected: zeroCounts(IMAGE_IMPORT_REJECTION_REASONS),
+    created: 0,
+    retried: 0,
+    download_attempts: 0,
+    download_results: zeroCounts(IMAGE_IMPORT_DOWNLOAD_RESULTS),
+    verify_failed: zeroCounts(IMAGE_IMPORT_VERIFY_FAILURES),
+  };
   private closed = false;
   private sweep?: ReturnType<typeof setInterval>;
 
@@ -358,6 +387,26 @@ export class ArtifactImportManager {
     return { ...this.counts };
   }
 
+  /** Where host-file delivery stopped, in fixed categories; trusted diagnostics only. */
+  hydrationDetail(): ImageImportHydrationDetail {
+    return structuredClone(this.detail);
+  }
+
+  /** Counts one download attempt's outcome; the reason never leaves the daemon. */
+  private countDownload(job: Job, error: unknown, signal: AbortSignal) {
+    let result: ImageImportDownloadResult = "network";
+    if (
+      error instanceof FileDownloadError &&
+      (IMAGE_IMPORT_DOWNLOAD_RESULTS as readonly string[]).includes(error.reason)
+    )
+      result = error.reason as ImageImportDownloadResult;
+    else if (signal.aborted)
+      // The preparing deadline stops a host download as a timeout; anything else cancelled it.
+      result = job.view.error_code === "FILE_DOWNLOAD_TIMEOUT" ? "timeout" : "cancelled";
+    this.detail.download_results[result]++;
+    this.diagnosticsChanged();
+  }
+
   /** MCP and local tool route. The file reference is checked before anything is reserved. */
   async request(raw: unknown, source: ActivitySource = "local-ui"): Promise<ImageImportResult> {
     const input = ImageImportInputs.image_import_request.parse(raw);
@@ -366,6 +415,12 @@ export class ArtifactImportManager {
         checkFileReference(input.file);
       } catch (error) {
         this.counts.rejected++;
+        const reason =
+          error instanceof FileDownloadError &&
+          (IMAGE_IMPORT_REJECTION_REASONS as readonly string[]).includes(error.reason)
+            ? (error.reason as ImageImportRejectionReason)
+            : "malformed";
+        this.detail.rejected[reason]++;
         this.diagnosticsChanged();
         throw error;
       }
@@ -379,18 +434,33 @@ export class ArtifactImportManager {
       summary: input.summary,
       file_id: input.file?.file_id ?? null,
     });
-    const job = await this.reserveOnce(input.request_id, identity, input.file?.download_url, () =>
-      this.reserve({
-        key: input.request_id,
-        origin: "tool",
-        identity,
-        requestId: input.request_id,
-        workspaceId: input.workspace_id,
-        path: input.path,
-        summary: input.summary,
-        source,
-        reference: input.file,
-      }),
+    const job = await this.reserveOnce(
+      input.request_id,
+      identity,
+      input.file?.download_url,
+      async () => {
+        const created = await this.reserve({
+          key: input.request_id,
+          origin: "tool",
+          identity,
+          requestId: input.request_id,
+          workspaceId: input.workspace_id,
+          path: input.path,
+          summary: input.summary,
+          source,
+          reference: input.file,
+        });
+        if (input.file) {
+          this.detail.created++;
+          this.diagnosticsChanged();
+        }
+        return created;
+      },
+      () => {
+        if (!input.file) return;
+        this.detail.retried++;
+        this.diagnosticsChanged();
+      },
     );
     return this.result(job);
   }
@@ -424,13 +494,14 @@ export class ArtifactImportManager {
    * One import per request key. A retry or a concurrent duplicate with the same logical input
    * returns the same import and never starts a second download; a different input reusing the
    * key is refused. A duplicate host call may add one more URL for the same file, which is
-   * tried only if the first download fails.
+   * tried only if the first download fails. `matched` runs when a call reuses an identity.
    */
   private async reserveOnce(
     key: string,
     identity: string,
     url: string | undefined,
     create: () => Promise<Job>,
+    matched: () => void = () => {},
   ) {
     const reused = () =>
       new KairomesError(
@@ -440,6 +511,7 @@ export class ArtifactImportManager {
     const known = this.requests.get(key);
     if (known) {
       if (known.identity !== identity) throw reused();
+      matched();
       const job = this.get(known.id);
       this.offerUrl(job, url);
       return job;
@@ -447,6 +519,7 @@ export class ArtifactImportManager {
     const inFlight = this.reserving.get(key);
     if (inFlight) {
       if (inFlight.identity !== identity) throw reused();
+      matched();
       const job = await inFlight.promise;
       this.offerUrl(job, url);
       return job;
@@ -608,11 +681,16 @@ export class ArtifactImportManager {
         for (let index = 0; index < job.urls.length && !data; index++) {
           const url = job.urls[index] as string;
           try {
+            this.detail.download_attempts++;
+            this.diagnosticsChanged();
             data = await unlessAborted(
               this.download({ ...reference, download_url: url }, { signal: abort.signal }),
               abort.signal,
             );
+            this.detail.download_results.ok++;
+            this.diagnosticsChanged();
           } catch (error) {
+            this.countDownload(job, error, abort.signal);
             failure = error;
             if (
               abort.signal.aborted ||
@@ -622,7 +700,14 @@ export class ArtifactImportManager {
           }
         }
         if (!data) throw failure;
-        await this.accept(job, data, abort.signal);
+        try {
+          await this.accept(job, data, abort.signal);
+        } catch (error) {
+          const code = error instanceof KairomesError ? error.code : "";
+          this.detail.verify_failed[verifyFailures[code] ?? "other"]++;
+          this.diagnosticsChanged();
+          throw error;
+        }
       } catch (error) {
         if (job.view.state === "preparing" && job.abort === abort) {
           const detail = publicError(error);

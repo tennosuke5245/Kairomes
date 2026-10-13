@@ -3,6 +3,7 @@ import type {
   ArtifactImportApproval,
   ArtifactImportWriteOutcome,
   ImageImportHydration,
+  ImageImportHydrationDetail,
 } from "./artifact-import.ts";
 import type { Command, CommandApproval } from "./command.ts";
 import type { FileChange, FileChangeApproval } from "./file-change.ts";
@@ -75,6 +76,8 @@ export interface PanelSnapshot {
   imports?: ArtifactImportApproval[];
   /** Whether ChatGPT attached the image file to image_import_request calls (diagnostics). */
   importHydration?: ImageImportHydration;
+  /** Where host-file delivery stopped, in fixed categories (trusted diagnostics only). */
+  importHydrationDetail?: ImageImportHydrationDetail;
 }
 /** Response of the trusted import routes: the full snapshot plus the import they touched. */
 export interface PanelImportResponse extends PanelSnapshot {

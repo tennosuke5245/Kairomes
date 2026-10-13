@@ -39,7 +39,7 @@ Kairomes does not read your ChatGPT cookies or chat page, and it never sends mes
 
 - Lets ChatGPT read and search the projects you choose. Folders are never uploaded whole; only what ChatGPT asks for is sent back.
 - Shows Git branches, changes, diffs, and recent commits (read-only).
-- Saves images ChatGPT generates into your project. Each image is previewed in the side panel and written only after you confirm.
+- Saves images ChatGPT generates into your project: pasting, choosing, or dragging the image into the side panel always works. ChatGPT handing the image over directly is implemented but not yet verified with real ChatGPT. Each image is previewed in the side panel and written only after you confirm.
 - Lets you approve or reject file edits and commands in the side panel. When you reject, you can give a reason and ChatGPT adjusts.
 - Offers a time-limited autonomous mode, so ChatGPT doesn't have to ask every time.
 - Lets you add other MCP servers from the side panel, either local programs or remote URLs.

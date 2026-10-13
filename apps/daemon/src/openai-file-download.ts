@@ -3,6 +3,8 @@ import type { IncomingMessage } from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
 import {
+  type ImageImportDownloadResult,
+  type ImageImportRejectionReason,
   KairomesError,
   LIMITS,
   OPENAI_FILE_REFERENCE_LIMITS,
@@ -43,9 +45,36 @@ export type OpenAIFileDownloadOptions = {
   signal?: AbortSignal;
 };
 
-function sourceRejected(message: string) {
-  return new KairomesError("IMPORT_SOURCE_REJECTED", message);
+/**
+ * A refused file reference or a failed download. `code` and `message` are what callers see;
+ * `reason` is a fixed category for trusted diagnostics only. It is not an own enumerable
+ * property, so serializing the error never carries it and publicError() drops it.
+ */
+export class FileDownloadError extends KairomesError {
+  readonly #reason: ImageImportRejectionReason | ImageImportDownloadResult;
+
+  constructor(
+    code: string,
+    message: string,
+    reason: ImageImportRejectionReason | ImageImportDownloadResult,
+  ) {
+    super(code, message);
+    this.#reason = reason;
+  }
+
+  get reason() {
+    return this.#reason;
+  }
 }
+
+function sourceRejected(reason: ImageImportRejectionReason, message: string) {
+  return new FileDownloadError("IMPORT_SOURCE_REJECTED", message, reason);
+}
+
+const notHostFile =
+  "只接受 ChatGPT 交付的 OpenAI 檔案下載網址，不下載任意網址或 Base64；請改由使用者在 Kairomes 側欄放入圖片。";
+const tooLarge = () =>
+  new FileDownloadError("ARTIFACT_TOO_LARGE", "圖片超過 25 MiB 匯入上限。", "too_large");
 
 function unsafeIpv4(address: string) {
   const parts = address.split(".").map(Number);
@@ -148,28 +177,29 @@ export function trustedOpenAIFileHost(value: string) {
 export function parseOpenAIFileUrl(value: string) {
   if (/^(?:\/mnt\/|sandbox:|file:)/iu.test(value.trim()))
     throw sourceRejected(
+      "sandbox_path",
       "這是 ChatGPT 執行環境內的路徑，不是 ChatGPT 交付的檔案；請改由使用者在 Kairomes 側欄放入圖片。",
     );
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw sourceRejected("圖片下載網址格式不正確；請改由使用者在 Kairomes 側欄放入圖片。");
+    throw sourceRejected(
+      "malformed",
+      "圖片下載網址格式不正確；請改由使用者在 Kairomes 側欄放入圖片。",
+    );
   }
   const hostname = url.hostname.toLocaleLowerCase();
+  // One message for every case; only the diagnostic reason differs.
+  if (url.protocol !== "https:") throw sourceRejected("non_https", notHostFile);
+  if (url.username || url.password || (url.port && url.port !== "443") || url.hash)
+    throw sourceRejected("malformed", notHostFile);
   if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    (url.port && url.port !== "443") ||
-    url.hash ||
     hostname.endsWith(".") ||
     isIP(hostname.replace(/^\[|\]$/gu, "")) !== 0 ||
     !trustedOpenAIFileHost(hostname)
   )
-    throw sourceRejected(
-      "只接受 ChatGPT 交付的 OpenAI 檔案下載網址，不下載任意網址或 Base64；請改由使用者在 Kairomes 側欄放入圖片。",
-    );
+    throw sourceRejected("host_not_allowed", notHostFile);
   return url;
 }
 
@@ -188,7 +218,10 @@ export function checkFileReference(reference: OpenAIFileReference) {
     (reference.mime_type?.length ?? 0) > limit.mime_type ||
     (reference.file_name?.length ?? 0) > limit.file_name
   )
-    throw sourceRejected("圖片檔案參照的欄位長度不正確；請改由使用者在 Kairomes 側欄放入圖片。");
+    throw sourceRejected(
+      "length",
+      "圖片檔案參照的欄位長度不正確；請改由使用者在 Kairomes 側欄放入圖片。",
+    );
   return parseOpenAIFileUrl(reference.download_url);
 }
 
@@ -216,10 +249,18 @@ async function resolveSafeAddress(url: URL, lookup: FileLookup, signal: AbortSig
     addresses = await abortable(lookup(url.hostname, { all: true, verbatim: true }), signal);
   } catch (error) {
     if (signal.aborted) throw error;
-    throw new KairomesError("FILE_DOWNLOAD_FAILED", "無法解析圖片下載位置，請稍後重試。");
+    throw new FileDownloadError(
+      "FILE_DOWNLOAD_FAILED",
+      "無法解析圖片下載位置，請稍後重試。",
+      "dns",
+    );
   }
   if (!addresses.length || addresses.some(({ address }) => unsafeNetworkAddress(address)))
-    throw new KairomesError("UNSAFE_FILE_HOST", "圖片下載位置解析到不允許的網路位址，已停止下載。");
+    throw new FileDownloadError(
+      "UNSAFE_FILE_HOST",
+      "圖片下載位置解析到不允許的網路位址，已停止下載。",
+      "unsafe_address",
+    );
   const first = addresses[0] as { address: string; family: number };
   return { address: first.address, family: isIP(first.address) === 6 ? 6 : 4 } as const;
 }
@@ -314,20 +355,26 @@ async function fetchChecked(
     await response.body?.cancel().catch(() => {});
     const location = response.headers.get("location");
     if (!location || attempt === maxRedirects)
-      throw new KairomesError(
+      throw new FileDownloadError(
         "FILE_REDIRECT_BLOCKED",
         "圖片下載網址的重新導向未通過安全檢查，已停止下載。",
+        "redirect",
       );
     try {
       url = parseOpenAIFileUrl(new URL(location, url).toString());
     } catch {
-      throw new KairomesError(
+      throw new FileDownloadError(
         "FILE_REDIRECT_BLOCKED",
         "圖片下載網址重新導向到不允許的位置，已停止下載。",
+        "redirect",
       );
     }
   }
-  throw new KairomesError("FILE_REDIRECT_BLOCKED", "圖片下載網址重新導向次數過多。");
+  throw new FileDownloadError(
+    "FILE_REDIRECT_BLOCKED",
+    "圖片下載網址重新導向次數過多。",
+    "redirect",
+  );
 }
 
 /**
@@ -360,27 +407,34 @@ export async function downloadOpenAIFile(
     const response = await fetchChecked(url, lookup, transport, abort.signal);
     if (response.status !== 200) {
       await response.body?.cancel().catch(() => {});
-      throw new KairomesError(
+      const status = response.status;
+      throw new FileDownloadError(
         "FILE_DOWNLOAD_FAILED",
-        `ChatGPT 檔案下載失敗（HTTP ${response.status}）；短效網址可能已過期。`,
+        `ChatGPT 檔案下載失敗（HTTP ${status}）；短效網址可能已過期。`,
+        status >= 400 && status < 500 ? "http_4xx" : status >= 500 ? "http_5xx" : "network",
       );
     }
     const declared = response.headers.get("content-length");
     if (declared && Number(declared) > LIMITS.artifactBytes) {
       await response.body?.cancel().catch(() => {});
-      throw new KairomesError("ARTIFACT_TOO_LARGE", "圖片超過 25 MiB 匯入上限。");
+      throw tooLarge();
     }
     if (!response.body)
-      throw new KairomesError("FILE_DOWNLOAD_FAILED", "ChatGPT 檔案下載回應沒有內容。");
+      throw new FileDownloadError(
+        "FILE_DOWNLOAD_FAILED",
+        "ChatGPT 檔案下載回應沒有內容。",
+        "empty",
+      );
     const reader = response.body.getReader();
     let bytes = 0;
     let signatureChecked = false;
     const checkSignature = () => {
       signatureChecked = true;
       if (!imageSignature(Buffer.concat(chunks, bytes)))
-        throw new KairomesError(
+        throw new FileDownloadError(
           "IMPORT_NOT_IMAGE",
           "下載內容不是 PNG、JPEG 或 WebP 圖片（可能是網頁或錯誤訊息）。",
+          "not_image",
         );
     };
     try {
@@ -388,12 +442,12 @@ export async function downloadOpenAIFile(
         const next = await reader.read();
         if (next.done) break;
         bytes += next.value.byteLength;
-        if (bytes > LIMITS.artifactBytes)
-          throw new KairomesError("ARTIFACT_TOO_LARGE", "圖片超過 25 MiB 匯入上限。");
+        if (bytes > LIMITS.artifactBytes) throw tooLarge();
         chunks.push(Buffer.from(next.value));
         if (!signatureChecked && bytes >= 12) checkSignature();
       }
-      if (bytes === 0) throw new KairomesError("FILE_DOWNLOAD_FAILED", "ChatGPT 檔案內容是空的。");
+      if (bytes === 0)
+        throw new FileDownloadError("FILE_DOWNLOAD_FAILED", "ChatGPT 檔案內容是空的。", "empty");
       if (!signatureChecked) checkSignature();
     } catch (error) {
       await reader.cancel().catch(() => {});
@@ -407,14 +461,19 @@ export async function downloadOpenAIFile(
   } catch (error) {
     for (const chunk of chunks) chunk.fill(0);
     if (options.signal?.aborted)
-      throw new KairomesError("IMPORT_CANCELLED", "匯入已取消，下載已停止。");
+      throw new FileDownloadError("IMPORT_CANCELLED", "匯入已取消，下載已停止。", "cancelled");
     if (timedOut)
-      throw new KairomesError("FILE_DOWNLOAD_TIMEOUT", "下載 ChatGPT 檔案逾時，請稍後重試。");
+      throw new FileDownloadError(
+        "FILE_DOWNLOAD_TIMEOUT",
+        "下載 ChatGPT 檔案逾時，請稍後重試。",
+        "timeout",
+      );
     if (error instanceof KairomesError) throw error;
     // Network errors can name hosts or addresses; report a fixed category instead.
-    throw new KairomesError(
+    throw new FileDownloadError(
       "FILE_DOWNLOAD_FAILED",
       "無法下載 ChatGPT 提供的圖片；短效網址可能已失效。",
+      "network",
     );
   } finally {
     clearTimeout(timer);

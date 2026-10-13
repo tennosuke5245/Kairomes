@@ -121,6 +121,57 @@ export interface ArtifactImportApproval extends ArtifactImport {
  */
 export type ImageImportHydration = { hydrated: number; omitted: number; rejected: number };
 
+/** Why a hydrated `file` object was refused before any network request. */
+export const IMAGE_IMPORT_REJECTION_REASONS = [
+  "sandbox_path",
+  "non_https",
+  "host_not_allowed",
+  "malformed",
+  "length",
+] as const;
+export type ImageImportRejectionReason = (typeof IMAGE_IMPORT_REJECTION_REASONS)[number];
+/** Outcome of one download attempt of a host file. */
+export const IMAGE_IMPORT_DOWNLOAD_RESULTS = [
+  "ok",
+  "dns",
+  "unsafe_address",
+  "http_4xx",
+  "http_5xx",
+  "empty",
+  "network",
+  "redirect",
+  "timeout",
+  "not_image",
+  "too_large",
+  "cancelled",
+] as const;
+export type ImageImportDownloadResult = (typeof IMAGE_IMPORT_DOWNLOAD_RESULTS)[number];
+/** Why downloaded bytes failed verification. */
+export const IMAGE_IMPORT_VERIFY_FAILURES = [
+  "extension_mismatch",
+  "invalid_image",
+  "dimensions",
+  "animated",
+  "other",
+] as const;
+export type ImageImportVerifyFailure = (typeof IMAGE_IMPORT_VERIFY_FAILURES)[number];
+
+/**
+ * Where host-file delivery stops since this service started (trusted panel and admin surfaces
+ * only): counts in fixed categories, never a URL, host, address or file ID. `created` counts
+ * imports image_import_request opened with a file, `retried` calls with a file that reused an
+ * existing request identity, `download_attempts` each call of the downloader. Images the local
+ * user supplies in the side panel are not counted.
+ */
+export type ImageImportHydrationDetail = {
+  rejected: Record<ImageImportRejectionReason, number>;
+  created: number;
+  retried: number;
+  download_attempts: number;
+  download_results: Record<ImageImportDownloadResult, number>;
+  verify_failed: Record<ImageImportVerifyFailure, number>;
+};
+
 /** Formats the trusted upload route accepts as its raw request body. */
 export const IMAGE_IMPORT_UPLOAD_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 /** Header carrying the UUID that makes one upload attempt idempotent. */

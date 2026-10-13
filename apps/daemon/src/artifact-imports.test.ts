@@ -22,6 +22,7 @@ import {
   webpHeader,
 } from "./__fixtures__/images.ts";
 import { ArtifactImportManager, IMAGE_IMPORT_LIMITS } from "./artifact-imports.ts";
+import { downloadOpenAIFile, FileDownloadError } from "./openai-file-download.ts";
 import { ToolService } from "./tools.ts";
 
 let f: Awaited<ReturnType<typeof fixture>>;
@@ -314,6 +315,185 @@ test("non-file references and arbitrary URLs are rejected before anything is res
     omitted: 1,
     rejected: rejected.length + 1,
   });
+});
+
+test("delivery details count created imports, retries and each download and verify outcome", async () => {
+  const zero = manager.hydrationDetail();
+  expect(zero).toEqual({
+    rejected: { sandbox_path: 0, non_https: 0, host_not_allowed: 0, malformed: 0, length: 0 },
+    created: 0,
+    retried: 0,
+    download_attempts: 0,
+    download_results: {
+      ok: 0,
+      dns: 0,
+      unsafe_address: 0,
+      http_4xx: 0,
+      http_5xx: 0,
+      empty: 0,
+      network: 0,
+      redirect: 0,
+      timeout: 0,
+      not_image: 0,
+      too_large: 0,
+      cancelled: 0,
+    },
+    verify_failed: {
+      extension_mismatch: 0,
+      invalid_image: 0,
+      dimensions: 0,
+      animated: 0,
+      other: 0,
+    },
+  });
+  // A copy: changing it never changes the counts.
+  zero.created = 99;
+  expect(manager.hydrationDetail().created).toBe(0);
+
+  // Refused before reserving: a missing folder or a full download budget creates nothing.
+  await expect(request({ path: "missing/figure.png" })).rejects.toMatchObject({
+    code: "PARENT_NOT_FOUND",
+  });
+  const gate = deferred<Uint8Array>();
+  respond = () => gate.promise;
+  const requestId = crypto.randomUUID();
+  const one = await request({ request_id: requestId, path: "one.png" });
+  const two = await request({ path: "two.png" });
+  await expect(request({ path: "three.png" })).rejects.toMatchObject({
+    code: "ARTIFACT_IMPORT_LIMIT",
+  });
+  // The same request_id again is a retry of the existing import, not a new one.
+  expect((await request({ request_id: requestId, path: "one.png" })).image_import.id).toBe(
+    one.image_import.id,
+  );
+  await expect(
+    request({ file: { download_url: "/mnt/data/figure.png", file_id: "file_fixture" } }),
+  ).rejects.toMatchObject({ code: "IMPORT_SOURCE_REJECTED" });
+  expect(manager.hydrationDetail()).toMatchObject({
+    rejected: { sandbox_path: 1 },
+    created: 2,
+    retried: 1,
+    download_attempts: 2,
+  });
+  manager.cancel(one.image_import.id);
+  manager.cancel(two.image_import.id);
+  await until(
+    () => manager.hydrationDetail().download_results.cancelled,
+    (count) => count === 2,
+  );
+
+  // A DNS failure is one attempt with a dns result; the model still sees the same error.
+  respond = (reference, signal) =>
+    downloadOpenAIFile(reference, {
+      signal,
+      lookup: async () => {
+        throw new Error("getaddrinfo ENOTFOUND files.oaiusercontent.com");
+      },
+      transport: async () => {
+        throw new Error("unexpected request");
+      },
+    });
+  const dns = await request({ path: "dns.png" });
+  expect(await settled(dns.image_import.id)).toMatchObject({
+    state: "failed",
+    error_code: "FILE_DOWNLOAD_FAILED",
+    message: "無法解析圖片下載位置，請稍後重試。",
+  });
+
+  // Bytes that arrive but do not match the extension count as a verify failure.
+  respond = async () => jpegHeader(8, 8);
+  const mismatch = await request({ path: "photo.png" });
+  expect(await settled(mismatch.image_import.id)).toMatchObject({
+    state: "failed",
+    error_code: "ARTIFACT_EXTENSION_MISMATCH",
+  });
+
+  // The user's own image in the side panel is not a host delivery.
+  const local = await createLocal("local.png");
+  await upload(local.id, onePixelPng);
+
+  const detail = manager.hydrationDetail();
+  expect(detail).toEqual({
+    ...zero,
+    rejected: { ...zero.rejected, sandbox_path: 1 },
+    created: 4,
+    retried: 1,
+    download_attempts: 4,
+    download_results: { ...zero.download_results, ok: 1, dns: 1, cancelled: 2 },
+    verify_failed: { ...zero.verify_failed, extension_mismatch: 1 },
+  });
+  // The existing counts keep counting every call that carried an allowed file.
+  expect(manager.hydration()).toEqual({ hydrated: 7, omitted: 0, rejected: 1 });
+  const serialized = JSON.stringify(detail);
+  for (const secret of ["oaiusercontent", "file_fixture", "/mnt/data", "signed-image"])
+    expect(serialized).not.toContain(secret);
+});
+
+test("delivery details count a concurrent retry, each URL tried and every verify failure", async () => {
+  // A duplicate that arrives while the first call is still reserving is a retry, and the URL
+  // it adds is tried after the first one fails, each attempt with its own result.
+  const gates = [deferred<Uint8Array>(), deferred<Uint8Array>()];
+  respond = () => (gates[downloads.length - 1] as (typeof gates)[number]).promise;
+  const requestId = crypto.randomUUID();
+  const file = (name: string) => ({ download_url: url(name), file_id: "file_fixture" });
+  const [first] = await Promise.all([
+    request({ request_id: requestId, file: file("first") }),
+    request({ request_id: requestId, file: file("second") }),
+  ]);
+  expect(manager.hydrationDetail()).toMatchObject({ created: 1, retried: 1 });
+  gates[0]?.reject(new FileDownloadError("FILE_DOWNLOAD_FAILED", "HTTP 403", "http_4xx"));
+  await until(
+    () => downloads.length,
+    (count) => count === 2,
+  );
+  gates[1]?.resolve(Buffer.from(onePixelPng));
+  expect((await settled(first.image_import.id)).state).toBe("pending");
+  manager.cancel(first.image_import.id);
+  expect(manager.hydrationDetail()).toMatchObject({
+    created: 1,
+    retried: 1,
+    download_attempts: 2,
+    download_results: { ok: 1, http_4xx: 1, cancelled: 0 },
+  });
+
+  // Each verify failure has its own category; any other prepare failure counts as other.
+  for (const [target, data] of [
+    ["truncated.png", Buffer.from(onePixelPng.subarray(0, onePixelPng.length - 6))],
+    ["bomb.png", pngHeader(5000, 4000)],
+    ["animated.png", animatedPng()],
+    ["photo.png", jpegHeader(8, 8)],
+    ["page.png", Buffer.from('{"error":"expired"}')],
+  ] as const) {
+    respond = async () => Buffer.from(data);
+    const started = await request({ path: target });
+    expect((await settled(started.image_import.id)).state).toBe("failed");
+  }
+  expect(manager.hydrationDetail().verify_failed).toEqual({
+    extension_mismatch: 1,
+    invalid_image: 1,
+    dimensions: 1,
+    animated: 1,
+    other: 1,
+  });
+});
+
+test("the preparing deadline counts a held download as a timeout, not a cancel", async () => {
+  const gate = deferred<Uint8Array>();
+  respond = () => gate.promise;
+  const started = await request();
+  clock += IMAGE_IMPORT_LIMITS.preparingMs + 1;
+  manager.maintain();
+  const results = await until(
+    () => manager.hydrationDetail().download_results,
+    (value) => value.timeout + value.cancelled > 0,
+  );
+  expect(results).toMatchObject({ timeout: 1, cancelled: 0 });
+  expect(manager.hydrationDetail().download_attempts).toBe(1);
+  expect(view(started.image_import.id)).toMatchObject({
+    state: "failed",
+    error_code: "FILE_DOWNLOAD_TIMEOUT",
+  });
+  gate.resolve(Buffer.from(onePixelPng));
 });
 
 test("without a file the import waits for the user's image and still needs approval", async () => {

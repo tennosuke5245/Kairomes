@@ -46,7 +46,12 @@ import { PanelAnnouncements } from "./panel-announcements.ts";
 import { type NoticeTone, panelRecoveryNotice, STALE_NOTICE } from "./panel-error.ts";
 import { PanelRequestError, panelRequestError } from "./panel-request-error.ts";
 import { PanelStreamAvailability } from "./panel-stream-availability.ts";
-import { importHydrationText, panelView, settingsBackLabel } from "./panel-view.ts";
+import {
+  importHydrationDetailText,
+  importHydrationText,
+  panelView,
+  settingsBackLabel,
+} from "./panel-view.ts";
 import { commandTokens, setupCommands } from "./setup-commands.ts";
 import {
   actionBadgeText,
@@ -75,6 +80,7 @@ const brand = required<HTMLElement>("#brand");
 const approvalChannel = required<HTMLElement>("#approval-channel");
 const workbenchChannel = required<HTMLElement>("#workbench-channel");
 const importHydration = required<HTMLElement>("#import-hydration");
+const importHydrationDetail = required<HTMLElement>("#import-hydration-detail");
 const settingsReconnect = required<HTMLButtonElement>("#settings-reconnect");
 const workspaceSwitcher = required<HTMLElement>("#workspace-switcher");
 const workspaceFilter = required<HTMLSelectElement>("#workspace-filter");
@@ -156,11 +162,17 @@ function approvalItems(snapshot: PanelSnapshot) {
   ];
 }
 
-/** 設定 › 一般: whether ChatGPT attached the image to its import requests (trusted counts). */
+/**
+ * 設定 › 一般: whether ChatGPT attached the image to its import requests and where its delivery
+ * stopped (trusted counts in fixed categories).
+ */
 function renderImportHydration(snapshot: PanelSnapshot | undefined) {
   const text = importHydrationText(snapshot?.importHydration);
   importHydration.hidden = !text;
   importHydration.textContent = text ?? "";
+  const detail = importHydrationDetailText(snapshot?.importHydrationDetail);
+  importHydrationDetail.hidden = !detail;
+  importHydrationDetail.textContent = detail ?? "";
 }
 
 function approvalUncertain(item: ApprovalItem) {

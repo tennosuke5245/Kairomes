@@ -3,10 +3,12 @@ import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type ActivitySnapshot,
   type ArtifactImportApproval,
   ImageImportResultSchema,
   type PanelImportResponse,
   type PanelSnapshot,
+  readSnapshots,
   VERSION,
   WorkspaceListSchema,
 } from "@kairomes/protocol";
@@ -626,6 +628,35 @@ test("a host file still waits for individual approval under full autonomy", asyn
     expect(stringFile.isError).toBe(true);
     expect((await w.snapshot()).importHydration).toEqual({ hydrated: 2, omitted: 0, rejected: 1 });
     expect((await w.snapshot()).imports).toHaveLength(1);
+
+    // Delivery details reach only the trusted panel, as fixed categories without the URL,
+    // host or file ID; the workbench activity stream and MCP results never carry them.
+    const detail = (await w.snapshot()).importHydrationDetail;
+    expect(detail).toMatchObject({
+      rejected: { host_not_allowed: 1 },
+      created: 1,
+      retried: 1,
+      download_attempts: 1,
+      download_results: { ok: 1 },
+    });
+    const canaries = ["sig=fixture", "sig=new", "oaiusercontent", "attacker.example", "file-"];
+    for (const canary of canaries) expect(JSON.stringify(detail)).not.toContain(canary);
+    const activity = new AbortController();
+    let workbench: ActivitySnapshot | undefined;
+    await readSnapshots<ActivitySnapshot>(
+      await w.post("/api/activity/stream", w.connection.uiToken, {}),
+      (next) => {
+        workbench = next;
+        activity.abort();
+      },
+      activity.signal,
+    ).catch(() => {});
+    expect(workbench?.imports).toHaveLength(1);
+    for (const exposed of [workbench, requested, duplicate, rejected]) {
+      expect(JSON.stringify(exposed)).not.toContain("importHydration");
+      for (const canary of ["sig=fixture", "sig=new", "attacker.example"])
+        expect(JSON.stringify(exposed)).not.toContain(canary);
+    }
 
     expect((await w.content(id)).status).toBe(200);
     expect(

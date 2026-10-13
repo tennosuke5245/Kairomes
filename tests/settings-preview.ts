@@ -1,6 +1,9 @@
 import type { McpAuthIdentity } from "../apps/extension/src/mcp-auth-tracker.ts";
 import { McpPanel } from "../apps/extension/src/mcp-panel.ts";
-import { importHydrationText } from "../apps/extension/src/panel-view.ts";
+import {
+  importHydrationDetailText,
+  importHydrationText,
+} from "../apps/extension/src/panel-view.ts";
 import type {
   McpAuthInput,
   McpAuthResult,
@@ -297,10 +300,36 @@ if (channel) {
 }
 // The trusted import diagnostic, as sidepanel.ts renders it from the panel snapshot.
 const hydration = document.querySelector<HTMLElement>("#import-hydration");
-const hydrationText = importHydrationText({ hydrated: 2, omitted: 1, rejected: 0 });
+const hydrationText = importHydrationText({ hydrated: 3, omitted: 1, rejected: 1 });
 if (hydration && hydrationText) {
   hydration.hidden = false;
   hydration.textContent = hydrationText;
+}
+const hydrationDetail = document.querySelector<HTMLElement>("#import-hydration-detail");
+const hydrationDetailText = importHydrationDetailText({
+  rejected: { sandbox_path: 1, non_https: 0, host_not_allowed: 0, malformed: 0, length: 0 },
+  created: 2,
+  retried: 1,
+  download_attempts: 2,
+  download_results: {
+    ok: 1,
+    dns: 0,
+    unsafe_address: 0,
+    http_4xx: 1,
+    http_5xx: 0,
+    empty: 0,
+    network: 0,
+    redirect: 0,
+    timeout: 0,
+    not_image: 0,
+    too_large: 0,
+    cancelled: 0,
+  },
+  verify_failed: { extension_mismatch: 0, invalid_image: 0, dimensions: 0, animated: 0, other: 0 },
+});
+if (hydrationDetail && hydrationDetailText) {
+  hydrationDetail.hidden = false;
+  hydrationDetail.textContent = hydrationDetailText;
 }
 const version = document.querySelector<HTMLElement>("#extension-version");
 if (version) version.textContent = "0.3.0";
